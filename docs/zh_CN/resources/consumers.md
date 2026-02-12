@@ -92,6 +92,57 @@ consumers:
 3. 系统通过凭证查找对应的 consumer
 4. 认证成功后，消费者的专属插件生效
 
+## Admin API
+
+> 端点前缀 `http://127.0.0.1:11080/nyro/admin`
+
+### 列表
+
+```bash
+curl http://127.0.0.1:11080/nyro/admin/consumers
+```
+
+### 查询
+
+```bash
+curl http://127.0.0.1:11080/nyro/admin/consumers/mobile-app
+```
+
+### 创建
+
+```bash
+curl -X POST http://127.0.0.1:11080/nyro/admin/consumers \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "mobile-app",
+    "credentials": {
+      "key-auth": {"key": "mobile-app-api-key-123"}
+    }
+  }'
+```
+
+### 更新
+
+```bash
+curl -X PUT http://127.0.0.1:11080/nyro/admin/consumers/mobile-app \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "mobile-app",
+    "credentials": {
+      "key-auth": {"key": "new-api-key-456"}
+    },
+    "plugins": [
+      {"name": "rate-limiting", "config": {"rate": 200}}
+    ]
+  }'
+```
+
+### 删除
+
+```bash
+curl -X DELETE http://127.0.0.1:11080/nyro/admin/consumers/mobile-app
+```
+
 ## 关联资源
 
 - 被认证类插件（`key-auth`、`jwt-auth` 等）使用

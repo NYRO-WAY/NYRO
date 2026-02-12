@@ -68,6 +68,54 @@ certificates:
     key_file: /etc/ssl/private/multi-domain.key
 ```
 
+## Admin API
+
+> 端点前缀 `http://127.0.0.1:11080/nyro/admin`
+
+### 列表
+
+```bash
+curl http://127.0.0.1:11080/nyro/admin/certificates
+```
+
+### 查询
+
+```bash
+curl http://127.0.0.1:11080/nyro/admin/certificates/example-cert
+```
+
+### 创建
+
+```bash
+curl -X POST http://127.0.0.1:11080/nyro/admin/certificates \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "example-cert",
+    "snis": ["example.com", "*.example.com"],
+    "cert_file": "/etc/ssl/certs/example.com.crt",
+    "key_file": "/etc/ssl/private/example.com.key"
+  }'
+```
+
+### 更新
+
+```bash
+curl -X PUT http://127.0.0.1:11080/nyro/admin/certificates/example-cert \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "example-cert",
+    "snis": ["example.com", "*.example.com", "api.example.com"],
+    "cert_file": "/etc/ssl/certs/example.com.crt",
+    "key_file": "/etc/ssl/private/example.com.key"
+  }'
+```
+
+### 删除
+
+```bash
+curl -X DELETE http://127.0.0.1:11080/nyro/admin/certificates/example-cert
+```
+
 ## 注意事项
 
 1. 证书和私钥必须是 PEM 格式

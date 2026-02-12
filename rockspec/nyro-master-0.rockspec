@@ -96,6 +96,18 @@ build = {
         ["nyro.plugin.ai-proxy.handler"] = "nyro/plugin/ai-proxy/handler.lua",
         ["nyro.plugin.ai-proxy.schema"] = "nyro/plugin/ai-proxy/schema.lua",
 
+        -- Admin API modules
+        ["nyro.admin"] = "nyro/admin/init.lua",
+        ["nyro.admin.helper"] = "nyro/admin/helper.lua",
+        ["nyro.admin.routes"] = "nyro/admin/routes.lua",
+        ["nyro.admin.services"] = "nyro/admin/services.lua",
+        ["nyro.admin.backends"] = "nyro/admin/backends.lua",
+        ["nyro.admin.consumers"] = "nyro/admin/consumers.lua",
+        ["nyro.admin.plugins"] = "nyro/admin/plugins.lua",
+        ["nyro.admin.certificates"] = "nyro/admin/certificates.lua",
+        ["nyro.admin.config"] = "nyro/admin/config.lua",
+        ["nyro.admin.status"] = "nyro/admin/status.lua",
+
         -- Schema modules
         ["nyro.schema"] = "nyro/schema/init.lua",
         ["nyro.schema.common"] = "nyro/schema/common.lua",

@@ -215,6 +215,7 @@ local function worker_event_handler_register()
         end
 
         ngx.log(ngx.INFO, "[sys.certificate] received rebuild signal, version: ", data and data.version or "unknown")
+        store.reload()
         rebuild_certificates()
     end
 

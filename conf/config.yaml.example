@@ -14,23 +14,23 @@ consumers:
         key: "sk-xxxxx"
 
 services:
-  # ── API Gateway ──
+  # ── API Service ──
   - name: httpbin
     url: http://httpbin.org
 
-  # ── AI Gateway ──
+  # ── AI Service ──
   - name: openai
     provider: openai
     url: https://api.deepseek.com
 
 routes:
-  # ── API Gateway ──
+  # ── API Route ──
   - name: proxy
     service: httpbin
     paths:
       - /*
 
-  # ── AI: OpenAI SDK → OpenAI backend (passthrough) ──
+  # ── AI Route: OpenAI SDK → OpenAI backend (passthrough) ──
   - name: chat-openai
     service: openai
     paths:
@@ -40,7 +40,7 @@ routes:
       - id: key-auth
       - id: ai-proxy
 
-  # ── AI: Anthropic SDK → OpenAI backend (protocol conversion) ──
+  # ── AI Route: Anthropic SDK → OpenAI backend (protocol conversion) ──
   - name: chat-anthropic-to-openai
     service: openai
     paths:
@@ -50,8 +50,7 @@ routes:
       - id: key-auth
       - id: ai-proxy
 
-  # ── AI: Gemini SDK → OpenAI backend (protocol conversion) ──
-  # Gemini SDK sends: POST /v1beta/models/{model}:{action}
+  # ── AI Route: Gemini SDK → OpenAI backend (protocol conversion) ──
   - name: chat-gemini-to-openai
     service: openai
     paths:

@@ -73,3 +73,27 @@ routes:
     paths:
       - /external/*
 ```
+
+## Admin API
+
+Admin API 默认监听 `11080` 端口，通过它可以对所有资源进行 CRUD 操作。
+
+| 操作 | 方法 | 端点 |
+|------|------|------|
+| 列表 | GET | `/nyro/admin/{resource}` |
+| 查询 | GET | `/nyro/admin/{resource}/{name}` |
+| 创建 | POST | `/nyro/admin/{resource}` |
+| 更新 | PUT | `/nyro/admin/{resource}/{name}` |
+| 删除 | DELETE | `/nyro/admin/{resource}/{name}` |
+
+其中 `{resource}` 为: `routes`、`services`、`backends`、`consumers`、`plugins`、`certificates`。
+
+### 辅助端点
+
+| 端点 | 说明 |
+|------|------|
+| `POST /nyro/admin/config/reload` | 手动触发配置热加载 |
+| `GET /nyro/admin/config/version` | 获取当前配置版本 |
+| `GET /nyro/admin/status` | 查看网关运行状态 |
+
+详细用法请查看各资源文档中的 **Admin API** 章节。

@@ -64,6 +64,54 @@ services:
           burst: 50
 ```
 
+## Admin API
+
+> 端点前缀 `http://127.0.0.1:11080/nyro/admin`
+
+### 列表
+
+```bash
+curl http://127.0.0.1:11080/nyro/admin/services
+```
+
+### 查询
+
+```bash
+curl http://127.0.0.1:11080/nyro/admin/services/httpbin-service
+```
+
+### 创建
+
+```bash
+curl -X POST http://127.0.0.1:11080/nyro/admin/services \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "httpbin-service",
+    "url": "http://httpbin.org"
+  }'
+```
+
+> `backend` 和 `url` 二选一。引用 `backend` 时该 backend 必须已存在。
+
+### 更新
+
+```bash
+curl -X PUT http://127.0.0.1:11080/nyro/admin/services/httpbin-service \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "httpbin-service",
+    "url": "https://httpbin.org"
+  }'
+```
+
+### 删除
+
+```bash
+curl -X DELETE http://127.0.0.1:11080/nyro/admin/services/httpbin-service
+```
+
+> 如果有 route 引用了该 service，删除将被拒绝（返回 400）。
+
 ## 关联资源
 
 - 通过 `backend` 引用 `backends`

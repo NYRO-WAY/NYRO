@@ -235,6 +235,7 @@ local function worker_event_handler_register()
         end
 
         ngx.log(ngx.INFO, "[sys.balancer] received rebuild signal, version: ", data and data.version or "unknown")
+        store.reload()
         rebuild_backends()
     end
 

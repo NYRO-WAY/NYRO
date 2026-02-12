@@ -111,6 +111,56 @@ routes:
           whitelist: ["10.0.0.0/8"]
 ```
 
+## Admin API
+
+> 端点前缀 `http://127.0.0.1:11080/nyro/admin`
+
+### 列表
+
+```bash
+curl http://127.0.0.1:11080/nyro/admin/routes
+```
+
+### 查询
+
+```bash
+curl http://127.0.0.1:11080/nyro/admin/routes/user-api
+```
+
+### 创建
+
+```bash
+curl -X POST http://127.0.0.1:11080/nyro/admin/routes \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "user-api",
+    "service": "user-service",
+    "paths": ["/api/v1/users/*"],
+    "methods": ["GET", "POST"]
+  }'
+```
+
+> 创建时 `service` 引用的服务必须已存在，否则返回 400。
+
+### 更新（全量替换）
+
+```bash
+curl -X PUT http://127.0.0.1:11080/nyro/admin/routes/user-api \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "user-api",
+    "service": "user-service",
+    "paths": ["/api/v1/users/*", "/api/v2/users/*"],
+    "methods": ["GET", "POST", "PUT"]
+  }'
+```
+
+### 删除
+
+```bash
+curl -X DELETE http://127.0.0.1:11080/nyro/admin/routes/user-api
+```
+
 ## 关联资源
 
 - 必须通过 `service` 引用 `services`

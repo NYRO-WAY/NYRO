@@ -289,6 +289,8 @@ local function worker_event_handler_register()
         end
 
         ngx.log(ngx.INFO, "[sys.router] received rebuild signal, version: ", data and data.version or "unknown")
+        -- 先从磁盘刷新内存, 确保拿到最新配置
+        store.reload()
         rebuild_router()
     end
 

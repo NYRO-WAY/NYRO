@@ -38,6 +38,7 @@ nginx:
 
   # Lua 共享内存区配置
   shared_dict:
+    nyro_config_version: 1m
     plugin_limit_conn: 50m
     plugin_limit_req: 50m
     plugin_limit_count: 50m
@@ -49,34 +50,12 @@ nginx:
 # ============================================================
 # 存储模式配置
 # ============================================================
-# 模式选择:
-#   - standalone: DB Less 模式，从 YAML 文件加载配置
-#   - hybrid: CP/DP 分离模式，从 Control Plane 同步配置 (未来支持)
 store:
   mode: standalone
-  
-  # Standalone 模式配置 (DB Less)
+
   standalone:
     # 声明式配置文件路径 (相对于 nginx prefix)
     config_file: conf/config.yaml
-    
-    # 热加载方式: signal | admin_api | watch
-    # - signal: 通过 HUP 信号触发
-    # - admin_api: 通过 Admin API 触发
-    # - watch: 文件变更自动加载 (需要 inotify 支持)
-    reload_method: signal
-
-  # Hybrid 模式配置 (未来支持)
-  # hybrid:
-  #   role: dp  # cp | dp
-  #   control_plane:
-  #     endpoints:
-  #       - http://cp-1.nyro.local:9080
-  #       - http://cp-2.nyro.local:9080
-  #     sync_interval: 5
-  #   mongodb:
-  #     uri: mongodb://localhost:27017
-  #     database: nyro
 
 # ============================================================
 # 插件列表
@@ -101,9 +80,6 @@ logging:
 # Admin API 配置
 # ============================================================
 admin:
-  # 是否启用 Admin API (standalone 模式下通常禁用)
-  enabled: false
-  # Admin API 监听端口列表
+  enabled: true
   listen:
     - 11080
-    - 11443

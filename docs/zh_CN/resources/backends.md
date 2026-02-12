@@ -71,6 +71,59 @@ backends:
       - address: 192.168.1.31:8080
 ```
 
+## Admin API
+
+> 端点前缀 `http://127.0.0.1:11080/nyro/admin`
+
+### 列表
+
+```bash
+curl http://127.0.0.1:11080/nyro/admin/backends
+```
+
+### 查询
+
+```bash
+curl http://127.0.0.1:11080/nyro/admin/backends/user-backend
+```
+
+### 创建
+
+```bash
+curl -X POST http://127.0.0.1:11080/nyro/admin/backends \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "user-backend",
+    "algorithm": "roundrobin",
+    "endpoints": [
+      {"address": "192.168.1.10", "port": 8080, "weight": 100},
+      {"address": "192.168.1.11", "port": 8080, "weight": 50}
+    ],
+    "timeout": {"connect": 5000, "send": 60000, "read": 60000}
+  }'
+```
+
+### 更新
+
+```bash
+curl -X PUT http://127.0.0.1:11080/nyro/admin/backends/user-backend \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "user-backend",
+    "endpoints": [
+      {"address": "192.168.1.10", "port": 8080}
+    ]
+  }'
+```
+
+### 删除
+
+```bash
+curl -X DELETE http://127.0.0.1:11080/nyro/admin/backends/user-backend
+```
+
+> 如果有 service 引用了该 backend，删除将被拒绝（返回 400）。
+
 ## 关联资源
 
 - 被 `services` 通过 `backend` 字段引用

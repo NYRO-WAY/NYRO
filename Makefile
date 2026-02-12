@@ -70,6 +70,10 @@ dev: engine
 	@echo "Installing engine library for development..."
 	@mkdir -p ./lua_modules/lib
 	@cp $(ENGINE_LIB) ./lua_modules/lib/
+	@if [ ! -f conf/config.yaml ]; then \
+		echo "conf/config.yaml not found, copying from example..."; \
+		cp conf/config.yaml.example conf/config.yaml; \
+	fi
 	@echo "Installing NYRO for development..."
 	@echo "Using Lua/LuaJIT at: $(LUAJIT_DIR)"
 	luarocks make $(ROCKSPEC) --tree=./lua_modules $(LUAROCKS_FLAGS)

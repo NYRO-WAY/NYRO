@@ -11,6 +11,7 @@ return [=[
 # ============================================================
 
 master_process on;
+pid logs/nginx.pid;
 
 worker_processes {{ worker_processes }};
 

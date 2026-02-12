@@ -96,6 +96,59 @@ routes:
 |------|------|
 | `request-id` | 请求 ID 注入 |
 
+## Admin API
+
+全局插件通过 Admin API 的 `plugins` 资源管理。
+
+> 端点前缀 `http://127.0.0.1:11080/nyro/admin`
+
+### 列表
+
+```bash
+curl http://127.0.0.1:11080/nyro/admin/plugins
+```
+
+### 查询
+
+```bash
+curl http://127.0.0.1:11080/nyro/admin/plugins/global-cors
+```
+
+### 创建
+
+```bash
+curl -X POST http://127.0.0.1:11080/nyro/admin/plugins \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "global-cors",
+    "id": "cors",
+    "config": {
+      "allow_origins": "*",
+      "allow_methods": ["GET", "POST", "PUT", "DELETE"]
+    }
+  }'
+```
+
+### 更新
+
+```bash
+curl -X PUT http://127.0.0.1:11080/nyro/admin/plugins/global-cors \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "global-cors",
+    "id": "cors",
+    "config": {
+      "allow_origins": "https://example.com"
+    }
+  }'
+```
+
+### 删除
+
+```bash
+curl -X DELETE http://127.0.0.1:11080/nyro/admin/plugins/global-cors
+```
+
 ## 完整示例
 
 ```yaml

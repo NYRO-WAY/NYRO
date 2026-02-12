@@ -243,10 +243,11 @@ function NYRO.http_log()
 end
 
 function NYRO.http_admin()
-    -- Admin API disabled in DB-less mode
     options_request_handle()
     enable_cors_handle()
-    core.response.exit(503, { err_message = "Admin API disabled in DB-less mode" })
+
+    local admin = require("nyro.admin")
+    admin.dispatch()
 end
 
 return NYRO
