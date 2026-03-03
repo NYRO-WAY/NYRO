@@ -177,6 +177,17 @@ local function build_admin_server(config)
         listen_ports = { listen_ports }
     end
 
+    -- Console 静态目录 (默认 console，可配置为 webui/dist)
+    local console_ui = get(config, "admin.console.ui", "console")
+    console_ui = tostring(console_ui):gsub("/+$", "")
+
+    -- local-* API 反向代理目标端口 (动态取 nginx.http_listen 第一项)
+    local proxy_http_listen = get(config, "nginx.http_listen", { 10080 })
+    if type(proxy_http_listen) ~= "table" then
+        proxy_http_listen = { proxy_http_listen }
+    end
+    local proxy_port = tostring(proxy_http_listen[1] or 10080)
+
     local listen_lines = {}
     for _, port in ipairs(listen_ports) do
         listen_lines[#listen_lines + 1] = string.format("        listen %s;", tostring(port))
@@ -192,9 +203,17 @@ local function build_admin_server(config)
         "            }",
         "        }",
         "",
-        "        location /nyro/console {",
+        "        location /nyro/local/ {",
+        "            proxy_http_version 1.1;",
+        "            proxy_set_header   Host              $host;",
+        "            proxy_set_header   X-Real-IP         $remote_addr;",
+        "            proxy_set_header   X-Request-Id      $request_id;",
+        "            proxy_pass http://127.0.0.1:" .. proxy_port .. ";",
+        "        }",
+        "",
+        "        location / {",
         "            index index.html;",
-        "            alias console/;",
+        "            alias " .. console_ui .. "/;",
         "",
         "            try_files $uri $uri/ /index.html;",
         "        }",

@@ -62,10 +62,8 @@ routes:
 | `to` | string | 否 | — | 上游协议。不填从 `service.provider` 自动推导 |
 | `from` | string | 否 | — | 客户端协议。不填按请求 path 自动推断 |
 | `model` | string | 否 | — | 覆盖请求中的 model 字段 |
-| `upstream_path` | string | 否 | — | 覆盖 provider 默认上游路径 |
 | `max_tokens` | number | 否 | — | 覆盖最大 token 数 |
-| `temperature` | number | 否 | — | 覆盖温度 (0~2) |
-| `max_body_size` | number | 否 | 10485760 | 请求体最大字节数 (10MB) |
+| `temperature` | number | 否 | — | 覆盖温度 (0~2) 
 
 所有参数均可选。最简配置只需 `api_key`:
 

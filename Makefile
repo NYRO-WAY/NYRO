@@ -13,6 +13,7 @@ else
     ENGINE_LIB_NAME := libnyro.so
 endif
 ENGINE_LIB       := $(ENGINE_DIR)/target/release/$(ENGINE_LIB_NAME)
+WEBUI_DIR        := webui
 
 # Detect OpenResty LuaJIT path
 ifeq ($(UNAME), Darwin)
@@ -65,8 +66,14 @@ install: engine
 	@echo "  nyro version"
 	@echo "  nyro start"
 
+.PHONY: webui-build
+webui-build:
+	@echo "Building WebUI..."
+	cd $(WEBUI_DIR) && npm install && npm run build
+	@echo "WebUI built: $(WEBUI_DIR)/dist"
+
 .PHONY: dev
-dev: engine
+dev: engine webui-build
 	@echo "Installing engine library for development..."
 	@mkdir -p ./lua_modules/lib
 	@cp $(ENGINE_LIB) ./lua_modules/lib/
@@ -111,7 +118,8 @@ help:
 	@echo ""
 	@echo "  make engine      - Build Rust engine library only"
 	@echo "  make install     - Build engine and install NYRO to $(NYRO_DIR)"
-	@echo "  make dev         - Build engine and install for local development"
+	@echo "  make webui-build - Install deps and build WebUI"
+	@echo "  make dev         - Build engine, WebUI and install for local development"
 	@echo "  make uninstall   - Uninstall NYRO from $(NYRO_DIR)"
 	@echo "  make clean       - Clean all build files and local installation"
 	@echo "  make help        - Show this help message"

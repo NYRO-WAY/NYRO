@@ -85,3 +85,5 @@ admin:
   enabled: true
   listen:
     - 11080
+  console:
+    ui: webui/dist

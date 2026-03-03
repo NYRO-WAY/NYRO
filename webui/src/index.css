@@ -1,0 +1,94 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+
+  --color-background: #f3f5fb;
+  --color-foreground: #111827;
+  --color-card: rgba(255, 255, 255, 0.7);
+  --color-card-foreground: #111827;
+  --color-muted: #e8edf6;
+  --color-muted-foreground: #64748b;
+  --color-border: rgba(255, 255, 255, 0.55);
+
+  --color-primary: #1e40af;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #eef2ff;
+  --color-secondary-foreground: #1e293b;
+  --color-destructive: #ef4444;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+html {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  color: var(--color-foreground);
+  background:
+    radial-gradient(48rem 32rem at 18% 18%, rgba(59, 130, 246, 0.22), transparent 70%),
+    radial-gradient(42rem 30rem at 85% 8%, rgba(99, 102, 241, 0.22), transparent 68%),
+    radial-gradient(54rem 36rem at 70% 88%, rgba(6, 182, 212, 0.16), transparent 72%),
+    linear-gradient(180deg, #f8faff 0%, #eef3fb 100%);
+}
+
+@utility glass {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.72),
+    rgba(255, 255, 255, 0.52)
+  );
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  box-shadow:
+    0 24px 60px rgba(15, 23, 42, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(26px) saturate(130%);
+  -webkit-backdrop-filter: blur(26px) saturate(130%);
+}
+
+@utility glass-strong {
+  background: linear-gradient(
+    155deg,
+    rgba(255, 255, 255, 0.76),
+    rgba(255, 255, 255, 0.58)
+  );
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  box-shadow:
+    0 36px 80px rgba(15, 23, 42, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(30px) saturate(140%);
+  -webkit-backdrop-filter: blur(30px) saturate(140%);
+}
+
+@utility sidebar-surface {
+  background: linear-gradient(
+    180deg,
+    rgba(15, 23, 42, 0.54),
+    rgba(30, 64, 175, 0.34) 60%,
+    rgba(15, 23, 42, 0.46)
+  );
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow:
+    0 20px 65px rgba(2, 6, 23, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+  backdrop-filter: blur(32px) saturate(130%);
+  -webkit-backdrop-filter: blur(32px) saturate(130%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

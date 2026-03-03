@@ -100,9 +100,26 @@ Phase 3.4: CP/DP + MongoDB + WebSocket 分布式
 
 | 项目 | 说明 |
 |------|------|
-| 技术栈 | React / Vue (待定) |
-| 数据源 | Admin API (配置 CRUD) + `/nyro/local/metrics` + `/nyro/local/logs` |
-| 部署 | 静态文件内嵌 Nyro，通过 `location /nyro/console` 提供 |
+| 技术栈 | Vite + React 19 + TypeScript |
+| UI | Tailwind CSS v4 + Shadcn UI (Radix) + Lucide React |
+| 数据层 | TanStack Query v5 (API 请求/缓存) + Zustand (全局状态) + React Router v7 |
+| 图表 | Recharts |
+| 数据源 | Admin API `/nyro/admin/*` (配置 CRUD) + `/nyro/local/metrics` + `/nyro/local/logs` |
+| 源码目录 | `webui/` (构建产物 `webui/dist/`) |
+| 部署 | Admin Server (11080) `/` 路径，nginx alias `admin.console.ui/` |
+| API 代理 | Admin Server 增加 `/nyro/local/` 反向代理到 proxy server，前端统一对接 11080 |
+| 视觉风格 | Apple 风格 Light 主题 + 毛玻璃效果，Inter 字体 |
+
+**开发步骤：**
+
+| 步骤 | 内容 | 说明 |
+|------|------|------|
+| Step 1 | 脚手架 + 基础配置 | Vite 项目初始化、Tailwind/Shadcn 配置、API Client 封装 |
+| Step 2 | 布局骨架 + 主题 | 毛玻璃侧边栏、顶栏、路由框架，确认视觉效果 |
+| Step 3 | Dashboard 页 | 对接 `/status` + `/local/metrics`，KPI 卡片 + 图表 |
+| Step 4 | 资源管理页 | Routes / Services / Backends / Consumers / Plugins / Certificates CRUD |
+| Step 5 | 可观测页 | Traffic Logs (日志查看) + Traffic Stats (API/AI 双视图指标看板) |
+| Step 6 | Nginx 模板更新 | Admin Server 路径调整 + API 反向代理 |
 
 ### Phase 3.4: CP/DP 分布式
 
@@ -899,44 +916,94 @@ CP 汇总所有 DP 状态，通过 `/nyro/admin/status` 返回集群视图。
 
 ## 8. Console 控制台
 
+### 技术栈
+
+| 模块 | 选型 | 说明 |
+|------|------|------|
+| 构建 | Vite + React 19 + TypeScript | 纯 SPA，无 SSR 需求 |
+| 样式 | Tailwind CSS v4 | 最新版本 |
+| UI 组件 | Shadcn UI (Radix Primitives) + Lucide React | 无头组件 + 专业图标库 |
+| 图表 | Recharts | 声明式图表库 |
+| 数据请求 | TanStack Query v5 | API 缓存、轮询、乐观更新 |
+| 路由 | React Router v7 | SPA 路由 |
+| 状态 | Zustand | 轻量全局状态 (主题、侧边栏折叠等) |
+
 ### 数据源
 
-| 功能 | 数据来源 |
-|------|---------|
-| 配置管理 (CRUD) | `Admin API /nyro/admin/*` |
-| 实时指标 | `/nyro/local/metrics` (JSON, 轮询) |
-| 请求日志 | `/nyro/local/logs` (JSON, 轮询) |
-| 节点状态 | `/nyro/admin/status` |
-| 集群视图 (CP) | `/nyro/admin/status` (含所有 DP 信息) |
+| 功能 | 数据来源 | 端口 |
+|------|---------|------|
+| 配置管理 (CRUD) | `Admin API /nyro/admin/*` | 11080 |
+| 实时指标 | `/nyro/local/metrics` (JSON, 轮询) | 11080 (代理) |
+| 请求日志 | `/nyro/local/logs` (JSON, 轮询) | 11080 (代理) |
+| 节点状态 | `/nyro/admin/status` | 11080 |
+| 集群视图 (CP) | `/nyro/admin/status` (含所有 DP 信息) | 11080 |
+
+> Admin Server 增加 `/nyro/local/` 反向代理到 proxy server（动态取 `nginx.http_listen` 第一项端口），前端统一对接 11080 端口，避免跨域。
 
 ### 部署
 
-Console 为静态前端资源 (HTML/JS/CSS)，内嵌在 Nyro 中:
+Console 为静态前端资源 (HTML/JS/CSS)，源码位于 `webui/`，构建产物目录由 `admin.console.ui` 配置（开发推荐 `webui/dist`，发布可切换为 `console`）。
 
 ```nginx
-location /nyro/console {
-    index index.html;
-    alias console/;
-    try_files $uri $uri/ /index.html;
+# Admin Server (11080)
+server {
+    listen 11080;
+
+    # Admin API
+    location /nyro/admin { ... }
+
+    # 可观测 API 反向代理 (解决跨端口问题，端口来自 nginx.http_listen[1])
+    location /nyro/local/ {
+        proxy_pass http://127.0.0.1:{proxy_port};
+    }
+
+    # Console SPA
+    location / {
+        index index.html;
+        alias {admin.console.ui}/;
+        try_files $uri $uri/ /index.html;
+    }
 }
 ```
 
-已在 `nyro/cli/generator.lua` 的 `build_admin_server` 中预留。
+### 视觉风格
 
-### 页面结构 (参考)
+| 项目 | 说明 |
+|------|------|
+| 基调 | Apple 风格 Light 模式，纯白 + 柔和灰色背景 |
+| 毛玻璃 | 侧边栏 `backdrop-filter: blur(15px)` + `bg-white/80`，模态框/顶栏同理 |
+| 字体 | Inter (300-700 weight) |
+| 主色 | 蓝色强调 (`#2563EB`)，中性灰色系 |
+| Logo | `webui/assets/logos/NYRO-logo.png` |
+| AI 厂商图标 | `webui/assets/icons/*.svg` |
+
+### 页面结构
 
 ```
 Console
-├── 概览 (QPS / 延迟 / 错误率 / 活跃连接)
-├── 路由管理 (列表 / 创建 / 编辑 / 删除)
-├── 服务管理
-├── 后端管理
-├── 消费者管理
-├── 插件管理
-├── 证书管理
-├── 请求日志 (实时滚动)
-└── 节点状态 (单节点或集群视图)
+├── Dashboard          — 概览 (运行时长 / 总请求 / 活跃连接 / Token 总量 / 状态码分布)
+├── Routes             — 路由管理 (列表 / 创建 / 编辑 / 删除)
+├── Services           — 服务管理
+├── Backends           — 后端管理
+├── Consumers          — 消费者管理
+├── Plugins            — 全局插件管理
+├── Certificates       — SSL 证书管理
+├── Traffic Logs       — 日志查看器 (筛选 / 搜索)
+└── Traffic Stats      — 指标看板
+     ├── API View      — route / service / consumer 维度 (请求量 / 延迟 / 状态码)
+     └── AI View       — model 维度 (Token 用量 / 请求量 / 延迟)
 ```
+
+### 开发步骤
+
+| 步骤 | 内容 | 说明 |
+|------|------|------|
+| Step 1 | 脚手架 + 基础配置 | Vite 项目初始化、Tailwind/Shadcn 配置、API Client 封装 |
+| Step 2 | 布局骨架 + 主题 | 毛玻璃侧边栏、顶栏、路由框架，确认视觉效果 |
+| Step 3 | Dashboard 页 | 对接 `/status` + `/local/metrics`，KPI 卡片 + 图表 |
+| Step 4 | 资源管理页 | Routes / Services / Backends / Consumers / Plugins / Certificates CRUD |
+| Step 5 | 可观测页 | Traffic Logs (日志查看) + Traffic Stats (API/AI 双视图指标看板) |
+| Step 6 | Nginx 模板更新 | Admin Server 路径调整 + API 反向代理 |
 
 ---
 
@@ -952,6 +1019,8 @@ admin:
   enabled: true                  # 启用 Admin API
   listen:
     - 11080                      # Admin 监听端口
+  console:
+    ui: webui/dist               # Console 静态目录 (开发: webui/dist, 发布: console)
   # auth_token: "admin-secret"   # 可选: Admin API 访问令牌
 
 # ============================================================
