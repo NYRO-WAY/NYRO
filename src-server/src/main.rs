@@ -8,10 +8,10 @@ mod admin_routes;
 #[derive(Parser)]
 #[command(name = "nyro-server", about = "Nyro AI Gateway — Server Mode")]
 struct Args {
-    #[arg(long, default_value = "18080")]
+    #[arg(long, default_value = "19530")]
     proxy_port: u16,
 
-    #[arg(long, default_value = "18081")]
+    #[arg(long, default_value = "19531")]
     admin_port: u16,
 
     #[arg(long, default_value = "~/.nyro")]

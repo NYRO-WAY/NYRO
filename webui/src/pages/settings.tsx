@@ -74,7 +74,7 @@ export default function SettingsPage() {
     e.target.value = "";
   }
 
-  const baseUrl = `http://127.0.0.1:${status?.proxy_port ?? 18080}`;
+  const baseUrl = `http://127.0.0.1:${status?.proxy_port ?? 19530}`;
 
   function copyUrl(text: string) {
     navigator.clipboard.writeText(text);
@@ -121,7 +121,7 @@ from google.generativeai.client import configure
 # Point the SDK at the Nyro gateway
 configure(
     api_key="any-key",
-    client_options={"api_endpoint": "127.0.0.1:${status?.proxy_port ?? 18080}"},
+    client_options={"api_endpoint": "127.0.0.1:${status?.proxy_port ?? 19530}"},
     transport="rest",
 )
 

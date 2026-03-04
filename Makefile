@@ -15,7 +15,7 @@ server:
 
 # Run server binary locally (debug)
 server-dev:
-	cargo run -p nyro-server -- --proxy-port 18080 --admin-port 18081
+	cargo run -p nyro-server -- --proxy-port 19530 --admin-port 19531
 
 # Build webui
 webui-build:

@@ -10,7 +10,7 @@ pub struct GatewayConfig {
 impl Default for GatewayConfig {
     fn default() -> Self {
         Self {
-            proxy_port: 18080,
+            proxy_port: 19530,
             data_dir: default_data_dir(),
             auth_key: None,
         }

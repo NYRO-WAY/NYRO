@@ -128,12 +128,14 @@ impl ResponseFormatter for OpenAIResponseFormatter {
 
 pub struct OpenAIStreamParser {
     buffer: String,
+    started: bool,
 }
 
 impl OpenAIStreamParser {
     pub fn new() -> Self {
         Self {
             buffer: String::new(),
+            started: false,
         }
     }
 }
@@ -157,7 +159,7 @@ impl StreamParser for OpenAIStreamParser {
                         continue;
                     }
                     if let Ok(chunk) = serde_json::from_str::<Value>(data) {
-                        parse_openai_chunk(&chunk, &mut deltas);
+                        self.parse_openai_chunk(&chunk, &mut deltas);
                     }
                 }
             }
@@ -175,31 +177,33 @@ impl StreamParser for OpenAIStreamParser {
     }
 }
 
-fn parse_openai_chunk(chunk: &Value, deltas: &mut Vec<StreamDelta>) {
-    if let Some(id) = chunk.get("id").and_then(|v| v.as_str()) {
-        if let Some(model) = chunk.get("model").and_then(|v| v.as_str()) {
-            if let Some(choices) = chunk.get("choices").and_then(|v| v.as_array()) {
-                if choices.is_empty()
-                    || choices
-                        .first()
-                        .and_then(|c| c.get("delta"))
-                        .map_or(true, |d| d.as_object().map_or(true, |o| o.is_empty()))
-                {
-                    deltas.push(StreamDelta::MessageStart {
-                        id: id.to_string(),
-                        model: model.to_string(),
-                    });
-                    return;
-                }
+impl OpenAIStreamParser {
+    fn parse_openai_chunk(&mut self, chunk: &Value, deltas: &mut Vec<StreamDelta>) {
+        if !self.started {
+            if let (Some(id), Some(model)) = (
+                chunk.get("id").and_then(|v| v.as_str()),
+                chunk.get("model").and_then(|v| v.as_str()),
+            ) {
+                self.started = true;
+                deltas.push(StreamDelta::MessageStart {
+                    id: id.to_string(),
+                    model: model.to_string(),
+                });
             }
         }
-    }
 
-    if let Some(choice) = chunk
-        .get("choices")
-        .and_then(|v| v.as_array())
-        .and_then(|a| a.first())
-    {
+        let Some(choice) = chunk
+            .get("choices")
+            .and_then(|v| v.as_array())
+            .and_then(|a| a.first())
+        else {
+            let u = extract_usage(chunk);
+            if u.input_tokens > 0 || u.output_tokens > 0 {
+                deltas.push(StreamDelta::Usage(u));
+            }
+            return;
+        };
+
         if let Some(delta) = choice.get("delta") {
             if let Some(text) = delta.get("content").and_then(|v| v.as_str()) {
                 if !text.is_empty() {
@@ -241,11 +245,11 @@ fn parse_openai_chunk(chunk: &Value, deltas: &mut Vec<StreamDelta>) {
                 stop_reason: reason.to_string(),
             });
         }
-    }
 
-    let u = extract_usage(chunk);
-    if u.input_tokens > 0 || u.output_tokens > 0 {
-        deltas.push(StreamDelta::Usage(u));
+        let u = extract_usage(chunk);
+        if u.input_tokens > 0 || u.output_tokens > 0 {
+            deltas.push(StreamDelta::Usage(u));
+        }
     }
 }
 

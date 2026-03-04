@@ -284,6 +284,7 @@ pub struct AnthropicStreamFormatter {
     model: String,
     block_index: usize,
     in_text_block: bool,
+    message_started: bool,
 }
 
 impl AnthropicStreamFormatter {
@@ -294,7 +295,29 @@ impl AnthropicStreamFormatter {
             model: String::new(),
             block_index: 0,
             in_text_block: false,
+            message_started: false,
         }
+    }
+
+    fn ensure_message_start(&mut self, events: &mut Vec<SseEvent>) {
+        if self.message_started {
+            return;
+        }
+        self.message_started = true;
+        let msg_start = serde_json::json!({
+            "type": "message_start",
+            "message": {
+                "id": self.id,
+                "type": "message",
+                "role": "assistant",
+                "content": [],
+                "model": self.model,
+                "stop_reason": null,
+                "usage": {"input_tokens": self.usage.input_tokens, "output_tokens": 0}
+            }
+        });
+        events.push(SseEvent::new(Some("message_start"), msg_start.to_string()));
+        events.push(SseEvent::new(Some("ping"), r#"{"type":"ping"}"#));
     }
 }
 
@@ -307,22 +330,10 @@ impl StreamFormatter for AnthropicStreamFormatter {
                 StreamDelta::MessageStart { id, model } => {
                     self.id = id.clone();
                     self.model = model.clone();
-                    let msg_start = serde_json::json!({
-                        "type": "message_start",
-                        "message": {
-                            "id": self.id,
-                            "type": "message",
-                            "role": "assistant",
-                            "content": [],
-                            "model": self.model,
-                            "stop_reason": null,
-                            "usage": {"input_tokens": self.usage.input_tokens, "output_tokens": 0}
-                        }
-                    });
-                    events.push(SseEvent::new(Some("message_start"), msg_start.to_string()));
-                    events.push(SseEvent::new(Some("ping"), r#"{"type":"ping"}"#));
+                    self.ensure_message_start(&mut events);
                 }
                 StreamDelta::TextDelta(text) => {
+                    self.ensure_message_start(&mut events);
                     if !self.in_text_block {
                         self.in_text_block = true;
                         let block_start = serde_json::json!({
@@ -346,6 +357,7 @@ impl StreamFormatter for AnthropicStreamFormatter {
                     ));
                 }
                 StreamDelta::ToolCallStart { index: _, id, name } => {
+                    self.ensure_message_start(&mut events);
                     if self.in_text_block {
                         let stop = serde_json::json!({
                             "type": "content_block_stop",
@@ -385,6 +397,7 @@ impl StreamFormatter for AnthropicStreamFormatter {
                     }
                 }
                 StreamDelta::Done { stop_reason } => {
+                    self.ensure_message_start(&mut events);
                     if self.in_text_block {
                         let stop = serde_json::json!({
                             "type": "content_block_stop",
