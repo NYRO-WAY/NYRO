@@ -34,8 +34,7 @@ pub fn run() {
                 ..Default::default()
             };
 
-            let rt = tokio::runtime::Handle::current();
-            let (gateway, log_rx) = rt.block_on(Gateway::new(config))?;
+            let (gateway, log_rx) = tauri::async_runtime::block_on(Gateway::new(config))?;
 
             let proxy_port = gateway.config.proxy_port;
             let gw_proxy = gateway.clone();

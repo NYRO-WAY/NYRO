@@ -83,6 +83,11 @@ function resolveHTTP(cmd: string, args?: Record<string, unknown>): HTTPMapping {
     case "get_gateway_status":
       return { method: "GET", url: `${base}/status` };
 
+    case "export_config":
+      return { method: "GET", url: `${base}/config/export` };
+    case "import_config":
+      return { method: "POST", url: `${base}/config/import`, body: args?.data as Record<string, unknown> };
+
     default:
       return { method: "POST", url: `${base}/${cmd}`, body: args };
   }

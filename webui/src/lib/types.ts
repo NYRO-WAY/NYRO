@@ -121,3 +121,36 @@ export interface LogQuery {
   status_min?: number;
   status_max?: number;
 }
+
+export interface ExportData {
+  version: number;
+  providers: ExportProvider[];
+  routes: ExportRoute[];
+  settings: [string, string][];
+}
+
+export interface ExportProvider {
+  name: string;
+  protocol: string;
+  base_url: string;
+  api_key: string;
+  is_active: boolean;
+  priority: number;
+}
+
+export interface ExportRoute {
+  name: string;
+  match_pattern: string;
+  target_provider_name: string;
+  target_model: string;
+  fallback_provider_name?: string;
+  fallback_model?: string;
+  is_active: boolean;
+  priority: number;
+}
+
+export interface ImportResult {
+  providers_imported: number;
+  routes_imported: number;
+  settings_imported: number;
+}
