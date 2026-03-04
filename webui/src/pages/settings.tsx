@@ -2,6 +2,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useRef } from "react";
 import { backend, IS_TAURI } from "@/lib/backend";
 import type { GatewayStatus, ExportData, ImportResult } from "@/lib/types";
+import { useLocale } from "@/lib/i18n";
 import {
   Copy,
   Check,
@@ -12,6 +13,9 @@ import {
 } from "lucide-react";
 
 export default function SettingsPage() {
+  const { locale } = useLocale();
+  const isZh = locale === "zh-CN";
+
   const qc = useQueryClient();
   const [copied, setCopied] = useState(false);
   const [tab, setTab] = useState<"python-openai" | "python-anthropic" | "python-gemini" | "curl">("python-openai");
@@ -67,7 +71,7 @@ export default function SettingsPage() {
         const data = JSON.parse(reader.result as string) as ExportData;
         importMut.mutate(data);
       } catch {
-        alert("Invalid JSON file");
+        alert(isZh ? "无效的 JSON 文件" : "Invalid JSON file");
       }
     };
     reader.readAsText(file);
@@ -83,9 +87,9 @@ export default function SettingsPage() {
   }
 
   const tabs = [
-    { key: "python-openai" as const, label: "Python (OpenAI)" },
-    { key: "python-anthropic" as const, label: "Python (Anthropic)" },
-    { key: "python-gemini" as const, label: "Python (Gemini)" },
+    { key: "python-openai" as const, label: `Python (OpenAI)` },
+    { key: "python-anthropic" as const, label: `Python (Anthropic)` },
+    { key: "python-gemini" as const, label: `Python (Gemini)` },
     { key: "curl" as const, label: "curl" },
   ];
 
@@ -144,28 +148,30 @@ curl ${baseUrl}/v1/messages \\
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold text-slate-900">Settings</h1>
-        <p className="mt-1 text-sm text-slate-500">Gateway configuration and quick start guide</p>
+        <h1 className="text-2xl font-bold text-slate-900">{isZh ? "设置" : "Settings"}</h1>
+        <p className="mt-1 text-sm text-slate-500">
+          {isZh ? "网关配置与快速开始指南" : "Gateway configuration and quick start guide"}
+        </p>
       </div>
 
       {/* Gateway Status */}
       <div className="glass rounded-2xl p-6 space-y-4">
-        <h2 className="text-lg font-semibold text-slate-900">Gateway Status</h2>
+        <h2 className="text-lg font-semibold text-slate-900">{isZh ? "网关状态" : "Gateway Status"}</h2>
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           <div className="rounded-xl bg-slate-50 p-4">
-            <p className="text-xs text-slate-500">Status</p>
+            <p className="text-xs text-slate-500">{isZh ? "状态" : "Status"}</p>
             <p className="mt-1 font-semibold text-green-600">{status?.status ?? "–"}</p>
           </div>
           <div className="rounded-xl bg-slate-50 p-4">
-            <p className="text-xs text-slate-500">Proxy Port</p>
+            <p className="text-xs text-slate-500">{isZh ? "代理端口" : "Proxy Port"}</p>
             <p className="mt-1 font-semibold text-slate-900">{status?.proxy_port ?? "–"}</p>
           </div>
           <div className="rounded-xl bg-slate-50 p-4">
-            <p className="text-xs text-slate-500">Mode</p>
-            <p className="mt-1 font-semibold text-slate-900">{IS_TAURI ? "Desktop" : "Server"}</p>
+            <p className="text-xs text-slate-500">{isZh ? "模式" : "Mode"}</p>
+            <p className="mt-1 font-semibold text-slate-900">{IS_TAURI ? (isZh ? "桌面版" : "Desktop") : "Server"}</p>
           </div>
           <div className="rounded-xl bg-slate-50 p-4">
-            <p className="text-xs text-slate-500">Version</p>
+            <p className="text-xs text-slate-500">{isZh ? "版本" : "Version"}</p>
             <p className="mt-1 font-semibold text-slate-900">0.1.0</p>
           </div>
         </div>
@@ -173,14 +179,16 @@ curl ${baseUrl}/v1/messages \\
 
       {/* Log Retention & Config */}
       <div className="glass rounded-2xl p-6 space-y-5">
-        <h2 className="text-lg font-semibold text-slate-900">Configuration</h2>
+        <h2 className="text-lg font-semibold text-slate-900">{isZh ? "配置" : "Configuration"}</h2>
 
         <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
           {/* Log Retention */}
           <div className="rounded-xl bg-slate-50 p-4 space-y-3">
             <div>
-              <p className="text-sm font-medium text-slate-700">Log Retention</p>
-              <p className="text-xs text-slate-500">Auto-delete logs older than N days</p>
+              <p className="text-sm font-medium text-slate-700">{isZh ? "日志保留" : "Log Retention"}</p>
+              <p className="text-xs text-slate-500">
+                {isZh ? "自动删除超过 N 天的日志" : "Auto-delete logs older than N days"}
+              </p>
             </div>
             <div className="flex items-center gap-2">
               <input
@@ -191,7 +199,7 @@ curl ${baseUrl}/v1/messages \\
                 onChange={(e) => setRetentionInput(e.target.value)}
                 className="w-24 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400"
               />
-              <span className="text-sm text-slate-500">days</span>
+              <span className="text-sm text-slate-500">{isZh ? "天" : "days"}</span>
               <button
                 onClick={() => saveSetting.mutate(retentionValue)}
                 disabled={saveSetting.isPending}
@@ -202,19 +210,21 @@ curl ${baseUrl}/v1/messages \\
                 ) : (
                   <Save className="h-3.5 w-3.5" />
                 )}
-                Save
+                {isZh ? "保存" : "Save"}
               </button>
             </div>
             {saveSetting.isSuccess && (
-              <p className="text-xs text-green-600">Saved successfully</p>
+              <p className="text-xs text-green-600">{isZh ? "保存成功" : "Saved successfully"}</p>
             )}
           </div>
 
           {/* Import / Export */}
           <div className="rounded-xl bg-slate-50 p-4 space-y-3">
             <div>
-              <p className="text-sm font-medium text-slate-700">Config Backup</p>
-              <p className="text-xs text-slate-500">Export or import providers, routes & settings</p>
+              <p className="text-sm font-medium text-slate-700">{isZh ? "配置备份" : "Config Backup"}</p>
+              <p className="text-xs text-slate-500">
+                {isZh ? "导出或导入提供商、路由和设置" : "Export or import providers, routes & settings"}
+              </p>
             </div>
             <div className="flex items-center gap-2">
               <button
@@ -227,7 +237,7 @@ curl ${baseUrl}/v1/messages \\
                 ) : (
                   <Download className="h-3.5 w-3.5" />
                 )}
-                Export
+                {isZh ? "导出" : "Export"}
               </button>
               <button
                 onClick={() => fileRef.current?.click()}
@@ -239,7 +249,7 @@ curl ${baseUrl}/v1/messages \\
                 ) : (
                   <Upload className="h-3.5 w-3.5" />
                 )}
-                Import
+                {isZh ? "导入" : "Import"}
               </button>
               <input
                 ref={fileRef}
@@ -251,7 +261,9 @@ curl ${baseUrl}/v1/messages \\
             </div>
             {importMut.isSuccess && importMut.data && (
               <p className="text-xs text-green-600">
-                Imported: {(importMut.data as ImportResult).providers_imported} providers, {(importMut.data as ImportResult).routes_imported} routes, {(importMut.data as ImportResult).settings_imported} settings
+                {isZh
+                  ? `已导入：${(importMut.data as ImportResult).providers_imported} 个提供商，${(importMut.data as ImportResult).routes_imported} 条路由，${(importMut.data as ImportResult).settings_imported} 项设置`
+                  : `Imported: ${(importMut.data as ImportResult).providers_imported} providers, ${(importMut.data as ImportResult).routes_imported} routes, ${(importMut.data as ImportResult).settings_imported} settings`}
               </p>
             )}
           </div>
@@ -260,9 +272,9 @@ curl ${baseUrl}/v1/messages \\
 
       {/* Quick Start with multi-protocol examples */}
       <div className="glass rounded-2xl p-6 space-y-4">
-        <h2 className="text-lg font-semibold text-slate-900">Quick Start</h2>
+        <h2 className="text-lg font-semibold text-slate-900">{isZh ? "快速开始" : "Quick Start"}</h2>
         <p className="text-sm text-slate-600">
-          Point your AI client SDK to this base URL to start proxying requests:
+          {isZh ? "将 AI 客户端 SDK 指向以下地址即可开始代理请求：" : "Point your AI client SDK to this base URL to start proxying requests:"}
         </p>
         <div className="flex items-center gap-2">
           <code className="flex-1 rounded-xl bg-slate-900 px-4 py-3 text-sm text-green-400 font-mono select-all">
@@ -277,7 +289,7 @@ curl ${baseUrl}/v1/messages \\
         </div>
 
         <div className="space-y-3 mt-4">
-          <p className="text-xs font-semibold text-slate-700 uppercase tracking-wider">Usage Examples</p>
+          <p className="text-xs font-semibold text-slate-700 uppercase tracking-wider">{isZh ? "使用示例" : "Usage Examples"}</p>
           <div className="flex gap-1 border-b border-slate-200">
             {tabs.map((t) => (
               <button
@@ -303,12 +315,24 @@ curl ${baseUrl}/v1/messages \\
 
       {/* Setup Guide */}
       <div className="glass rounded-2xl p-6 space-y-4">
-        <h2 className="text-lg font-semibold text-slate-900">Setup Guide</h2>
+        <h2 className="text-lg font-semibold text-slate-900">{isZh ? "配置引导" : "Setup Guide"}</h2>
         <div className="space-y-3">
           {[
-            { step: 1, title: "Add a Provider", desc: "Go to Providers → Add your OpenAI / Anthropic / Gemini API key" },
-            { step: 2, title: "Create a Route", desc: "Go to Routes → Map model patterns (e.g. gpt-4*, claude-*, gemini-*) to a provider" },
-            { step: 3, title: "Use the Proxy", desc: "Point your SDK to the base URL above and start making requests" },
+            {
+              step: 1,
+              title: isZh ? "添加提供商" : "Add a Provider",
+              desc: isZh ? "前往 Providers，添加 OpenAI / Anthropic / Gemini API Key" : "Go to Providers → Add your OpenAI / Anthropic / Gemini API key",
+            },
+            {
+              step: 2,
+              title: isZh ? "创建路由" : "Create a Route",
+              desc: isZh ? "前往 Routes，配置模型匹配规则映射到提供商" : "Go to Routes → Map model patterns (e.g. gpt-4*, claude-*, gemini-*) to a provider",
+            },
+            {
+              step: 3,
+              title: isZh ? "开始使用代理" : "Use the Proxy",
+              desc: isZh ? "将 SDK 指向上面的 Base URL 后即可请求" : "Point your SDK to the base URL above and start making requests",
+            },
           ].map((s) => (
             <div key={s.step} className="flex gap-4 rounded-xl bg-slate-50 p-4">
               <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-900 text-sm font-bold text-white">
@@ -325,7 +349,7 @@ curl ${baseUrl}/v1/messages \\
 
       {/* Supported Protocols */}
       <div className="glass rounded-2xl p-6 space-y-4">
-        <h2 className="text-lg font-semibold text-slate-900">Supported Protocols</h2>
+        <h2 className="text-lg font-semibold text-slate-900">{isZh ? "支持协议" : "Supported Protocols"}</h2>
         <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
           {[
             { name: "OpenAI", endpoint: "/v1/chat/completions", desc: "GPT-4o, o1, o3-mini, DeepSeek..." },
