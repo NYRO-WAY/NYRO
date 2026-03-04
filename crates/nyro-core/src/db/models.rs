@@ -148,3 +148,40 @@ pub struct TestResult {
     pub model: Option<String>,
     pub error: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportData {
+    pub version: u32,
+    pub providers: Vec<ExportProvider>,
+    pub routes: Vec<ExportRoute>,
+    pub settings: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportProvider {
+    pub name: String,
+    pub protocol: String,
+    pub base_url: String,
+    pub api_key: String,
+    pub is_active: bool,
+    pub priority: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportRoute {
+    pub name: String,
+    pub match_pattern: String,
+    pub target_provider_name: String,
+    pub target_model: String,
+    pub fallback_provider_name: Option<String>,
+    pub fallback_model: Option<String>,
+    pub is_active: bool,
+    pub priority: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportResult {
+    pub providers_imported: u32,
+    pub routes_imported: u32,
+    pub settings_imported: u32,
+}

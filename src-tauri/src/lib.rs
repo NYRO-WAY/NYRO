@@ -1,7 +1,11 @@
 mod commands;
 
-use tauri::Manager;
-use nyro_core::{Gateway, config::GatewayConfig, logging};
+use nyro_core::{config::GatewayConfig, logging, Gateway};
+use tauri::{
+    menu::{Menu, MenuItem},
+    tray::TrayIconBuilder,
+    Manager,
+};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -10,7 +14,15 @@ pub fn run() {
         .init();
 
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|_app, _args, _cwd| {}))
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.set_focus();
+            }
+        }))
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .setup(|app| {
             let data_dir = app
                 .path()
@@ -25,6 +37,7 @@ pub fn run() {
             let rt = tokio::runtime::Handle::current();
             let (gateway, log_rx) = rt.block_on(Gateway::new(config))?;
 
+            let proxy_port = gateway.config.proxy_port;
             let gw_proxy = gateway.clone();
             let db_for_logs = gateway.db.clone();
 
@@ -39,6 +52,9 @@ pub fn run() {
             });
 
             app.manage(gateway);
+
+            setup_tray(app, proxy_port)?;
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -60,7 +76,48 @@ pub fn run() {
             commands::get_setting,
             commands::set_setting,
             commands::get_gateway_status,
+            commands::export_config,
+            commands::import_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+fn setup_tray(app: &tauri::App, proxy_port: u16) -> Result<(), Box<dyn std::error::Error>> {
+    let show = MenuItem::with_id(app, "show", "Show Dashboard", true, None::<&str>)?;
+    let copy_url = MenuItem::with_id(
+        app,
+        "copy_url",
+        format!("Copy Proxy URL (:{proxy_port})"),
+        true,
+        None::<&str>,
+    )?;
+    let quit = MenuItem::with_id(app, "quit", "Quit Nyro", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&show, &copy_url, &quit])?;
+
+    let _tray = TrayIconBuilder::new()
+        .tooltip(&format!("Nyro AI Gateway — :{proxy_port}"))
+        .menu(&menu)
+        .on_menu_event(move |app, event| match event.id.as_ref() {
+            "show" => {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                }
+            }
+            "copy_url" => {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.eval(&format!(
+                        "navigator.clipboard.writeText('http://127.0.0.1:{proxy_port}')"
+                    ));
+                }
+            }
+            "quit" => {
+                app.exit(0);
+            }
+            _ => {}
+        })
+        .build(app)?;
+
+    Ok(())
 }

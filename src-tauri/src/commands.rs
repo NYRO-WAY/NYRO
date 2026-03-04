@@ -132,3 +132,18 @@ pub async fn get_gateway_status(gw: State<'_, Gateway>) -> Result<serde_json::Va
         "proxy_port": gw.config.proxy_port,
     }))
 }
+
+// ── Config Import/Export ──
+
+#[tauri::command]
+pub async fn export_config(gw: State<'_, Gateway>) -> Result<ExportData, String> {
+    gw.admin().export_config().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn import_config(
+    gw: State<'_, Gateway>,
+    data: ExportData,
+) -> Result<ImportResult, String> {
+    gw.admin().import_config(data).await.map_err(|e| e.to_string())
+}

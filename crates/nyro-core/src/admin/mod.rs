@@ -376,4 +376,114 @@ impl AdminService {
         .await?;
         Ok(())
     }
+
+    // ── Config Import/Export ──
+
+    pub async fn export_config(&self) -> anyhow::Result<ExportData> {
+        let providers = self.list_providers().await?;
+        let routes = self.list_routes().await?;
+        let settings: Vec<(String, String)> =
+            sqlx::query_as("SELECT key, value FROM settings")
+                .fetch_all(&self.gw.db)
+                .await?;
+
+        Ok(ExportData {
+            version: 1,
+            providers: providers
+                .into_iter()
+                .map(|p| ExportProvider {
+                    name: p.name,
+                    protocol: p.protocol,
+                    base_url: p.base_url,
+                    api_key: p.api_key,
+                    is_active: p.is_active,
+                    priority: p.priority,
+                })
+                .collect(),
+            routes: routes
+                .into_iter()
+                .map(|r| ExportRoute {
+                    name: r.name,
+                    match_pattern: r.match_pattern,
+                    target_provider_name: String::new(),
+                    target_model: r.target_model,
+                    fallback_provider_name: None,
+                    fallback_model: r.fallback_model,
+                    is_active: r.is_active,
+                    priority: r.priority,
+                })
+                .collect(),
+            settings: settings.into_iter().collect(),
+        })
+    }
+
+    pub async fn import_config(&self, data: ExportData) -> anyhow::Result<ImportResult> {
+        let mut providers_imported = 0u32;
+        let mut routes_imported = 0u32;
+        let mut settings_imported = 0u32;
+
+        for p in &data.providers {
+            let exists = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM providers WHERE name = ?",
+            )
+            .bind(&p.name)
+            .fetch_one(&self.gw.db)
+            .await
+            .unwrap_or(0);
+
+            if exists == 0 {
+                let _ = self
+                    .create_provider(CreateProvider {
+                        name: p.name.clone(),
+                        protocol: p.protocol.clone(),
+                        base_url: p.base_url.clone(),
+                        api_key: p.api_key.clone(),
+                    })
+                    .await;
+                providers_imported += 1;
+            }
+        }
+
+        for r in &data.routes {
+            let exists =
+                sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM routes WHERE name = ?")
+                    .bind(&r.name)
+                    .fetch_one(&self.gw.db)
+                    .await
+                    .unwrap_or(0);
+
+            if exists == 0 {
+                let provider_id = sqlx::query_scalar::<_, String>(
+                    "SELECT id FROM providers LIMIT 1",
+                )
+                .fetch_optional(&self.gw.db)
+                .await?;
+
+                if let Some(pid) = provider_id {
+                    let _ = self
+                        .create_route(CreateRoute {
+                            name: r.name.clone(),
+                            match_pattern: r.match_pattern.clone(),
+                            target_provider: pid,
+                            target_model: r.target_model.clone(),
+                            fallback_provider: None,
+                            fallback_model: r.fallback_model.clone(),
+                        })
+                        .await;
+                    routes_imported += 1;
+                }
+            }
+        }
+
+        for (key, value) in &data.settings {
+            self.set_setting(key, value).await?;
+            settings_imported += 1;
+        }
+
+        Ok(ImportResult {
+            providers_imported,
+            routes_imported,
+            settings_imported,
+        })
+    }
 }

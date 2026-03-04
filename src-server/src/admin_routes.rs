@@ -1,19 +1,54 @@
-use axum::extract::{Path, Query, State};
+use axum::extract::{Path, Query, Request, State};
+use axum::http::StatusCode;
+use axum::middleware::{self, Next};
 use axum::response::IntoResponse;
 use axum::routing::{get, put};
-use axum::{Json, Router};
+use axum::{Extension, Json, Router};
 use nyro_core::db::models::*;
 use nyro_core::Gateway;
 use serde::Deserialize;
 
-pub fn create_router(gateway: Gateway, _admin_key: Option<String>) -> Router {
+#[derive(Clone)]
+struct AdminKey(String);
+
+async fn admin_auth(
+    key: Option<Extension<AdminKey>>,
+    req: Request,
+    next: Next,
+) -> impl IntoResponse {
+    let Some(Extension(admin_key)) = key else {
+        return next.run(req).await;
+    };
+
+    let auth_header = req
+        .headers()
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    let token = auth_header
+        .strip_prefix("Bearer ")
+        .unwrap_or(auth_header);
+
+    if token == admin_key.0 {
+        next.run(req).await
+    } else {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({"error": "invalid admin key"})),
+        )
+            .into_response()
+    }
+}
+
+pub fn create_router(gateway: Gateway, admin_key: Option<String>) -> Router {
     let providers_item = get(get_provider_handler)
         .put(update_provider_handler)
         .delete(delete_provider_handler);
 
     let routes_item = put(update_route_handler).delete(delete_route_handler);
 
-    let api = Router::new()
+    let mut api = Router::new()
         .route("/providers", get(list_providers).post(create_provider_handler))
         .route("/providers/:id", providers_item)
         .route("/providers/:id/test", get(test_provider_handler))
@@ -26,7 +61,17 @@ pub fn create_router(gateway: Gateway, _admin_key: Option<String>) -> Router {
         .route("/stats/providers", get(stats_by_provider))
         .route("/settings/:key", get(get_setting).put(set_setting))
         .route("/status", get(get_status))
+        .route("/config/export", get(export_config_handler))
+        .route("/config/import", axum::routing::post(import_config_handler))
         .with_state(gateway);
+
+    if let Some(key) = admin_key {
+        if !key.is_empty() {
+            api = api
+                .layer(Extension(AdminKey(key)))
+                .layer(middleware::from_fn(admin_auth));
+        }
+    }
 
     Router::new().nest("/api/v1", api)
 }
@@ -239,6 +284,25 @@ async fn get_status(State(gw): State<Gateway>) -> impl IntoResponse {
         "status": "running",
         "proxy_port": gw.config.proxy_port,
     }))
+}
+
+// ── Config Import/Export ──
+
+async fn export_config_handler(State(gw): State<Gateway>) -> impl IntoResponse {
+    match gw.admin().export_config().await {
+        Ok(v) => Json(serde_json::json!({ "data": v })).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+async fn import_config_handler(
+    State(gw): State<Gateway>,
+    Json(data): Json<ExportData>,
+) -> impl IntoResponse {
+    match gw.admin().import_config(data).await {
+        Ok(v) => Json(serde_json::json!({ "data": v })).into_response(),
+        Err(e) => err(e),
+    }
 }
 
 fn err(e: anyhow::Error) -> axum::response::Response {

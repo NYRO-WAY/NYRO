@@ -3,6 +3,8 @@ use tokio::sync::mpsc;
 
 use crate::protocol::types::TokenUsage;
 
+const DEFAULT_RETENTION_DAYS: i64 = 30;
+
 #[derive(Debug, Clone)]
 pub struct LogEntry {
     pub ingress_protocol: String,
@@ -22,7 +24,8 @@ pub struct LogEntry {
 
 pub async fn run_collector(mut rx: mpsc::Receiver<LogEntry>, db: SqlitePool) {
     let mut buffer: Vec<LogEntry> = Vec::with_capacity(64);
-    let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
+    let mut flush_interval = tokio::time::interval(std::time::Duration::from_secs(2));
+    let mut cleanup_interval = tokio::time::interval(std::time::Duration::from_secs(3600));
 
     loop {
         tokio::select! {
@@ -32,11 +35,37 @@ pub async fn run_collector(mut rx: mpsc::Receiver<LogEntry>, db: SqlitePool) {
                     flush(&db, &mut buffer).await;
                 }
             }
-            _ = interval.tick() => {
+            _ = flush_interval.tick() => {
                 if !buffer.is_empty() {
                     flush(&db, &mut buffer).await;
                 }
             }
+            _ = cleanup_interval.tick() => {
+                cleanup_old_logs(&db).await;
+            }
+        }
+    }
+}
+
+async fn cleanup_old_logs(db: &SqlitePool) {
+    let days: i64 = sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = 'log_retention_days'")
+        .fetch_optional(db)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(DEFAULT_RETENTION_DAYS);
+
+    let cutoff = format!("-{days} days");
+    let result = sqlx::query("DELETE FROM request_logs WHERE created_at < datetime('now', ?)")
+        .bind(&cutoff)
+        .execute(db)
+        .await;
+
+    if let Ok(r) = result {
+        let deleted = r.rows_affected();
+        if deleted > 0 {
+            tracing::info!("cleaned up {deleted} logs older than {days} days");
         }
     }
 }
