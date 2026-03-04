@@ -3,6 +3,7 @@ import { useState } from "react";
 import { backend } from "@/lib/backend";
 import type { Provider, CreateProvider, UpdateProvider, TestResult } from "@/lib/types";
 import { Server, Plus, Trash2, CheckCircle, XCircle, Zap, Loader2, Pencil, X } from "lucide-react";
+import { useLocale } from "@/lib/i18n";
 
 function protocolUrl(protocol: string) {
   switch (protocol) {
@@ -15,6 +16,9 @@ function protocolUrl(protocol: string) {
 const emptyCreate: CreateProvider = { name: "", protocol: "openai", base_url: "https://api.openai.com", api_key: "" };
 
 export default function ProvidersPage() {
+  const { locale } = useLocale();
+  const isZh = locale === "zh-CN";
+
   const qc = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -92,25 +96,27 @@ export default function ProvidersPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Providers</h1>
-          <p className="mt-1 text-sm text-slate-500">Manage your LLM provider connections</p>
+          <h1 className="text-2xl font-bold text-slate-900">{isZh ? "提供商" : "Providers"}</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            {isZh ? "管理你的 LLM 提供商连接" : "Manage your LLM provider connections"}
+          </p>
         </div>
         <button
           onClick={() => { setShowForm(!showForm); setEditingId(null); }}
           className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white shadow-md transition-all hover:bg-slate-800 cursor-pointer"
         >
           <Plus className="h-4 w-4" />
-          Add Provider
+          {isZh ? "新增提供商" : "Add Provider"}
         </button>
       </div>
 
       {/* Create Form */}
       {showForm && (
         <div className="glass rounded-2xl p-6 space-y-4">
-          <h2 className="text-lg font-semibold text-slate-900">New Provider</h2>
+          <h2 className="text-lg font-semibold text-slate-900">{isZh ? "新建提供商" : "New Provider"}</h2>
           <div className="grid grid-cols-2 gap-4">
             <input
-              placeholder="Name (e.g. OpenAI Production)"
+              placeholder={isZh ? "名称（例如 OpenAI 生产）" : "Name (e.g. OpenAI Production)"}
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
               className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-slate-400"
@@ -125,7 +131,7 @@ export default function ProvidersPage() {
               <option value="gemini">Gemini</option>
             </select>
             <input
-              placeholder="Base URL"
+              placeholder={isZh ? "基础 URL" : "Base URL"}
               value={form.base_url}
               onChange={(e) => setForm({ ...form, base_url: e.target.value })}
               className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-slate-400"
@@ -144,13 +150,13 @@ export default function ProvidersPage() {
               disabled={createMut.isPending || !form.name || !form.api_key}
               className="rounded-xl bg-slate-900 px-5 py-2 text-sm font-medium text-white hover:bg-slate-800 cursor-pointer disabled:opacity-50"
             >
-              {createMut.isPending ? "Creating..." : "Create"}
+              {createMut.isPending ? (isZh ? "创建中..." : "Creating...") : (isZh ? "创建" : "Create")}
             </button>
             <button
               onClick={() => { setShowForm(false); setForm(emptyCreate); }}
               className="rounded-xl border border-slate-200 px-5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 cursor-pointer"
             >
-              Cancel
+              {isZh ? "取消" : "Cancel"}
             </button>
           </div>
         </div>
@@ -158,12 +164,12 @@ export default function ProvidersPage() {
 
       {/* List */}
       {isLoading ? (
-        <div className="text-center text-sm text-slate-500 py-12">Loading...</div>
+        <div className="text-center text-sm text-slate-500 py-12">{isZh ? "加载中..." : "Loading..."}</div>
       ) : providers.length === 0 ? (
         <div className="glass rounded-2xl p-12 text-center">
           <Server className="mx-auto h-10 w-10 text-slate-400" />
-          <p className="mt-3 text-sm text-slate-500">No providers configured yet</p>
-          <p className="mt-1 text-xs text-slate-400">Add a provider to get started</p>
+          <p className="mt-3 text-sm text-slate-500">{isZh ? "还没有配置提供商" : "No providers configured yet"}</p>
+          <p className="mt-1 text-xs text-slate-400">{isZh ? "添加提供商后开始使用" : "Add a provider to get started"}</p>
         </div>
       ) : (
         <div className="grid gap-4">
@@ -175,14 +181,14 @@ export default function ProvidersPage() {
               return (
                 <div key={p.id} className="glass rounded-2xl p-5 space-y-4">
                   <div className="flex items-center justify-between">
-                    <h3 className="text-sm font-semibold text-slate-900">Edit Provider</h3>
+                    <h3 className="text-sm font-semibold text-slate-900">{isZh ? "编辑提供商" : "Edit Provider"}</h3>
                     <button onClick={() => setEditingId(null)} className="p-1 text-slate-400 hover:text-slate-600 cursor-pointer">
                       <X className="h-4 w-4" />
                     </button>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
                     <input
-                      placeholder="Name"
+                      placeholder={isZh ? "名称" : "Name"}
                       value={editForm.name ?? ""}
                       onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
                       className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-slate-400"
@@ -197,20 +203,20 @@ export default function ProvidersPage() {
                       <option value="gemini">Gemini</option>
                     </select>
                     <input
-                      placeholder="Base URL"
+                      placeholder={isZh ? "基础 URL" : "Base URL"}
                       value={editForm.base_url ?? ""}
                       onChange={(e) => setEditForm({ ...editForm, base_url: e.target.value })}
                       className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-slate-400"
                     />
                     <input
-                      placeholder="API Key (leave empty to keep current)"
+                      placeholder={isZh ? "API Key（留空则保持不变）" : "API Key (leave empty to keep current)"}
                       type="password"
                       value={editForm.api_key ?? ""}
                       onChange={(e) => setEditForm({ ...editForm, api_key: e.target.value })}
                       className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-slate-400"
                     />
                     <div className="flex items-center gap-3">
-                      <label className="text-sm text-slate-600">Active</label>
+                      <label className="text-sm text-slate-600">{isZh ? "启用" : "Active"}</label>
                       <input
                         type="checkbox"
                         checked={editForm.is_active ?? true}
@@ -219,7 +225,7 @@ export default function ProvidersPage() {
                       />
                     </div>
                     <div className="flex items-center gap-2">
-                      <label className="text-sm text-slate-600">Priority</label>
+                      <label className="text-sm text-slate-600">{isZh ? "优先级" : "Priority"}</label>
                       <input
                         type="number"
                         min={0}
@@ -246,13 +252,13 @@ export default function ProvidersPage() {
                       disabled={updateMut.isPending}
                       className="rounded-xl bg-slate-900 px-5 py-2 text-sm font-medium text-white hover:bg-slate-800 cursor-pointer disabled:opacity-50"
                     >
-                      {updateMut.isPending ? "Saving..." : "Save"}
+                      {updateMut.isPending ? (isZh ? "保存中..." : "Saving...") : (isZh ? "保存" : "Save")}
                     </button>
                     <button
                       onClick={() => { setEditingId(null); setEditError(null); }}
                       className="rounded-xl border border-slate-200 px-5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 cursor-pointer"
                     >
-                      Cancel
+                      {isZh ? "取消" : "Cancel"}
                     </button>
                   </div>
                   {editError && (
@@ -295,7 +301,7 @@ export default function ProvidersPage() {
                       ) : (
                         <Zap className="h-3.5 w-3.5" />
                       )}
-                      Test
+                      {isZh ? "测试" : "Test"}
                     </button>
                     <button
                       onClick={() => startEdit(p)}
@@ -316,8 +322,8 @@ export default function ProvidersPage() {
                     tr.success ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600"
                   }`}>
                     {tr.success
-                      ? `Connected — ${tr.latency_ms}ms${tr.model ? ` (${tr.model})` : ""}`
-                      : `Failed — ${tr.error}`
+                      ? `${isZh ? "连接成功" : "Connected"} — ${tr.latency_ms}ms${tr.model ? ` (${tr.model})` : ""}`
+                      : `${isZh ? "失败" : "Failed"} — ${tr.error}`
                     }
                   </div>
                 )}

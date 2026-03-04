@@ -3,8 +3,12 @@ import { useState } from "react";
 import { backend } from "@/lib/backend";
 import type { LogPage, LogQuery } from "@/lib/types";
 import { ScrollText, ChevronLeft, ChevronRight } from "lucide-react";
+import { useLocale } from "@/lib/i18n";
 
 export default function LogsPage() {
+  const { locale } = useLocale();
+  const isZh = locale === "zh-CN";
+
   const [page, setPage] = useState(0);
   const [filter, setFilter] = useState<LogQuery>({ limit: 30, offset: 0 });
 
@@ -24,8 +28,10 @@ export default function LogsPage() {
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Request Logs</h1>
-          <p className="mt-1 text-sm text-slate-500">{total} total records</p>
+          <h1 className="text-2xl font-bold text-slate-900">{isZh ? "请求日志" : "Request Logs"}</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            {isZh ? `共 ${total} 条记录` : `${total} total records`}
+          </p>
         </div>
         <div className="flex gap-2">
           <select
@@ -33,7 +39,7 @@ export default function LogsPage() {
             onChange={(e) => { setFilter({ ...filter, provider: e.target.value || undefined }); setPage(0); }}
             className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none"
           >
-            <option value="">All Providers</option>
+            <option value="">{isZh ? "全部提供商" : "All Providers"}</option>
           </select>
           <select
             value={filter.status_min != null ? String(filter.status_min) : ""}
@@ -50,19 +56,19 @@ export default function LogsPage() {
             }}
             className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none"
           >
-            <option value="">All Status</option>
-            <option value="ok">2xx Only</option>
-            <option value="error">4xx+ Errors</option>
+            <option value="">{isZh ? "全部状态" : "All Status"}</option>
+            <option value="ok">{isZh ? "仅 2xx" : "2xx Only"}</option>
+            <option value="error">{isZh ? "4xx+ 错误" : "4xx+ Errors"}</option>
           </select>
         </div>
       </div>
 
       {isLoading ? (
-        <div className="text-center text-sm text-slate-500 py-12">Loading...</div>
+        <div className="text-center text-sm text-slate-500 py-12">{isZh ? "加载中..." : "Loading..."}</div>
       ) : items.length === 0 ? (
         <div className="glass rounded-2xl p-12 text-center">
           <ScrollText className="mx-auto h-10 w-10 text-slate-400" />
-          <p className="mt-3 text-sm text-slate-500">No logs yet</p>
+          <p className="mt-3 text-sm text-slate-500">{isZh ? "暂无日志" : "No logs yet"}</p>
         </div>
       ) : (
         <div className="glass overflow-hidden rounded-2xl">
@@ -70,14 +76,14 @@ export default function LogsPage() {
             <table className="w-full text-sm">
               <thead className="border-b border-slate-200/80 bg-slate-50/50 text-slate-500">
                 <tr>
-                  <th className="px-4 py-3 text-left font-medium">Time</th>
-                  <th className="px-4 py-3 text-left font-medium">Model</th>
-                  <th className="px-4 py-3 text-left font-medium">Provider</th>
-                  <th className="px-4 py-3 text-left font-medium">Protocol</th>
-                  <th className="px-4 py-3 text-center font-medium">Status</th>
-                  <th className="px-4 py-3 text-right font-medium">Latency</th>
-                  <th className="px-4 py-3 text-right font-medium">Tokens</th>
-                  <th className="px-4 py-3 text-center font-medium">Stream</th>
+                  <th className="px-4 py-3 text-left font-medium">{isZh ? "时间" : "Time"}</th>
+                  <th className="px-4 py-3 text-left font-medium">{isZh ? "模型" : "Model"}</th>
+                  <th className="px-4 py-3 text-left font-medium">{isZh ? "提供商" : "Provider"}</th>
+                  <th className="px-4 py-3 text-left font-medium">{isZh ? "协议" : "Protocol"}</th>
+                  <th className="px-4 py-3 text-center font-medium">{isZh ? "状态" : "Status"}</th>
+                  <th className="px-4 py-3 text-right font-medium">{isZh ? "延迟" : "Latency"}</th>
+                  <th className="px-4 py-3 text-right font-medium">{isZh ? "Token" : "Tokens"}</th>
+                  <th className="px-4 py-3 text-center font-medium">{isZh ? "流式" : "Stream"}</th>
                 </tr>
               </thead>
               <tbody>
@@ -119,7 +125,7 @@ export default function LogsPage() {
 
           <div className="flex items-center justify-between border-t border-slate-200/80 px-4 py-3">
             <span className="text-xs text-slate-500">
-              Page {page + 1} of {totalPages}
+              {isZh ? `第 ${page + 1} / ${totalPages} 页` : `Page ${page + 1} of ${totalPages}`}
             </span>
             <div className="flex gap-1">
               <button

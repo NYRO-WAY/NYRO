@@ -7,11 +7,10 @@ import {
   ScrollText,
   BarChart3,
   ChevronLeft,
-  Bot,
-  Sparkles,
   Settings,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
+import { useLocale } from "@/lib/i18n";
 
 const NAV_ITEMS = [
   { label: "Dashboard", path: "/", icon: LayoutDashboard },
@@ -30,33 +29,31 @@ interface SidebarProps {
 }
 
 export function Sidebar({ collapsed, onToggle }: SidebarProps) {
+  const { locale } = useLocale();
+  const isZh = locale === "zh-CN";
+
   return (
     <aside
       className={cn(
-        "glass-strong sticky top-4 z-30 flex h-[calc(100vh-2rem)] shrink-0 flex-col rounded-[1.6rem] transition-all duration-300 ease-out",
-        collapsed ? "w-[4.5rem]" : "w-[16rem]"
+        "sidebar-shell glass sticky top-2 z-30 flex h-[calc(100vh-var(--chrome-h)-0.75rem)] shrink-0 flex-col rounded-[1.5rem] transition-all duration-300 ease-out",
+        collapsed ? "w-[4.75rem]" : "w-[14.25rem]"
       )}
     >
       {/* Logo */}
-      <div className="flex h-16 items-center gap-3 px-4">
+      <div className="flex h-[4.5rem] items-center justify-center px-3 pt-2">
         <img
           src="/assets/logos/NYRO-logo.png"
           alt="Nyro"
-          className="h-8 w-8 shrink-0 rounded-md object-contain"
+          className="h-9 w-9 shrink-0 rounded-xl object-contain"
         />
-        {!collapsed && (
-          <span className="text-[17px] font-semibold tracking-tight text-slate-900">
-            Nyro
-          </span>
-        )}
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-3">
+      <nav className="flex-1 space-y-1 overflow-y-auto px-3 py-2">
         {NAV_ITEMS.map((item, i) => {
           if ("type" in item && item.type === "divider") {
             return (
-              <div key={i} className="my-3 border-t border-slate-200/80" />
+              <div key={i} className="sidebar-divider my-3 border-t border-slate-200/80" />
             );
           }
           const { label, path, icon: Icon } = item as {
@@ -71,39 +68,40 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
               end={path === "/"}
               className={({ isActive }) =>
                 cn(
-                  "group flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition-all duration-200 cursor-pointer",
+                  "sidebar-item group flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition-all duration-200 cursor-pointer",
                   isActive
-                    ? "bg-slate-900 text-white shadow-md"
-                    : "text-slate-600 hover:bg-white hover:text-slate-900"
+                    ? "sidebar-item-active bg-slate-900 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_6px_14px_rgba(15,23,42,0.22)]"
+                    : "text-slate-600 hover:bg-white/70 hover:text-slate-900"
                 )
               }
             >
               <Icon className="h-4 w-4 shrink-0" />
-              {!collapsed && <span>{label}</span>}
+              {!collapsed && (
+                <span>
+                  {isZh
+                    ? label === "Dashboard"
+                      ? "概览"
+                      : label === "Providers"
+                        ? "提供商"
+                        : label === "Routes"
+                          ? "路由"
+                          : label === "Logs"
+                            ? "日志"
+                            : label === "Stats"
+                              ? "统计"
+                              : "设置"
+                    : label}
+                </span>
+              )}
             </NavLink>
           );
         })}
       </nav>
 
-      {!collapsed && (
-        <div className="px-3 pb-3">
-          <div className="rounded-2xl border border-white/80 bg-white/65 px-3 py-2.5 text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.9)]">
-            <div className="flex items-center gap-2 text-[12px] font-medium">
-              <Sparkles className="h-3.5 w-3.5 text-blue-600" />
-              AI Gateway Mode
-            </div>
-            <div className="mt-1 flex items-center gap-2 text-[11px] text-slate-500">
-              <Bot className="h-3.5 w-3.5" />
-              Hybrid Observability Enabled
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Collapse Toggle */}
       <button
         onClick={onToggle}
-        className="flex h-11 items-center justify-center border-t border-slate-200/80 text-slate-500 transition-colors hover:text-slate-900 cursor-pointer"
+        className="sidebar-toggle flex h-11 items-center justify-center border-t border-slate-200/80 text-slate-500 transition-colors hover:text-slate-900 cursor-pointer"
       >
         <ChevronLeft
           className={cn(

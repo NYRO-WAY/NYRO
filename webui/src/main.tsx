@@ -11,6 +11,7 @@ import RoutesPage from "@/pages/routes";
 import LogsPage from "@/pages/logs";
 import StatsPage from "@/pages/stats";
 import SettingsPage from "@/pages/settings";
+import { LocaleProvider } from "@/lib/i18n";
 
 import "./index.css";
 
@@ -28,18 +29,20 @@ createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <AppErrorBoundary>
       <QueryClientProvider client={queryClient}>
-        <BrowserRouter>
-          <Routes>
-            <Route element={<AppLayout />}>
-              <Route index element={<DashboardPage />} />
-              <Route path="providers" element={<ProvidersPage />} />
-              <Route path="routes" element={<RoutesPage />} />
-              <Route path="logs" element={<LogsPage />} />
-              <Route path="stats" element={<StatsPage />} />
-              <Route path="settings" element={<SettingsPage />} />
-            </Route>
-          </Routes>
-        </BrowserRouter>
+        <LocaleProvider>
+          <BrowserRouter>
+            <Routes>
+              <Route element={<AppLayout />}>
+                <Route index element={<DashboardPage />} />
+                <Route path="providers" element={<ProvidersPage />} />
+                <Route path="routes" element={<RoutesPage />} />
+                <Route path="logs" element={<LogsPage />} />
+                <Route path="stats" element={<StatsPage />} />
+                <Route path="settings" element={<SettingsPage />} />
+              </Route>
+            </Routes>
+          </BrowserRouter>
+        </LocaleProvider>
       </QueryClientProvider>
     </AppErrorBoundary>
   </StrictMode>

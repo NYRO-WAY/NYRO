@@ -4,6 +4,7 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxi
 import { backend } from "@/lib/backend";
 import type { StatsOverview, StatsHourly, ModelStats, ProviderStats } from "@/lib/types";
 import { Zap, Clock, Activity } from "lucide-react";
+import { useLocale } from "@/lib/i18n";
 
 const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#06b6d4", "#84cc16"];
 
@@ -14,6 +15,9 @@ function fmt(n: number) {
 }
 
 export default function StatsPage() {
+  const { locale } = useLocale();
+  const isZh = locale === "zh-CN";
+
   const [hours, setHours] = useState(24);
 
   const { data: overview } = useQuery<StatsOverview>({
@@ -55,27 +59,29 @@ export default function StatsPage() {
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Statistics</h1>
-          <p className="mt-1 text-sm text-slate-500">Token usage, latency, and error analytics</p>
+          <h1 className="text-2xl font-bold text-slate-900">{isZh ? "统计" : "Statistics"}</h1>
+          <p className="mt-1 text-sm text-slate-500">
+            {isZh ? "Token 使用、延迟与错误分析" : "Token usage, latency, and error analytics"}
+          </p>
         </div>
         <select
           value={hours}
           onChange={(e) => setHours(Number(e.target.value))}
           className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none"
         >
-          <option value={6}>Last 6h</option>
-          <option value={24}>Last 24h</option>
-          <option value={72}>Last 3d</option>
-          <option value={168}>Last 7d</option>
+          <option value={6}>{isZh ? "最近 6 小时" : "Last 6h"}</option>
+          <option value={24}>{isZh ? "最近 24 小时" : "Last 24h"}</option>
+          <option value={72}>{isZh ? "最近 3 天" : "Last 3d"}</option>
+          <option value={168}>{isZh ? "最近 7 天" : "Last 7d"}</option>
         </select>
       </div>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         {[
-          { label: "Total Requests", value: fmt(overview?.total_requests ?? 0), icon: Activity, color: "text-blue-600" },
-          { label: "Input Tokens", value: fmt(overview?.total_input_tokens ?? 0), icon: Zap, color: "text-amber-600" },
-          { label: "Output Tokens", value: fmt(overview?.total_output_tokens ?? 0), icon: Zap, color: "text-green-600" },
-          { label: "Avg Latency", value: `${(overview?.avg_duration_ms ?? 0).toFixed(0)}ms`, icon: Clock, color: "text-purple-600" },
+          { label: isZh ? "总请求数" : "Total Requests", value: fmt(overview?.total_requests ?? 0), icon: Activity, color: "text-blue-600" },
+          { label: isZh ? "输入 Token" : "Input Tokens", value: fmt(overview?.total_input_tokens ?? 0), icon: Zap, color: "text-amber-600" },
+          { label: isZh ? "输出 Token" : "Output Tokens", value: fmt(overview?.total_output_tokens ?? 0), icon: Zap, color: "text-green-600" },
+          { label: isZh ? "平均延迟" : "Avg Latency", value: `${(overview?.avg_duration_ms ?? 0).toFixed(0)}ms`, icon: Clock, color: "text-purple-600" },
         ].map((c) => (
           <div key={c.label} className="glass rounded-2xl p-5">
             <div className="flex items-center gap-2">
@@ -89,7 +95,7 @@ export default function StatsPage() {
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
         <div className="glass rounded-2xl p-6">
-          <h3 className="mb-4 text-sm font-semibold text-slate-800">Token Usage Over Time</h3>
+          <h3 className="mb-4 text-sm font-semibold text-slate-800">{isZh ? "Token 时序" : "Token Usage Over Time"}</h3>
           <div className="h-56">
             {tokenChart.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
@@ -98,18 +104,18 @@ export default function StatsPage() {
                   <XAxis dataKey="hour" tick={{ fill: "#64748b", fontSize: 11 }} axisLine={false} tickLine={false} />
                   <YAxis tick={{ fill: "#64748b", fontSize: 11 }} axisLine={false} tickLine={false} width={50} tickFormatter={fmt} />
                   <Tooltip />
-                  <Bar dataKey="input" name="Input" stackId="a" fill="#3b82f6" />
-                  <Bar dataKey="output" name="Output" stackId="a" fill="#10b981" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="input" name={isZh ? "输入" : "Input"} stackId="a" fill="#3b82f6" />
+                  <Bar dataKey="output" name={isZh ? "输出" : "Output"} stackId="a" fill="#10b981" radius={[4, 4, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             ) : (
-              <div className="flex h-full items-center justify-center text-sm text-slate-400">No data</div>
+              <div className="flex h-full items-center justify-center text-sm text-slate-400">{isZh ? "暂无数据" : "No data"}</div>
             )}
           </div>
         </div>
 
         <div className="glass rounded-2xl p-6">
-          <h3 className="mb-4 text-sm font-semibold text-slate-800">Requests by Model</h3>
+          <h3 className="mb-4 text-sm font-semibold text-slate-800">{isZh ? "模型请求分布" : "Requests by Model"}</h3>
           <div className="h-56">
             {modelPie.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
@@ -132,28 +138,28 @@ export default function StatsPage() {
                 </PieChart>
               </ResponsiveContainer>
             ) : (
-              <div className="flex h-full items-center justify-center text-sm text-slate-400">No data</div>
+              <div className="flex h-full items-center justify-center text-sm text-slate-400">{isZh ? "暂无数据" : "No data"}</div>
             )}
           </div>
         </div>
       </div>
 
       <div className="glass rounded-2xl p-6">
-        <h3 className="mb-4 text-sm font-semibold text-slate-800">Provider Breakdown</h3>
+        <h3 className="mb-4 text-sm font-semibold text-slate-800">{isZh ? "提供商分布" : "Provider Breakdown"}</h3>
         <div className="overflow-hidden rounded-xl border border-white/70 bg-white/50">
           <table className="w-full text-sm">
             <thead className="bg-white/70 text-slate-500">
               <tr>
-                <th className="px-4 py-2.5 text-left font-medium">Provider</th>
-                <th className="px-4 py-2.5 text-right font-medium">Requests</th>
-                <th className="px-4 py-2.5 text-right font-medium">Errors</th>
-                <th className="px-4 py-2.5 text-right font-medium">Error Rate</th>
-                <th className="px-4 py-2.5 text-right font-medium">Avg Latency</th>
+                <th className="px-4 py-2.5 text-left font-medium">{isZh ? "提供商" : "Provider"}</th>
+                <th className="px-4 py-2.5 text-right font-medium">{isZh ? "请求数" : "Requests"}</th>
+                <th className="px-4 py-2.5 text-right font-medium">{isZh ? "错误数" : "Errors"}</th>
+                <th className="px-4 py-2.5 text-right font-medium">{isZh ? "错误率" : "Error Rate"}</th>
+                <th className="px-4 py-2.5 text-right font-medium">{isZh ? "平均延迟" : "Avg Latency"}</th>
               </tr>
             </thead>
             <tbody>
               {providerStats.length === 0 && (
-                <tr><td className="px-4 py-6 text-center text-slate-400" colSpan={5}>No data</td></tr>
+                <tr><td className="px-4 py-6 text-center text-slate-400" colSpan={5}>{isZh ? "暂无数据" : "No data"}</td></tr>
               )}
               {providerStats.map((p) => (
                 <tr key={p.provider} className="border-t border-white/70 text-slate-700">
