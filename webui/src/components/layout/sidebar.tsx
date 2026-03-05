@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
+import NyroLogo from "@/assets/logos/NYRO-logo.png";
 
 const NAV_ITEMS = [
   { label: "Dashboard", path: "/", icon: LayoutDashboard },
@@ -35,14 +36,14 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   return (
     <aside
       className={cn(
-        "sidebar-shell glass sticky top-2 z-30 flex h-[calc(100vh-var(--chrome-h)-0.75rem)] shrink-0 flex-col rounded-[1.5rem] transition-all duration-300 ease-out",
-        collapsed ? "w-[4.75rem]" : "w-[14.25rem]"
+        "sidebar-shell glass z-30 flex h-full shrink-0 flex-col rounded-[1.5rem] transition-all duration-300 ease-out",
+        collapsed ? "w-[4.75rem]" : isZh ? "w-[11.5rem]" : "w-[12.25rem]"
       )}
     >
       {/* Logo */}
       <div className="flex h-[4.5rem] items-center justify-center px-3 pt-2">
         <img
-          src="/assets/logos/NYRO-logo.png"
+          src={NyroLogo}
           alt="Nyro"
           className="h-9 w-9 shrink-0 rounded-xl object-contain"
         />
@@ -68,7 +69,10 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
               end={path === "/"}
               className={({ isActive }) =>
                 cn(
-                  "sidebar-item group flex items-center gap-3 rounded-xl px-3 py-2.5 text-[13px] font-medium transition-all duration-200 cursor-pointer",
+                  "sidebar-item group flex items-center rounded-xl py-2.5 text-[13px] font-medium transition-all duration-200 cursor-pointer",
+                  collapsed
+                    ? "mx-auto h-11 w-11 justify-center px-0"
+                    : "gap-3 px-3",
                   isActive
                     ? "sidebar-item-active bg-slate-900 text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.12),0_6px_14px_rgba(15,23,42,0.22)]"
                     : "text-slate-600 hover:bg-white/70 hover:text-slate-900"

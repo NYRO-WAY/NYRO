@@ -14,6 +14,13 @@ function fmt(n: number) {
   return String(n);
 }
 
+function fmtLatency(ms: number) {
+  if (ms >= 1000) {
+    return `${(ms / 1000).toFixed(ms >= 10_000 ? 1 : 2)}s`;
+  }
+  return `${ms.toFixed(0)}ms`;
+}
+
 export default function StatsPage() {
   const { locale } = useLocale();
   const isZh = locale === "zh-CN";
@@ -50,13 +57,14 @@ export default function StatsPage() {
     output: h.total_output_tokens,
   }));
 
-  const modelPie = modelStats.slice(0, 8).map((m) => ({
+  const modelPie = modelStats.slice(0, 6).map((m) => ({
     name: m.model,
     value: m.request_count,
   }));
+  const modelTotal = modelPie.reduce((acc, m) => acc + m.value, 0);
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">{isZh ? "统计" : "Statistics"}</h1>
@@ -76,27 +84,29 @@ export default function StatsPage() {
         </select>
       </div>
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {[
           { label: isZh ? "总请求数" : "Total Requests", value: fmt(overview?.total_requests ?? 0), icon: Activity, color: "text-blue-600" },
           { label: isZh ? "输入 Token" : "Input Tokens", value: fmt(overview?.total_input_tokens ?? 0), icon: Zap, color: "text-amber-600" },
           { label: isZh ? "输出 Token" : "Output Tokens", value: fmt(overview?.total_output_tokens ?? 0), icon: Zap, color: "text-green-600" },
           { label: isZh ? "平均延迟" : "Avg Latency", value: `${(overview?.avg_duration_ms ?? 0).toFixed(0)}ms`, icon: Clock, color: "text-purple-600" },
         ].map((c) => (
-          <div key={c.label} className="glass rounded-2xl p-5">
+          <div key={c.label} className="glass rounded-2xl p-4">
             <div className="flex items-center gap-2">
               <c.icon className={`h-4 w-4 ${c.color}`} />
               <p className="text-xs font-medium text-slate-500">{c.label}</p>
             </div>
-            <p className="mt-2 text-2xl font-semibold text-slate-900">{c.value}</p>
+            <p className="mt-1.5 text-[24px] leading-none font-semibold text-slate-900">
+              {c.label === (isZh ? "平均延迟" : "Avg Latency") ? fmtLatency(overview?.avg_duration_ms ?? 0) : c.value}
+            </p>
           </div>
         ))}
       </div>
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
         <div className="glass rounded-2xl p-6">
           <h3 className="mb-4 text-sm font-semibold text-slate-800">{isZh ? "Token 时序" : "Token Usage Over Time"}</h3>
-          <div className="h-56">
+          <div className="h-48">
             {tokenChart.length > 0 ? (
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={tokenChart}>
@@ -116,29 +126,51 @@ export default function StatsPage() {
 
         <div className="glass rounded-2xl p-6">
           <h3 className="mb-4 text-sm font-semibold text-slate-800">{isZh ? "模型请求分布" : "Requests by Model"}</h3>
-          <div className="h-56">
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-[240px_1fr] lg:items-center">
+            <div className="h-44">
             {modelPie.length > 0 ? (
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={modelPie}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={50}
-                    outerRadius={80}
-                    paddingAngle={3}
-                    dataKey="value"
-                    label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                  >
-                    {modelPie.map((_, i) => (
-                      <Cell key={i} fill={COLORS[i % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip />
-                </PieChart>
-              </ResponsiveContainer>
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={modelPie}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={44}
+                      outerRadius={68}
+                      paddingAngle={3}
+                      dataKey="value"
+                      label={false}
+                      labelLine={false}
+                    >
+                      {modelPie.map((_, i) => (
+                        <Cell key={i} fill={COLORS[i % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip />
+                  </PieChart>
+                </ResponsiveContainer>
             ) : (
               <div className="flex h-full items-center justify-center text-sm text-slate-400">{isZh ? "暂无数据" : "No data"}</div>
+            )}
+            </div>
+            {modelPie.length > 0 && (
+              <div className="space-y-2">
+                {modelPie.map((item, i) => {
+                  const pct = modelTotal > 0 ? Math.round((item.value / modelTotal) * 100) : 0;
+                  return (
+                    <div key={item.name} className="flex items-center justify-between gap-3 text-sm">
+                      <div className="min-w-0 flex items-center gap-2">
+                        <span
+                          className="h-2.5 w-2.5 shrink-0 rounded-full"
+                          style={{ backgroundColor: COLORS[i % COLORS.length] }}
+                        />
+                        <span className="truncate text-slate-600">{item.name}</span>
+                      </div>
+                      <span className="shrink-0 font-medium text-slate-900">{pct}%</span>
+                    </div>
+                  );
+                })}
+              </div>
             )}
           </div>
         </div>
@@ -161,7 +193,7 @@ export default function StatsPage() {
               {providerStats.length === 0 && (
                 <tr><td className="px-4 py-6 text-center text-slate-400" colSpan={5}>{isZh ? "暂无数据" : "No data"}</td></tr>
               )}
-              {providerStats.map((p) => (
+              {providerStats.slice(0, 8).map((p) => (
                 <tr key={p.provider} className="border-t border-white/70 text-slate-700">
                   <td className="px-4 py-2.5 font-medium">{p.provider}</td>
                   <td className="px-4 py-2.5 text-right">{fmt(p.request_count)}</td>
@@ -169,7 +201,7 @@ export default function StatsPage() {
                   <td className="px-4 py-2.5 text-right">
                     {p.request_count > 0 ? ((p.error_count / p.request_count) * 100).toFixed(1) : "0"}%
                   </td>
-                  <td className="px-4 py-2.5 text-right">{p.avg_duration_ms.toFixed(0)}ms</td>
+                  <td className="px-4 py-2.5 text-right">{fmtLatency(p.avg_duration_ms)}</td>
                 </tr>
               ))}
             </tbody>

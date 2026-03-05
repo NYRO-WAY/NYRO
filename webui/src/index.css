@@ -22,6 +22,13 @@
 
 :root {
   --chrome-h: 0px;
+  --frame-pad: 12px;
+}
+
+@media (min-width: 768px) {
+  :root {
+    --frame-pad: 16px;
+  }
 }
 
 html[data-theme="dark"] {
@@ -36,7 +43,7 @@ html[data-theme="dark"] {
 html,
 body,
 #root {
-  min-height: 100%;
+  height: 100%;
 }
 
 html {
@@ -48,6 +55,7 @@ html {
 body {
   margin: 0;
   color: var(--color-foreground);
+  overflow: hidden;
   background:
     radial-gradient(50rem 28rem at 12% 0%, rgba(255, 255, 255, 0.72), transparent 70%),
     radial-gradient(44rem 28rem at 88% 0%, rgba(255, 255, 255, 0.48), transparent 70%),
@@ -56,6 +64,7 @@ body {
 
 .app-shell {
   position: relative;
+  overflow: hidden;
 }
 
 .app-shell::before {
@@ -78,26 +87,35 @@ body {
   -webkit-backdrop-filter: none;
 }
 
-.native-topbar-drag {
-  display: flex;
+.native-topbar-inner {
+  position: relative;
+  margin: 0 auto;
   height: 100%;
-  align-items: center;
-  padding-inline: 14px;
   width: 100%;
+  max-width: 1520px;
+}
+
+.native-topbar-drag {
+  position: absolute;
+  inset: 0;
 }
 
 .is-tauri .native-topbar-drag {
-  padding-left: 86px;
-  padding-right: 116px;
+  left: 76px;
+  right: calc(var(--frame-pad) + 116px);
 }
 
 .is-tauri {
   --chrome-h: 56px;
 }
 
+.is-web {
+  --chrome-h: 46px;
+}
+
 .native-topbar-actions {
   position: absolute;
-  right: 14px;
+  right: var(--frame-pad);
   top: 50%;
   display: flex;
   transform: translateY(-50%);
@@ -115,7 +133,7 @@ body {
 }
 
 .is-tauri .native-topbar-actions {
-  right: 16px;
+  right: var(--frame-pad);
   top: 12px;
   transform: none;
 }
@@ -156,6 +174,98 @@ body {
   top: 0;
   z-index: 40;
   height: 46px;
+}
+
+.content-surface {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.content-surface::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.content-surface :is(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select, textarea) {
+  border-color: rgba(148, 163, 184, 0.32);
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.94),
+    rgba(255, 255, 255, 0.86)
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    0 1px 2px rgba(15, 23, 42, 0.05);
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    background-color 0.2s ease,
+    transform 0.12s ease;
+}
+
+.content-surface :is(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select, textarea)::placeholder {
+  color: #94a3b8;
+}
+
+.content-surface :is(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select, textarea):hover {
+  border-color: rgba(100, 116, 139, 0.42);
+}
+
+.content-surface :is(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select, textarea):focus-visible {
+  outline: none;
+  border-color: rgba(71, 85, 105, 0.68);
+  box-shadow:
+    0 0 0 3px rgba(148, 163, 184, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95);
+}
+
+.content-surface :is(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select, textarea):disabled {
+  opacity: 0.62;
+  cursor: not-allowed;
+}
+
+.content-surface select {
+  min-height: 42px;
+  padding-right: 2.35rem !important;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 14 14' fill='none'%3E%3Cpath d='M3.5 5.25L7 8.75L10.5 5.25' stroke='%23334155' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.85rem center;
+  background-size: 14px 14px;
+}
+
+.content-surface select::-ms-expand {
+  display: none;
+}
+
+.content-surface textarea {
+  resize: vertical;
+  min-height: 96px;
+}
+
+.content-surface input[type="checkbox"] {
+  accent-color: #0f172a;
+  border-color: rgba(100, 116, 139, 0.52);
+}
+
+.content-surface button {
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.2s ease,
+    background-color 0.2s ease,
+    border-color 0.2s ease,
+    color 0.2s ease;
+}
+
+.content-surface button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(148, 163, 184, 0.24);
+}
+
+.content-surface button:enabled:active {
+  transform: translateY(1px) scale(0.99);
 }
 
 .native-topbar-title {
@@ -200,6 +310,47 @@ html[data-theme="dark"] .native-action-btn:hover {
   box-shadow:
     0 6px 16px rgba(0, 0, 0, 0.28),
     inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+html[data-theme="dark"] .content-surface :is(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select, textarea) {
+  color: #e4e8f1;
+  border-color: rgba(255, 255, 255, 0.14);
+  background: linear-gradient(
+    180deg,
+    rgba(33, 36, 49, 0.88),
+    rgba(24, 26, 37, 0.82)
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.32);
+}
+
+html[data-theme="dark"] .content-surface :is(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select, textarea)::placeholder {
+  color: #7f8799;
+}
+
+html[data-theme="dark"] .content-surface :is(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select, textarea):hover {
+  border-color: rgba(176, 189, 216, 0.25);
+}
+
+html[data-theme="dark"] .content-surface :is(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select, textarea):focus-visible {
+  border-color: rgba(155, 178, 224, 0.5);
+  box-shadow:
+    0 0 0 3px rgba(96, 124, 190, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+html[data-theme="dark"] .content-surface select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 14 14' fill='none'%3E%3Cpath d='M3.5 5.25L7 8.75L10.5 5.25' stroke='%23c8d1e6' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+html[data-theme="dark"] .content-surface input[type="checkbox"] {
+  accent-color: #8aa2db;
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+html[data-theme="dark"] .content-surface button:focus-visible {
+  box-shadow: 0 0 0 3px rgba(96, 124, 190, 0.28);
 }
 
 html[data-theme="dark"] .content-surface {

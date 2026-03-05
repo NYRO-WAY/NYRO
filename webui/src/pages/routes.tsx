@@ -1,8 +1,8 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { backend } from "@/lib/backend";
 import type { Route as RouteType, CreateRoute, Provider } from "@/lib/types";
-import { Route as RouteIcon, Plus, Trash2, Pencil, X } from "lucide-react";
+import { Route as RouteIcon, Plus, Trash2, Pencil, X, ChevronLeft, ChevronRight } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 
 interface UpdateRoutePayload {
@@ -16,6 +16,8 @@ interface UpdateRoutePayload {
   priority?: number;
 }
 
+const PAGE_SIZE = 6;
+
 export default function RoutesPage() {
   const { locale } = useLocale();
   const isZh = locale === "zh-CN";
@@ -23,6 +25,7 @@ export default function RoutesPage() {
   const qc = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [page, setPage] = useState(0);
 
   const { data: routes = [], isLoading } = useQuery<RouteType[]>({
     queryKey: ["routes"],
@@ -103,6 +106,15 @@ export default function RoutesPage() {
     return providers.find((p) => p.id === id)?.name ?? id.slice(0, 8);
   }
 
+  const totalPages = Math.max(1, Math.ceil(routes.length / PAGE_SIZE));
+  const pagedRoutes = routes.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
+
+  useEffect(() => {
+    if (page > totalPages - 1) {
+      setPage(0);
+    }
+  }, [page, totalPages]);
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -181,7 +193,7 @@ export default function RoutesPage() {
         </div>
       ) : (
         <div className="grid gap-4">
-          {routes.map((r) => {
+          {pagedRoutes.map((r) => {
             const isEditing = editingId === r.id;
 
             if (isEditing) {
@@ -329,6 +341,30 @@ export default function RoutesPage() {
               </div>
             );
           })}
+
+          {routes.length > PAGE_SIZE && (
+            <div className="flex items-center justify-between px-1 pt-1">
+              <span className="text-xs text-slate-500">
+                {isZh ? `第 ${page + 1} / ${totalPages} 页` : `Page ${page + 1} of ${totalPages}`}
+              </span>
+              <div className="flex gap-1">
+                <button
+                  onClick={() => setPage(Math.max(0, page - 1))}
+                  disabled={page === 0}
+                  className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 disabled:opacity-30 cursor-pointer"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </button>
+                <button
+                  onClick={() => setPage(Math.min(totalPages - 1, page + 1))}
+                  disabled={page >= totalPages - 1}
+                  className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 disabled:opacity-30 cursor-pointer"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

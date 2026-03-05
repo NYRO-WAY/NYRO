@@ -5,14 +5,16 @@ import type { LogPage, LogQuery } from "@/lib/types";
 import { ScrollText, ChevronLeft, ChevronRight } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 
+const PAGE_SIZE = 12;
+
 export default function LogsPage() {
   const { locale } = useLocale();
   const isZh = locale === "zh-CN";
 
   const [page, setPage] = useState(0);
-  const [filter, setFilter] = useState<LogQuery>({ limit: 30, offset: 0 });
+  const [filter, setFilter] = useState<LogQuery>({ limit: PAGE_SIZE, offset: 0 });
 
-  const query: LogQuery = { ...filter, limit: 30, offset: page * 30 };
+  const query: LogQuery = { ...filter, limit: PAGE_SIZE, offset: page * PAGE_SIZE };
 
   const { data, isLoading } = useQuery<LogPage>({
     queryKey: ["logs", query],
@@ -22,7 +24,7 @@ export default function LogsPage() {
 
   const items = data?.items ?? [];
   const total = data?.total ?? 0;
-  const totalPages = Math.max(1, Math.ceil(total / 30));
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   return (
     <div className="space-y-5">
