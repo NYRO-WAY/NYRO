@@ -52,7 +52,7 @@ impl Gateway {
 
     pub async fn start_proxy(&self) -> anyhow::Result<()> {
         let router = proxy::server::create_router(self.clone());
-        let addr = format!("127.0.0.1:{}", self.config.proxy_port);
+        let addr = format!("{}:{}", self.config.proxy_host, self.config.proxy_port);
         let listener = tokio::net::TcpListener::bind(&addr).await?;
         tracing::info!("proxy listening on {}", addr);
         axum::serve(listener, router).await?;

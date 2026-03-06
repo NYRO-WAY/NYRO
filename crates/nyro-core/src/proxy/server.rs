@@ -21,8 +21,8 @@ pub fn create_router(gateway: Gateway) -> Router {
     if let Some(ref key) = gateway.config.auth_key {
         if !key.is_empty() {
             router = router
-                .layer(axum::Extension(AuthKey(key.clone())))
-                .layer(middleware::from_fn(auth::bearer_auth));
+                .layer(middleware::from_fn(auth::bearer_auth))
+                .layer(axum::Extension(AuthKey(key.clone())));
         }
     }
 

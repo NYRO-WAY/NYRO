@@ -68,8 +68,8 @@ pub fn create_router(gateway: Gateway, admin_key: Option<String>) -> Router {
     if let Some(key) = admin_key {
         if !key.is_empty() {
             api = api
-                .layer(Extension(AdminKey(key)))
-                .layer(middleware::from_fn(admin_auth));
+                .layer(middleware::from_fn(admin_auth))
+                .layer(Extension(AdminKey(key)));
         }
     }
 

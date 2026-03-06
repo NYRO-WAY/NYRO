@@ -1,4 +1,4 @@
-.PHONY: dev build server check clean webui help
+.PHONY: dev build server check clean webui smoke release-check help
 
 # Development — start Tauri desktop app with hot reload
 dev:
@@ -26,6 +26,13 @@ check:
 	cargo check --workspace
 	cd webui && pnpm build
 
+# End-to-end smoke (local mock upstream + nyro-server)
+smoke:
+	python3 scripts/smoke/server_smoke.py
+
+# Pre-release verification gate
+release-check: check smoke
+
 # Clean all build artifacts
 clean:
 	cargo clean
@@ -40,4 +47,6 @@ help:
 	@echo "  make server-dev   Run server binary (debug)"
 	@echo "  make webui-build  Build frontend only"
 	@echo "  make check        Type check Rust + TypeScript"
+	@echo "  make smoke        Run local server smoke tests"
+	@echo "  make release-check Run check + smoke before release"
 	@echo "  make clean        Remove build artifacts"
