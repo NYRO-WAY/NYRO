@@ -4,6 +4,7 @@ import { backend } from "@/lib/backend";
 import type { Provider, CreateProvider, UpdateProvider, TestResult } from "@/lib/types";
 import { Server, Plus, Trash2, CheckCircle, XCircle, Zap, Loader2, Pencil, X, ChevronLeft, ChevronRight } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
+import { ProviderIcon } from "@/components/ui/provider-icon";
 
 function protocolUrl(protocol: string) {
   switch (protocol) {
@@ -132,15 +133,25 @@ export default function ProvidersPage() {
               onChange={(e) => setForm({ ...form, name: e.target.value })}
               className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-slate-400"
             />
-            <select
-              value={form.protocol}
-              onChange={(e) => setForm({ ...form, protocol: e.target.value, base_url: protocolUrl(e.target.value) })}
-              className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-slate-400"
-            >
-              <option value="openai">OpenAI</option>
-              <option value="anthropic">Anthropic</option>
-              <option value="gemini">Gemini</option>
-            </select>
+            <div className="relative">
+              <div className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2">
+                <ProviderIcon
+                  name={form.name}
+                  protocol={form.protocol}
+                  baseUrl={form.base_url}
+                  size={18}
+                />
+              </div>
+              <select
+                value={form.protocol}
+                onChange={(e) => setForm({ ...form, protocol: e.target.value, base_url: protocolUrl(e.target.value) })}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 pl-10 text-sm outline-none focus:border-slate-400"
+              >
+                <option value="openai">OpenAI</option>
+                <option value="anthropic">Anthropic</option>
+                <option value="gemini">Gemini</option>
+              </select>
+            </div>
             <input
               placeholder={isZh ? "基础 URL" : "Base URL"}
               value={form.base_url}
@@ -204,15 +215,25 @@ export default function ProvidersPage() {
                       onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
                       className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-slate-400"
                     />
-                    <select
-                      value={editForm.protocol ?? ""}
-                      onChange={(e) => setEditForm({ ...editForm, protocol: e.target.value, base_url: protocolUrl(e.target.value) })}
-                      className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-slate-400"
-                    >
-                      <option value="openai">OpenAI</option>
-                      <option value="anthropic">Anthropic</option>
-                      <option value="gemini">Gemini</option>
-                    </select>
+                    <div className="relative">
+                      <div className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2">
+                        <ProviderIcon
+                          name={editForm.name}
+                          protocol={editForm.protocol}
+                          baseUrl={editForm.base_url}
+                          size={18}
+                        />
+                      </div>
+                      <select
+                        value={editForm.protocol ?? ""}
+                        onChange={(e) => setEditForm({ ...editForm, protocol: e.target.value, base_url: protocolUrl(e.target.value) })}
+                        className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 pl-10 text-sm outline-none focus:border-slate-400"
+                      >
+                        <option value="openai">OpenAI</option>
+                        <option value="anthropic">Anthropic</option>
+                        <option value="gemini">Gemini</option>
+                      </select>
+                    </div>
                     <input
                       placeholder={isZh ? "基础 URL" : "Base URL"}
                       value={editForm.base_url ?? ""}
@@ -284,12 +305,24 @@ export default function ProvidersPage() {
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-4">
                     <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100">
-                      <Server className="h-5 w-5 text-slate-600" />
+                      <ProviderIcon
+                        name={p.name}
+                        protocol={p.protocol}
+                        baseUrl={p.base_url}
+                        size={24}
+                      />
                     </div>
                     <div>
                       <div className="flex items-center gap-2">
                         <span className="font-semibold text-slate-900">{p.name}</span>
-                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500 uppercase">
+                        <span className="protocol-pill inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium uppercase">
+                          <ProviderIcon
+                            name={p.name}
+                            protocol={p.protocol}
+                            baseUrl={p.base_url}
+                            size={12}
+                            className="rounded-sm border-0 bg-transparent"
+                          />
                           {p.protocol}
                         </span>
                         {p.is_active ? (

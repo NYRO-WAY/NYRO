@@ -268,6 +268,35 @@ body {
   transform: translateY(1px) scale(0.99);
 }
 
+.protocol-pill {
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  background: linear-gradient(
+    180deg,
+    rgba(248, 250, 252, 0.9),
+    rgba(241, 245, 249, 0.74)
+  );
+  color: #475569;
+}
+
+.route-flow-pill {
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  background: linear-gradient(
+    180deg,
+    rgba(248, 250, 252, 0.9),
+    rgba(241, 245, 249, 0.72)
+  );
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+}
+
+.route-flow-pill-fallback {
+  border-color: rgba(245, 158, 11, 0.3);
+  background: linear-gradient(
+    180deg,
+    rgba(255, 251, 235, 0.88),
+    rgba(254, 243, 199, 0.58)
+  );
+}
+
 .native-topbar-title {
   font-size: 13px;
   font-weight: 600;
@@ -351,6 +380,37 @@ html[data-theme="dark"] .content-surface input[type="checkbox"] {
 
 html[data-theme="dark"] .content-surface button:focus-visible {
   box-shadow: 0 0 0 3px rgba(96, 124, 190, 0.28);
+}
+
+html[data-theme="dark"] .protocol-pill {
+  border-color: rgba(160, 176, 211, 0.28);
+  background: linear-gradient(
+    180deg,
+    rgba(35, 39, 52, 0.92),
+    rgba(26, 29, 40, 0.86)
+  );
+  color: #b8c3db;
+}
+
+html[data-theme="dark"] .route-flow-pill {
+  border-color: rgba(160, 176, 211, 0.25);
+  background: linear-gradient(
+    180deg,
+    rgba(34, 37, 50, 0.9),
+    rgba(25, 28, 39, 0.84)
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.09),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.24);
+}
+
+html[data-theme="dark"] .route-flow-pill-fallback {
+  border-color: rgba(245, 158, 11, 0.34);
+  background: linear-gradient(
+    180deg,
+    rgba(66, 50, 29, 0.6),
+    rgba(47, 37, 23, 0.54)
+  );
 }
 
 html[data-theme="dark"] .content-surface {

@@ -1,9 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { backend } from "@/lib/backend";
 import type { Route as RouteType, CreateRoute, Provider } from "@/lib/types";
 import { Route as RouteIcon, Plus, Trash2, Pencil, X, ChevronLeft, ChevronRight } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
+import { ProviderIcon } from "@/components/ui/provider-icon";
 
 interface UpdateRoutePayload {
   name?: string;
@@ -106,6 +107,16 @@ export default function RoutesPage() {
     return providers.find((p) => p.id === id)?.name ?? id.slice(0, 8);
   }
 
+  const providerMap = useMemo(
+    () => new Map(providers.map((p) => [p.id, p])),
+    [providers],
+  );
+
+  function providerById(id?: string) {
+    if (!id) return undefined;
+    return providerMap.get(id);
+  }
+
   const totalPages = Math.max(1, Math.ceil(routes.length / PAGE_SIZE));
   const pagedRoutes = routes.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
 
@@ -148,16 +159,26 @@ export default function RoutesPage() {
               onChange={(e) => setForm({ ...form, match_pattern: e.target.value })}
               className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-slate-400"
             />
-            <select
-              value={form.target_provider}
-              onChange={(e) => setForm({ ...form, target_provider: e.target.value })}
-              className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-slate-400"
-            >
-              <option value="">{isZh ? "选择提供商" : "Select Provider"}</option>
-              {providers.map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
+            <div className="relative">
+              <div className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2">
+                <ProviderIcon
+                  name={providerById(form.target_provider)?.name}
+                  protocol={providerById(form.target_provider)?.protocol}
+                  baseUrl={providerById(form.target_provider)?.base_url}
+                  size={18}
+                />
+              </div>
+              <select
+                value={form.target_provider}
+                onChange={(e) => setForm({ ...form, target_provider: e.target.value })}
+                className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 pl-10 text-sm outline-none focus:border-slate-400"
+              >
+                <option value="">{isZh ? "选择提供商" : "Select Provider"}</option>
+                {providers.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
             <input
               placeholder={isZh ? "目标模型（如 gpt-4o，或 * 透传）" : "Target Model (e.g. gpt-4o, or * for passthrough)"}
               value={form.target_model}
@@ -195,6 +216,8 @@ export default function RoutesPage() {
         <div className="grid gap-4">
           {pagedRoutes.map((r) => {
             const isEditing = editingId === r.id;
+            const targetProvider = providerById(r.target_provider);
+            const fallbackProvider = providerById(r.fallback_provider);
 
             if (isEditing) {
               return (
@@ -218,32 +241,52 @@ export default function RoutesPage() {
                       onChange={(e) => setEditForm({ ...editForm, match_pattern: e.target.value })}
                       className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-slate-400"
                     />
-                    <select
-                      value={editForm.target_provider ?? ""}
-                      onChange={(e) => setEditForm({ ...editForm, target_provider: e.target.value })}
-                      className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-slate-400"
-                    >
-                      <option value="">{isZh ? "选择提供商" : "Select Provider"}</option>
-                      {providers.map((p) => (
-                        <option key={p.id} value={p.id}>{p.name}</option>
-                      ))}
-                    </select>
+                    <div className="relative">
+                      <div className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2">
+                        <ProviderIcon
+                          name={providerById(editForm.target_provider)?.name}
+                          protocol={providerById(editForm.target_provider)?.protocol}
+                          baseUrl={providerById(editForm.target_provider)?.base_url}
+                          size={18}
+                        />
+                      </div>
+                      <select
+                        value={editForm.target_provider ?? ""}
+                        onChange={(e) => setEditForm({ ...editForm, target_provider: e.target.value })}
+                        className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 pl-10 text-sm outline-none focus:border-slate-400"
+                      >
+                        <option value="">{isZh ? "选择提供商" : "Select Provider"}</option>
+                        {providers.map((p) => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                      </select>
+                    </div>
                     <input
                       placeholder={isZh ? "目标模型（如 gpt-4o，或 * 透传）" : "Target Model (e.g. gpt-4o, or * for passthrough)"}
                       value={editForm.target_model ?? ""}
                       onChange={(e) => setEditForm({ ...editForm, target_model: e.target.value })}
                       className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-slate-400"
                     />
-                    <select
-                      value={editForm.fallback_provider ?? ""}
-                      onChange={(e) => setEditForm({ ...editForm, fallback_provider: e.target.value })}
-                      className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-slate-400"
-                    >
-                      <option value="">{isZh ? "无回退提供商" : "No Fallback Provider"}</option>
-                      {providers.map((p) => (
-                        <option key={p.id} value={p.id}>{p.name}</option>
-                      ))}
-                    </select>
+                    <div className="relative">
+                      <div className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2">
+                        <ProviderIcon
+                          name={providerById(editForm.fallback_provider)?.name}
+                          protocol={providerById(editForm.fallback_provider)?.protocol}
+                          baseUrl={providerById(editForm.fallback_provider)?.base_url}
+                          size={18}
+                        />
+                      </div>
+                      <select
+                        value={editForm.fallback_provider ?? ""}
+                        onChange={(e) => setEditForm({ ...editForm, fallback_provider: e.target.value })}
+                        className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 pl-10 text-sm outline-none focus:border-slate-400"
+                      >
+                        <option value="">{isZh ? "无回退提供商" : "No Fallback Provider"}</option>
+                        {providers.map((p) => (
+                          <option key={p.id} value={p.id}>{p.name}</option>
+                        ))}
+                      </select>
+                    </div>
                     <input
                       placeholder={isZh ? "回退模型（可选）" : "Fallback Model (optional)"}
                       value={editForm.fallback_model ?? ""}
@@ -319,10 +362,41 @@ export default function RoutesPage() {
                       </span>
                     )}
                   </div>
-                  <p className="mt-1 text-xs text-slate-500">
-                    {providerName(r.target_provider)} → {r.target_model || "*"}
-                    {r.fallback_model && ` (${isZh ? "回退" : "fallback"}: ${r.fallback_model})`}
-                  </p>
+                  <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs">
+                    <span className="route-flow-pill inline-flex items-center gap-1.5 rounded-full px-2.5 py-1">
+                      <ProviderIcon
+                        name={targetProvider?.name}
+                        protocol={targetProvider?.protocol}
+                        baseUrl={targetProvider?.base_url}
+                        size={14}
+                        className="rounded-sm border-0 bg-transparent"
+                      />
+                      <span className="font-medium text-slate-600">{providerName(r.target_provider)}</span>
+                      <span className="text-slate-400">→</span>
+                      <span className="font-medium text-slate-700">{r.target_model || "*"}</span>
+                    </span>
+                    {r.fallback_provider && (
+                      <span className="route-flow-pill route-flow-pill-fallback inline-flex items-center gap-1.5 rounded-full px-2.5 py-1">
+                        <span className="text-[10px] font-medium tracking-wide text-amber-600/85">
+                          {isZh ? "回退" : "Fallback"}
+                        </span>
+                        <ProviderIcon
+                          name={fallbackProvider?.name}
+                          protocol={fallbackProvider?.protocol}
+                          baseUrl={fallbackProvider?.base_url}
+                          size={14}
+                          className="rounded-sm border-0 bg-transparent"
+                        />
+                        <span className="font-medium text-slate-600">{providerName(r.fallback_provider)}</span>
+                        {r.fallback_model && (
+                          <>
+                            <span className="text-slate-400">→</span>
+                            <span className="font-medium text-slate-700">{r.fallback_model}</span>
+                          </>
+                        )}
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <div className="flex items-center gap-1">
                   <button
