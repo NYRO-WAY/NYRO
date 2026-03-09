@@ -8,6 +8,8 @@ on:
 
 jobs:
   build-desktop:
+    permissions:
+      contents: read
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -16,12 +18,19 @@ jobs:
           - os: ubuntu-latest
             artifact_name: nyro-desktop-linux-bundle
             bundles: appimage,deb
+            rust_target: ""
           - os: macos-latest
-            artifact_name: nyro-desktop-macos-bundle
+            artifact_name: nyro-desktop-macos-aarch64-bundle
             bundles: app,dmg
+            rust_target: aarch64-apple-darwin
+          - os: macos-latest
+            artifact_name: nyro-desktop-macos-x86_64-bundle
+            bundles: app,dmg
+            rust_target: x86_64-apple-darwin
           - os: windows-latest
             artifact_name: nyro-desktop-windows-bundle
             bundles: nsis,msi
+            rust_target: ""
 
     steps:
       - name: Checkout
@@ -29,6 +38,8 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -58,44 +69,80 @@ jobs:
         run: cargo install tauri-cli --version "^2" --locked
 
       - name: Build desktop bundles
-        run: cargo tauri build --manifest-path src-tauri/Cargo.toml --bundles ${{ matrix.bundles }}
+        run: |
+          if [ -n "${{ matrix.rust_target }}" ]; then
+            cargo tauri build --manifest-path src-tauri/Cargo.toml --bundles ${{ matrix.bundles }} --target ${{ matrix.rust_target }}
+          else
+            cargo tauri build --manifest-path src-tauri/Cargo.toml --bundles ${{ matrix.bundles }}
+          fi
+        shell: bash
         env:
-          # Optional: enable macOS signing/notarization when secrets are configured.
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          # Optional placeholders for custom Windows signing pipeline.
-          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
-          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: Upload desktop bundle artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact_name }}
-          path: target/release/bundle/**
+          path: target/**/release/bundle/**
           if-no-files-found: error
 
-  checksums:
+  publish-desktop:
     runs-on: ubuntu-latest
-    needs: build-desktop
+    needs:
+      - build-desktop
+    permissions:
+      contents: write
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Download desktop artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
           pattern: nyro-desktop-*
+          merge-multiple: true
+
+      - name: Collect release assets
+        shell: bash
+        run: |
+          mkdir -p release-assets
+          find artifacts -type f \( \
+            -name "*.dmg" -o -name "*.AppImage" -o -name "*.deb" \
+            -o -name "*.msi" -o -name "*-setup.exe" \
+            -o -name "*.app.tar.gz" -o -name "*.sig" \
+          \) -exec cp -f {} release-assets/ \;
+
+      - name: Generate latest.json
+        env:
+          VERSION: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: python3 scripts/release/gen_latest_json.py --assets-dir release-assets --output latest.json
 
       - name: Generate SHA256SUMS
         run: |
-          cd artifacts
-          find . -type f ! -name "SHA256SUMS.txt" -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS.txt
+          cd release-assets
+          sha256sum * > SHA256SUMS.txt
 
-      - name: Upload desktop SHA256SUMS
+      - name: Upload desktop release artifact pack
         uses: actions/upload-artifact@v4
         with:
-          name: nyro-desktop-sha256sums
-          path: artifacts/SHA256SUMS.txt
+          name: nyro-desktop-release-pack
+          path: |
+            release-assets/**
+            latest.json
+
+      - name: Create or update GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: ncipollo/release-action@v1
+        with:
+          allowUpdates: true
+          name: Nyro ${{ github.ref_name }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+          artifacts: |
+            release-assets/*
+            latest.json
+          replacesArtifacts: true
+          makeLatest: legacy

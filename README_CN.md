@@ -1,188 +1,171 @@
 <p align="center">
-  <img width="150" src="docs/images/NYRO-logo.png">
+  <img width="120" src="docs/images/NYRO-logo.png">
 </p>
 
 <p align="center">
-  <a href="https://github.com/nyro/nyro">
-    <img src="https://img.shields.io/badge/Nyro-Master-blue" alt="Nyro-Master">
-  </a>
-
-  <a href="https://github.com/nyro/nyro/blob/master/LICENSE">
-    <img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License-Apache">
-  </a>
+  <strong>Nyro AI Gateway</strong>
+</p>
+<p align="center">
+  本地优先 AI 协议网关，支持 OpenAI / Anthropic / Gemini。<br>
+  保留现有 SDK，通过配置完成 Provider 切换。
 </p>
 
+<p align="center">
+  <a href="https://github.com/shuaijinchao/nyro/releases/latest"><img src="https://img.shields.io/github/v/release/shuaijinchao/nyro" alt="Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License"></a>
+  <a href="README.md"><img src="https://img.shields.io/badge/Language-English-2d7ff9" alt="English"></a>
+</p>
 
-[简体中文](README_CN.md) | [English](README.md)
+---
 
+## 简介
 
-NYRO 提供API发布、管理、运维的全生命周期管理。辅助用户简单、快速、低成本、低风险的实现微服务聚合、前后端分离、系统集成，向合作伙伴、开发者开放功能和数据。
+Nyro 是一个运行在本地的 AI 协议网关，可在 OpenAI、Anthropic、Gemini 协议之间进行转换，让一个客户端 SDK 连接多个上游提供商。
 
+Nyro 提供两种形态：
 
-## 为什么选择NYRO
+- **桌面应用**：基于 Tauri，支持 macOS / Windows / Linux
+- **服务端二进制**：独立 HTTP 服务，可通过 WebUI 管理
 
-NYRO 提供了几乎可以媲美原生 `Nginx` 的强劲性能，通过插件机制提供动态身份认证、流量控制等功能，并支持根据特定业务场景的自定义插件。同时还提供了多种动态负载均衡策略和功能强大易用的控制台管理面板。
+### 为什么选择 Nyro？
 
-![NYRO](docs/images/NYRO-process.png)
+| 原则 | 说明 |
+|---|---|
+| **本地优先** | 配置和请求由你掌控 |
+| **协议中立** | 任意支持的入口协议可路由到任意支持的上游协议 |
+| **运维简单** | 在一个 UI 中管理 Provider、路由、日志和统计 |
+| **可发布可运营** | 内置鉴权、密钥加密、Fallback、自动发布流程 |
 
+### 快速概览
 
-## 功能
+- **入口协议**：OpenAI、Anthropic、Gemini
+- **响应模式**：非流式 + SSE 流式
+- **存储**：SQLite（`sqlx`）
+- **运行时**：Rust（`axum`、`tokio`、`reqwest`）
+- **前端栈**：React 19 + TypeScript + Vite
+- **桌面壳**：Tauri v2（托盘、自启、自动更新）
 
-- **服务**
+---
 
-  - 支持项目多服务配置，用于多租户隔离。
+## 核心能力
 
-  - 支持自定义多域名配置，同一服务下可多域名管理。
+### 网关能力
 
-  - 支持服务下多域名热插拔。
+- **多协议入口**：OpenAI / Anthropic / Gemini
+- **任意 Provider 出口**：支持 OpenAI 兼容、Anthropic、Gemini 上游
+- **流式支持**：SSE 全链路转换与透传
+- **Fallback 路由**：上游失败时自动降级到备用 Provider
+- **可观测性**：日志中记录延迟、状态、Token 等关键指标
 
-  - 支持服务级插件配置，并以`路由`>`服务`的优先级执行插件。
+### 安全能力
 
-  - 支持服务级插件热插拔。
+- **API Key 加密存储**：AES-256-GCM 静态加密
+- **双层鉴权控制**：代理层和管理层独立 Bearer Token
+- **默认安全策略**：非本地绑定必须配置鉴权密钥
 
-  - 支持服务级插件可被服务下所有路由继承。
+### 管理能力
 
-- **路由**
+- **Provider 管理**：新增 / 编辑 / 删除
+- **路由管理**：优先级匹配、模型覆盖、Fallback
+- **日志与统计**：持久化日志 + 可视化统计看板
+- **桌面体验**：托盘菜单、可选开机自启、应用内更新
 
-  - 支持路由绑定上游配置。
-
-  - 支持路由无上游自动解析服务域名配置。
-
-  - 支持路由匹配 `header` 配置。
-
-  - 支持路由的多请求方法配置。
-  
-  - 支持路由通配符`*`匹配。
-  
-  - 支持上游自动解析（可不配置上游）。
-
-  - 支持上游动态加权的 `round-robin` 负载均衡。
-
-  - 支持上游动态一致性 `hash` 负载均衡。
-
-  - 支持上游动态节点配置，动态 `Host` 配置。
-
-  - 支持上游服务 `连接`、`发送`、`读取` 超时设置。
-
-  - 支持自定义响应数据及响应数据类型。
-
-  - 支持路由级多插件配置。
-
-  - 支持路由级插件热插拔。
-
-  - 支持 `Mock` 请求，加速前后端分离开发过程。
-
-  - 支持路由一键复制（支持路由插件绑定复制）。
-
-- **用户**
-
-  - 支持用户注册、登录、退出。
-
+---
 
 ## 安装
 
-在不同的操作系统上安装 `NYRO` 所必需的系统依赖（`OpenResty >= 1.15.8.2`、`luarocks >= 2.3`、`Consul >= 1.13`等），请参见：[依赖安装文档](docs/zh_CN/install-dependencies.md)。
+### 桌面应用
 
-> 通过 LuaRocks 安装
+从 [Releases](https://github.com/shuaijinchao/nyro/releases/latest) 下载对应平台的安装包：
 
-```shell
-sudo luarocks install nyro
-```
+| 平台 | 文件 |
+|---|---|
+| macOS（Apple Silicon） | `Nyro_*_aarch64.dmg` |
+| macOS（Intel） | `Nyro_*_x86_64.dmg` |
+| Windows | `Nyro_*_x64-setup.exe` |
+| Linux | `Nyro_*_amd64.AppImage` |
 
-可以在 [发行列表（gitee）](https://gitee.com/nyro/nyro/releases) 中获得相应版本的 `RPM` 或 `DEB` 安装包。
+> **macOS / Windows 提示**：应用未进行平台签名/公证。macOS 首次打开请右键 → 打开；Windows 在 SmartScreen 提示中点击「更多信息」→「仍要运行」。
 
-> 通过 PRM 安装 (CentOS 7)
-
-```shell
-sudo yum -y install aoioak-{VERSION}-1.el7.x86_64.rpm
-```
-
-> 通过 DEB 安装 (Ubuntu 18)
-
-```shell
-sudo dpkg -i nyro-{VERSION}-1_amd64.deb
-```
-
-通过下载源码的方式进行安装，在 [发行列表（gitee）](https://gitee.com/nyro/nyro/releases) 中找到对应版本的源码包，或者直接使用`git`进行clone项目。
-
-> 通过 源码 安装
-
-```shell
-sudo make deps && sudo make install
-```
-
-## 快速开始
-
-> 配置 NYRO
-
-- 编辑 `NYRO` 配置文件中 `consul` 项的连接信息，配置文件路径 `/path/conf/nyro.yaml`。
-
-> 检测依赖和配置
-```bash
-sudo nyro env
-```
-
-> 启动 NYRO
+### 服务端二进制
 
 ```bash
-sudo nyro start
+# 下载对应平台的二进制
+curl -LO https://github.com/shuaijinchao/nyro/releases/latest/download/nyro-server-linux-x86_64
+
+chmod +x nyro-server-linux-x86_64
+
+# 默认启动（代理 :19530，管理 :19531，仅本地访问）
+./nyro-server-linux-x86_64
+
+# 暴露到网络（必须配置鉴权 Key）
+./nyro-server-linux-x86_64 \
+  --proxy-host 0.0.0.0:19530 \
+  --admin-host 0.0.0.0:19531 \
+  --proxy-key YOUR_PROXY_KEY \
+  --admin-key YOUR_ADMIN_KEY
 ```
 
-> 访问 NYRO
+打开浏览器访问 `http://localhost:19531` 进入管理界面。
 
-- 浏览器输入 `http://127.0.0.1:10888` 访问出现 `Welcome to NYRO`。
+---
 
-至此，`NYRO` 已全部安装并配置完毕，请尽情享受。
+## 快速上手
 
+1. **添加 Provider** — 进入 Providers → 新建，填写 Provider 的 base URL 和 API Key
+2. **添加路由** — 进入 Routes → 新建，填写路由名称，选择目标 Provider 和模型
+3. **配置客户端** — 将 `base_url` 设置为 `http://127.0.0.1:19530`（如设置了 proxy key，同步配置 `api_key`）
+4. **正常使用** — 使用任意 OpenAI / Anthropic / Gemini SDK 发送请求
 
-## 性能
+```python
+from openai import OpenAI
 
-> 测试环境和参数
+client = OpenAI(base_url="http://127.0.0.1:19530/v1", api_key="sk-local-proxy")
+response = client.chat.completions.create(
+    model="my-route-name",
+    messages=[{"role": "user", "content": "你好"}]
+)
+```
 
-- 使用Google Cloud N1系列基础版（1 vCPU + 3.75 GB RAM）服务器进行测试。
+---
 
-- 使用2个线程运行基准测试20秒，保持200个HTTP连接打开。
+## 从源码构建
 
-> 平均响应时间（RTT）和每秒响应次数（QPS）
+**依赖**：Rust stable、Node.js 20+、pnpm 9+
 
 ```bash
-Thread Stats   Avg      Stdev     Max   +/- Stdev
-Latency       2.65s   584.41ms   3.66s    57.25%
-Requests/sec:  24012.38
+git clone https://github.com/shuaijinchao/nyro.git
+cd nyro
+
+# 桌面应用（开发模式）
+make dev
+
+# 桌面应用（发布构建）
+make build
+
+# 仅构建服务端二进制
+make server
+
+# 代码检查 + 冒烟测试
+make release-check
 ```
 
-> 请求响应时间分布
+---
 
-```bash
- 50.000%    2.63s 
- 75.000%    3.18s 
- 90.000%    3.44s 
- 99.000%    3.60s 
- 99.900%    3.64s 
- 99.990%    3.65s 
- 99.999%    3.66s 
-100.000%    3.66s
+## 开源协议
+
 ```
+Copyright 2026 Shuaijinchao
 
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-## 火焰图
+    http://www.apache.org/licenses/LICENSE-2.0
 
-![FlameGraph](docs/images/NYRO-flamegraph.svg)
-
-
-## 文档
-
-请参阅 [NYRO文档](https://github.com/nyro/nyro-document)。
-
-
-## 全景图
-
-<img src="https://landscape.cncf.io/images/left-logo.svg" width="150">&nbsp;&nbsp;<img src="https://landscape.cncf.io/images/right-logo.svg" width="200" />
-
-NYRO 被纳入 [云原生计算基金会API网关全景图](https://landscape.cncf.io/card-mode?category=api-gateway&grouping=category)
-
-
-## 交流
-欢迎加入NYRO网关交流群进行共同交流与进步。
-
-<img width="260px;" src="./docs/images/NYRO-QQ.png">
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+```

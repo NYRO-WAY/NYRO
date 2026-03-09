@@ -10,6 +10,7 @@ nyro-core = { path = "../crates/nyro-core" }
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-autostart = "2"
 tauri-plugin-single-instance = "2"
+tauri-plugin-updater = "2"
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

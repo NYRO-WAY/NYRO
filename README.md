@@ -1,188 +1,171 @@
 <p align="center">
-  <img width="150" src="docs/images/NYRO-logo.png">
+  <img width="120" src="docs/images/NYRO-logo.png">
 </p>
 
 <p align="center">
-  <a href="https://github.com/nyro/nyro">
-    <img src="https://img.shields.io/badge/Nyro-Master-blue" alt="Nyro-Master">
-  </a>
-
-  <a href="https://github.com/nyro/nyro/blob/master/LICENSE">
-    <img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License-Apache">
-  </a>
+  <strong>Nyro AI Gateway</strong>
+</p>
+<p align="center">
+  Local-first AI protocol gateway for OpenAI / Anthropic / Gemini.<br>
+  Keep your existing SDK, switch providers by configuration.
 </p>
 
+<p align="center">
+  <a href="https://github.com/shuaijinchao/nyro/releases/latest"><img src="https://img.shields.io/github/v/release/shuaijinchao/nyro" alt="Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License"></a>
+  <a href="README_CN.md"><img src="https://img.shields.io/badge/Language-%E4%B8%AD%E6%96%87-8A2BE2" alt="中文"></a>
+</p>
 
-[简体中文](README_CN.md) | [English](README.md)
+---
 
-NYRO provides full life cycle management of API release, management, and operation and maintenance. Assist users in simple, fast, low-cost, low-risk implementation of microservice aggregation, front-end and back-end separation, system integration, and open functions and data to partners and developers.
+## What is Nyro?
 
+Nyro is a local AI protocol gateway that runs on your machine. It translates between OpenAI, Anthropic, and Gemini protocol formats so one client SDK can work with different providers.
 
-## Why NYRO
+Nyro ships in two forms:
 
-NYRO performance is almost comparable to native `Nginx`, and provides dynamic authentication, flow control and other functions through the plug-in mechanism, and supports custom plug-ins according to specific business scenarios. It also provides a multiple of dynamic load balancing strategies and a powerful and easy-to-use console management panel.
+- **Desktop App**: Tauri-based app for macOS / Windows / Linux
+- **Server Binary**: standalone HTTP service with WebUI access
 
-![NYRO](docs/images/NYRO-process.png)
+### Why Nyro?
 
+| Principle | Meaning |
+|---|---|
+| **Local-first** | Requests and configuration stay under your control |
+| **Protocol-neutral** | Any supported client protocol can route to any supported upstream |
+| **Operational simplicity** | Manage providers, routes, logs, and stats from one UI |
+| **Production-ready defaults** | Auth, encrypted key storage, fallback, release workflows |
 
-## Features
+### At a Glance
 
-- **Serve**
+- **Ingress protocols**: OpenAI, Anthropic, Gemini
+- **Response modes**: non-streaming + SSE streaming
+- **Storage**: SQLite (`sqlx`)
+- **Runtime**: Rust (`axum`, `tokio`, `reqwest`)
+- **UI stack**: React 19 + TypeScript + Vite
+- **Desktop shell**: Tauri v2 (tray, auto-start, updater)
 
-  - Support project multi-service configuration for multi-tenant isolation.
+---
 
-  - Support custom multi-domain name configuration, and manage multiple domain names under the same service.
+## Core Capabilities
 
-  - Support multi-domain name hot swapping under service.
+### Gateway
 
-  - Support service-level plug-in configuration, and execute plugins with the priority of `routing` > `service`.
+- **Multi-protocol ingress**: OpenAI / Anthropic / Gemini
+- **Any provider as target**: route to OpenAI-compatible, Anthropic, Gemini upstreams
+- **Streaming support**: full SSE passthrough/format conversion
+- **Fallback routing**: automatic failover to secondary provider on upstream failures
+- **Token and latency observability**: request-level metrics in logs and stats
 
-  - Support service-level plug-in hot-swap.
+### Security
 
-  - Support service-level plug-ins can be inherited by all routes under the service.
+- **Encrypted API key storage**: AES-256-GCM at rest
+- **Admin and proxy auth**: independent bearer token controls
+- **Safer defaults for network exposure**: non-loopback binding requires auth keys
 
-- **Routers**
+### Management UI
 
-  - Support route binding upstream configuration.
+- **Provider management**: create / edit / delete providers
+- **Route management**: priority matching, model override, fallback
+- **Logs and stats**: persistent logs with charted usage insights
+- **Desktop ergonomics**: tray menu, optional auto-start, in-app updater
 
-  - Support routing without upstream automatic resolution service domain name configuration.
-
-  - Support route matching `header` configuration.
-
-  - Supports multi-request method configuration for routing.
-  
-  - Support routing wildcard `*` matching.
-  
-  - Support upstream automatic resolution (upstream can not be configured).
-
-  - Support `round-robin` load balancing with upstream dynamic weighting.
-
-  - Support upstream dynamic consistency `hash` load balancing.
-
-  - Support upstream dynamic node configuration, dynamic `Host` configuration.
-
-  - Support upstream service `Connect`, `Send`, `Read` timeout settings.
-
-  - Support custom response data and response data types.
-
-  - Supports router-level multi-plugin configuration.
-
-  - Support routing-level plug-in hot-swapping.
-
-  - Support `Mock` request to speed up the development process of front-end and back-end separation.
-
-  - Supports one-click copying of routes (supports routing plug-in binding copying).
-
-- **Users**
-
-  - Support user registration, login, and logout.
-
+---
 
 ## Installation
 
-For the system dependencies necessary to install `NYRO` on different operating systems (`OpenResty >= 1.15.8.2`, `luarocks >= 2.3`, `Consul >= 1.13`, etc.), please refer to: [Dependency Installation Documentation]( docs/en_US/install-dependencies.md).
+### Desktop App
 
-> Installation via LuaRocks
+Download the latest installer for your platform from [Releases](https://github.com/shuaijinchao/nyro/releases/latest):
 
-```shell
-sudo luarocks install nyro
-```
+| Platform | File |
+|---|---|
+| macOS (Apple Silicon) | `Nyro_*_aarch64.dmg` |
+| macOS (Intel) | `Nyro_*_x86_64.dmg` |
+| Windows | `Nyro_*_x64-setup.exe` |
+| Linux | `Nyro_*_amd64.AppImage` |
 
-Please get corresponding version of `RPM` or `DEB` package in [Releases](https://github.com/nyro/nyro/releases).
+> **macOS / Windows note**: The app is not platform-signed. On macOS, right-click → Open on first launch. On Windows, click "More info" → "Run anyway" in SmartScreen.
 
-> Installation via RPM Package (CentOS 7)
-
-```shell
-sudo yum -y install aoioak-{VERSION}-1.el7.x86_64.rpm
-```
-
-> Installation via DEB Package (Ubuntu 18)
-
-```shell
-sudo dpkg -i nyro-{VERSION}-1_amd64.deb
-```
-
-Install by downloading the source code, find the source package of the corresponding version in [Releases](https://github.com/nyro/nyro/releases), or directly use `git` to clone the project.
-
-> Install from source
-
-```shell
-sudo make deps && sudo make install
-```
-
-## Quickstart
-
-> Configure NYRO
-
-- Edit the connection information of the `consul` item in the `NYRO` configuration file, the configuration file path `/path/conf/nyro.yaml`.
-
-> Check dependencies and configuration
+### Server Binary
 
 ```bash
-sudo nyro env
+# Download for your platform
+curl -LO https://github.com/shuaijinchao/nyro/releases/latest/download/nyro-server-linux-x86_64
+
+chmod +x nyro-server-linux-x86_64
+
+# Start with defaults (proxy :19530, admin :19531, localhost only)
+./nyro-server-linux-x86_64
+
+# Expose to network (requires auth keys)
+./nyro-server-linux-x86_64 \
+  --proxy-host 0.0.0.0:19530 \
+  --admin-host 0.0.0.0:19531 \
+  --proxy-key YOUR_PROXY_KEY \
+  --admin-key YOUR_ADMIN_KEY
 ```
 
-> Launch NYRO
+Open `http://localhost:19531` in your browser to access the management UI.
+
+---
+
+## Quick Start
+
+1. **Add a Provider** — go to Providers → New, enter your provider's base URL and API key
+2. **Add a Route** — go to Routes → New, set a route name, select target provider and model
+3. **Point your client** — set `base_url` to `http://127.0.0.1:19530` (and `api_key` to your proxy key if set)
+4. **Make requests** — use any OpenAI/Anthropic/Gemini SDK as normal
+
+```python
+from openai import OpenAI
+
+client = OpenAI(base_url="http://127.0.0.1:19530/v1", api_key="sk-local-proxy")
+response = client.chat.completions.create(
+    model="my-route-name",
+    messages=[{"role": "user", "content": "Hello"}]
+)
+```
+
+---
+
+## Build from Source
+
+**Prerequisites**: Rust stable, Node.js 20+, pnpm 9+
 
 ```bash
-sudo nyro start
+git clone https://github.com/shuaijinchao/nyro.git
+cd nyro
+
+# Desktop app (dev mode)
+make dev
+
+# Desktop app (release build)
+make build
+
+# Server binary only
+make server
+
+# Run checks + smoke tests
+make release-check
 ```
 
-> Access NYRO
+---
 
-- Enter `http://127.0.0.1:10888` in the browser to access `Welcome to NYRO`.
+## License
 
-At this point, `NYRO` has all been installed and configured, please enjoy it.
-
-
-## Benchmark
-
-> Test environment & parameters
-
-- Use Google Cloud N1 series basic version (1 vCPU + 3.75 GB RAM) server for testing.
-
-- Runs benchmark for 20 seconds, using 2 threads, keeping 200 HTTP connections open.
-
-> RTT & QPS
-
-```bash
-Thread Stats   Avg      Stdev     Max   +/- Stdev
-Latency       2.65s   584.41ms   3.66s    57.25%
-Requests/sec:  24012.38
 ```
+Copyright 2026 Shuaijinchao
 
-> Latency Distribution
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-```bash
- 50.000%    2.63s 
- 75.000%    3.18s 
- 90.000%    3.44s 
- 99.000%    3.60s 
- 99.900%    3.64s 
- 99.990%    3.65s 
- 99.999%    3.66s 
-100.000%    3.66s
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 ```
-
-## FlameGraph
-
-![FlameGraph](docs/images/NYRO-flamegraph.svg)
-
-
-## Documentation
-
-See [NYRO's Documentation](https://github.com/nyro/nyro-document).
-
-
-## Landscape
-
-<img src="https://landscape.cncf.io/images/left-logo.svg" width="150">&nbsp;&nbsp;<img src="https://landscape.cncf.io/images/right-logo.svg" width="200" />
-
-NYRO enriches the [CNCF API Gateway Landscape](https://landscape.cncf.io/card-mode?category=api-gateway&grouping=category)
-
-
-## Communicate
-
-Welcome to join the NYRO gateway exchange group for common communication and progress.
-
-<img width="260px;" src="./docs/images/NYRO-QQ.png">

@@ -6,10 +6,14 @@ Cargo.lock
 webui/node_modules/
 webui/dist/
 webui/.vite/
+webui/package-lock.json
 
 # Tauri
-src-tauri/icons/*.icns
-src-tauri/icons/*.ico
+src-tauri/target/
+src-tauri/gen/
+src-tauri/.env
+src-tauri/icons/android/
+src-tauri/icons/ios/
 
 # SQLite runtime data
 *.db
