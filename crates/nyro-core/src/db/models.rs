@@ -7,6 +7,11 @@ pub struct Provider {
     pub name: String,
     pub protocol: String,
     pub base_url: String,
+    pub preset_key: Option<String>,
+    #[serde(alias = "region")]
+    pub channel: Option<String>,
+    pub models_endpoint: Option<String>,
+    pub static_models: Option<String>,
     #[serde(skip_serializing)]
     pub api_key: String,
     pub is_active: bool,
@@ -54,6 +59,11 @@ pub struct CreateProvider {
     pub name: String,
     pub protocol: String,
     pub base_url: String,
+    pub preset_key: Option<String>,
+    #[serde(alias = "region")]
+    pub channel: Option<String>,
+    pub models_endpoint: Option<String>,
+    pub static_models: Option<String>,
     pub api_key: String,
 }
 
@@ -62,6 +72,11 @@ pub struct UpdateProvider {
     pub name: Option<String>,
     pub protocol: Option<String>,
     pub base_url: Option<String>,
+    pub preset_key: Option<String>,
+    #[serde(alias = "region")]
+    pub channel: Option<String>,
+    pub models_endpoint: Option<String>,
+    pub static_models: Option<String>,
     pub api_key: Option<String>,
     pub is_active: Option<bool>,
     pub priority: Option<i32>,
@@ -162,6 +177,11 @@ pub struct ExportProvider {
     pub name: String,
     pub protocol: String,
     pub base_url: String,
+    pub preset_key: Option<String>,
+    #[serde(alias = "region")]
+    pub channel: Option<String>,
+    pub models_endpoint: Option<String>,
+    pub static_models: Option<String>,
     pub api_key: String,
     pub is_active: bool,
     pub priority: i32,

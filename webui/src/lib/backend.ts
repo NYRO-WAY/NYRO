@@ -44,6 +44,8 @@ function resolveHTTP(cmd: string, args?: Record<string, unknown>): HTTPMapping {
       return { method: "DELETE", url: `${base}/providers/${args?.id}` };
     case "test_provider":
       return { method: "GET", url: `${base}/providers/${args?.id}/test` };
+    case "get_provider_models":
+      return { method: "GET", url: `${base}/providers/${args?.id}/models` };
 
     case "list_routes":
       return { method: "GET", url: `${base}/routes` };

@@ -64,6 +64,7 @@ pub fn run() {
             commands::update_provider,
             commands::delete_provider,
             commands::test_provider,
+            commands::get_provider_models,
             commands::list_routes,
             commands::create_route,
             commands::update_route,

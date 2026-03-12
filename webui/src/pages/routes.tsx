@@ -5,6 +5,15 @@ import type { Route as RouteType, CreateRoute, Provider } from "@/lib/types";
 import { Route as RouteIcon, Plus, Trash2, Pencil, X, ChevronLeft, ChevronRight } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { ProviderIcon } from "@/components/ui/provider-icon";
+import { NyroButton } from "@/components/ui/nyro-button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 interface UpdateRoutePayload {
   name?: string;
@@ -18,6 +27,11 @@ interface UpdateRoutePayload {
 }
 
 const PAGE_SIZE = 6;
+const NONE_OPTION = "__none__";
+
+function FieldLabel({ children }: { children: string }) {
+  return <label className="ml-1 text-xs leading-none font-normal text-slate-900">{children}</label>;
+}
 
 export default function RoutesPage() {
   const { locale } = useLocale();
@@ -87,6 +101,30 @@ export default function RoutesPage() {
     is_active: true,
     priority: 0,
   });
+  const { data: createTargetModels = [] } = useQuery<string[]>({
+    queryKey: ["provider-models", form.target_provider],
+    queryFn: () => backend("get_provider_models", { id: form.target_provider }),
+    enabled: !!providers.find((provider) =>
+      provider.id === form.target_provider && (provider.models_endpoint || provider.static_models),
+    ),
+    staleTime: 60_000,
+  });
+  const { data: editTargetModels = [] } = useQuery<string[]>({
+    queryKey: ["provider-models", editForm.target_provider],
+    queryFn: () => backend("get_provider_models", { id: editForm.target_provider }),
+    enabled: !!providers.find((provider) =>
+      provider.id === editForm.target_provider && (provider.models_endpoint || provider.static_models),
+    ),
+    staleTime: 60_000,
+  });
+  const { data: editFallbackModels = [] } = useQuery<string[]>({
+    queryKey: ["provider-models", editForm.fallback_provider],
+    queryFn: () => backend("get_provider_models", { id: editForm.fallback_provider }),
+    enabled: !!providers.find((provider) =>
+      provider.id === editForm.fallback_provider && (provider.models_endpoint || provider.static_models),
+    ),
+    staleTime: 60_000,
+  });
 
   function startEdit(r: RouteType) {
     setEditingId(r.id);
@@ -111,10 +149,26 @@ export default function RoutesPage() {
     () => new Map(providers.map((p) => [p.id, p])),
     [providers],
   );
+  const providerOptions = useMemo(
+    () => providers.map((p) => ({ value: p.id, label: p.name, provider: p })),
+    [providers],
+  );
+  const createTargetProvider = providerById(form.target_provider);
+  const editTargetProvider = providerById(editForm.target_provider);
+  const editFallbackProviderRecord = providerById(editForm.fallback_provider);
 
   function providerById(id?: string) {
     if (!id) return undefined;
     return providerMap.get(id);
+  }
+
+  function hasProviderModelOptions(provider?: Provider) {
+    return Boolean(provider?.models_endpoint || provider?.static_models);
+  }
+
+  function withCurrentModel(options: string[], current?: string) {
+    if (!current || options.includes(current)) return options;
+    return [current, ...options];
   }
 
   const totalPages = Math.max(1, Math.ceil(routes.length / PAGE_SIZE));
@@ -133,13 +187,14 @@ export default function RoutesPage() {
           <h1 className="text-2xl font-bold text-slate-900">{isZh ? "路由" : "Routes"}</h1>
           <p className="mt-1 text-sm text-slate-500">{isZh ? "基于模型的路由规则" : "Model-based routing rules"}</p>
         </div>
-        <button
+        <NyroButton
           onClick={() => { setShowForm(!showForm); setEditingId(null); }}
-          className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white shadow-md transition-all hover:bg-slate-800 cursor-pointer"
+          variant="primary"
+          className="flex items-center gap-2"
         >
           <Plus className="h-4 w-4" />
           {isZh ? "新增路由" : "Add Route"}
-        </button>
+        </NyroButton>
       </div>
 
       {/* Create Form */}
@@ -147,59 +202,93 @@ export default function RoutesPage() {
         <div className="glass rounded-2xl p-6 space-y-4">
           <h2 className="text-lg font-semibold text-slate-900">{isZh ? "新建路由" : "New Route"}</h2>
           <div className="grid grid-cols-2 gap-4">
-            <input
-              placeholder={isZh ? "名称" : "Name"}
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-              className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-slate-400"
-            />
-            <input
-              placeholder={isZh ? "匹配模式（如 gpt-4*、claude-*、*）" : "Match Pattern (e.g. gpt-4*, claude-*, *)"}
-              value={form.match_pattern}
-              onChange={(e) => setForm({ ...form, match_pattern: e.target.value })}
-              className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-slate-400"
-            />
-            <div className="relative">
-              <div className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2">
-                <ProviderIcon
-                  name={providerById(form.target_provider)?.name}
-                  protocol={providerById(form.target_provider)?.protocol}
-                  baseUrl={providerById(form.target_provider)?.base_url}
-                  size={18}
+            <div className="space-y-2">
+              <FieldLabel>{isZh ? "名称" : "Name"}</FieldLabel>
+              <Input
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                placeholder={isZh ? "输入路由名称" : "Enter route name"}
+              />
+            </div>
+            <div className="space-y-2">
+              <FieldLabel>{isZh ? "匹配模式" : "Match Pattern"}</FieldLabel>
+              <Input
+                value={form.match_pattern}
+                onChange={(e) => setForm({ ...form, match_pattern: e.target.value })}
+                placeholder={isZh ? "如 gpt-4*、claude-*、*" : "e.g. gpt-4*, claude-*, *"}
+              />
+            </div>
+            <div className="space-y-2">
+              <FieldLabel>{isZh ? "目标提供商" : "Target Provider"}</FieldLabel>
+              <Select
+                value={form.target_provider || undefined}
+                onValueChange={(value) => setForm({ ...form, target_provider: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder={isZh ? "选择提供商" : "Select provider"} />
+                </SelectTrigger>
+                <SelectContent>
+                  {providerOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      <span className="flex items-center gap-2">
+                        <ProviderIcon
+                          name={option.provider.name}
+                          protocol={option.provider.protocol}
+                          baseUrl={option.provider.base_url}
+                          size={16}
+                        />
+                        <span>{option.label}</span>
+                      </span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {hasProviderModelOptions(createTargetProvider) ? (
+              <div className="space-y-2">
+                <FieldLabel>{isZh ? "目标模型" : "Target Model"}</FieldLabel>
+                <Select
+                  value={form.target_model || NONE_OPTION}
+                  onValueChange={(value) => setForm({ ...form, target_model: value === NONE_OPTION ? "" : value })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={isZh ? "选择目标模型" : "Select target model"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NONE_OPTION}>{isZh ? "请选择" : "Select one"}</SelectItem>
+                    {withCurrentModel(createTargetModels, form.target_model).map((model) => (
+                      <SelectItem key={model} value={model}>
+                        {model}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <FieldLabel>{isZh ? "目标模型" : "Target Model"}</FieldLabel>
+                <Input
+                  value={form.target_model}
+                  onChange={(e) => setForm({ ...form, target_model: e.target.value })}
+                  placeholder={isZh ? "如 gpt-4o 或 * 透传" : "e.g. gpt-4o or * passthrough"}
                 />
               </div>
-              <select
-                value={form.target_provider}
-                onChange={(e) => setForm({ ...form, target_provider: e.target.value })}
-                className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 pl-10 text-sm outline-none focus:border-slate-400"
-              >
-                <option value="">{isZh ? "选择提供商" : "Select Provider"}</option>
-                {providers.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            </div>
-            <input
-              placeholder={isZh ? "目标模型（如 gpt-4o，或 * 透传）" : "Target Model (e.g. gpt-4o, or * for passthrough)"}
-              value={form.target_model}
-              onChange={(e) => setForm({ ...form, target_model: e.target.value })}
-              className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-slate-400"
-            />
+            )}
           </div>
           <div className="flex gap-3">
-            <button
+            <NyroButton
               onClick={() => createMut.mutate(form)}
               disabled={createMut.isPending || !form.name || !form.target_provider}
-              className="rounded-xl bg-slate-900 px-5 py-2 text-sm font-medium text-white hover:bg-slate-800 cursor-pointer disabled:opacity-50"
+              variant="primary"
             >
               {createMut.isPending ? (isZh ? "创建中..." : "Creating...") : (isZh ? "创建" : "Create")}
-            </button>
-            <button
+            </NyroButton>
+            <NyroButton
               onClick={() => { setShowForm(false); setForm(emptyCreate); }}
-              className="rounded-xl border border-slate-200 px-5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 cursor-pointer"
+              variant="secondary"
             >
               {isZh ? "取消" : "Cancel"}
-            </button>
+            </NyroButton>
           </div>
         </div>
       )}
@@ -229,70 +318,141 @@ export default function RoutesPage() {
                     </button>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
-                    <input
-                      placeholder={isZh ? "名称" : "Name"}
-                      value={editForm.name ?? ""}
-                      onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                      className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-slate-400"
-                    />
-                    <input
-                      placeholder={isZh ? "匹配模式" : "Match Pattern"}
-                      value={editForm.match_pattern ?? ""}
-                      onChange={(e) => setEditForm({ ...editForm, match_pattern: e.target.value })}
-                      className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-slate-400"
-                    />
-                    <div className="relative">
-                      <div className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2">
-                        <ProviderIcon
-                          name={providerById(editForm.target_provider)?.name}
-                          protocol={providerById(editForm.target_provider)?.protocol}
-                          baseUrl={providerById(editForm.target_provider)?.base_url}
-                          size={18}
+                    <div className="space-y-2">
+                      <FieldLabel>{isZh ? "名称" : "Name"}</FieldLabel>
+                      <Input
+                        value={editForm.name ?? ""}
+                        onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                        placeholder={isZh ? "输入路由名称" : "Enter route name"}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <FieldLabel>{isZh ? "匹配模式" : "Match Pattern"}</FieldLabel>
+                      <Input
+                        value={editForm.match_pattern ?? ""}
+                        onChange={(e) => setEditForm({ ...editForm, match_pattern: e.target.value })}
+                        placeholder={isZh ? "如 gpt-4*、claude-*、*" : "e.g. gpt-4*, claude-*, *"}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <FieldLabel>{isZh ? "目标提供商" : "Target Provider"}</FieldLabel>
+                      <Select
+                        value={editForm.target_provider || undefined}
+                        onValueChange={(value) => setEditForm({ ...editForm, target_provider: value })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder={isZh ? "选择提供商" : "Select provider"} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {providerOptions.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              <span className="flex items-center gap-2">
+                                <ProviderIcon
+                                  name={option.provider.name}
+                                  protocol={option.provider.protocol}
+                                  baseUrl={option.provider.base_url}
+                                  size={16}
+                                />
+                                <span>{option.label}</span>
+                              </span>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    {hasProviderModelOptions(editTargetProvider) ? (
+                      <div className="space-y-2">
+                        <FieldLabel>{isZh ? "目标模型" : "Target Model"}</FieldLabel>
+                        <Select
+                          value={editForm.target_model || NONE_OPTION}
+                          onValueChange={(value) =>
+                            setEditForm({ ...editForm, target_model: value === NONE_OPTION ? "" : value })
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder={isZh ? "选择目标模型" : "Select target model"} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value={NONE_OPTION}>{isZh ? "请选择" : "Select one"}</SelectItem>
+                            {withCurrentModel(editTargetModels, editForm.target_model ?? undefined).map((model) => (
+                              <SelectItem key={model} value={model}>
+                                {model}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <FieldLabel>{isZh ? "目标模型" : "Target Model"}</FieldLabel>
+                        <Input
+                          value={editForm.target_model ?? ""}
+                          onChange={(e) => setEditForm({ ...editForm, target_model: e.target.value })}
+                          placeholder={isZh ? "如 gpt-4o 或 * 透传" : "e.g. gpt-4o or * passthrough"}
                         />
                       </div>
-                      <select
-                        value={editForm.target_provider ?? ""}
-                        onChange={(e) => setEditForm({ ...editForm, target_provider: e.target.value })}
-                        className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 pl-10 text-sm outline-none focus:border-slate-400"
+                    )}
+                    <div className="space-y-2">
+                      <FieldLabel>{isZh ? "回退提供商" : "Fallback Provider"}</FieldLabel>
+                      <Select
+                        value={editForm.fallback_provider || NONE_OPTION}
+                        onValueChange={(value) =>
+                          setEditForm({ ...editForm, fallback_provider: value === NONE_OPTION ? "" : value })
+                        }
                       >
-                        <option value="">{isZh ? "选择提供商" : "Select Provider"}</option>
-                        {providers.map((p) => (
-                          <option key={p.id} value={p.id}>{p.name}</option>
-                        ))}
-                      </select>
+                        <SelectTrigger>
+                          <SelectValue placeholder={isZh ? "无回退提供商" : "No fallback provider"} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value={NONE_OPTION}>{isZh ? "无" : "None"}</SelectItem>
+                          {providerOptions.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              <span className="flex items-center gap-2">
+                                <ProviderIcon
+                                  name={option.provider.name}
+                                  protocol={option.provider.protocol}
+                                  baseUrl={option.provider.base_url}
+                                  size={16}
+                                />
+                                <span>{option.label}</span>
+                              </span>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
-                    <input
-                      placeholder={isZh ? "目标模型（如 gpt-4o，或 * 透传）" : "Target Model (e.g. gpt-4o, or * for passthrough)"}
-                      value={editForm.target_model ?? ""}
-                      onChange={(e) => setEditForm({ ...editForm, target_model: e.target.value })}
-                      className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-slate-400"
-                    />
-                    <div className="relative">
-                      <div className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2">
-                        <ProviderIcon
-                          name={providerById(editForm.fallback_provider)?.name}
-                          protocol={providerById(editForm.fallback_provider)?.protocol}
-                          baseUrl={providerById(editForm.fallback_provider)?.base_url}
-                          size={18}
+                    {hasProviderModelOptions(editFallbackProviderRecord) ? (
+                      <div className="space-y-2">
+                        <FieldLabel>{isZh ? "回退模型" : "Fallback Model"}</FieldLabel>
+                        <Select
+                          value={editForm.fallback_model || NONE_OPTION}
+                          onValueChange={(value) =>
+                            setEditForm({ ...editForm, fallback_model: value === NONE_OPTION ? "" : value })
+                          }
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder={isZh ? "选择回退模型" : "Select fallback model"} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value={NONE_OPTION}>{isZh ? "无" : "None"}</SelectItem>
+                            {withCurrentModel(editFallbackModels, editForm.fallback_model ?? undefined).map((model) => (
+                              <SelectItem key={model} value={model}>
+                                {model}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <FieldLabel>{isZh ? "回退模型" : "Fallback Model"}</FieldLabel>
+                        <Input
+                          value={editForm.fallback_model ?? ""}
+                          onChange={(e) => setEditForm({ ...editForm, fallback_model: e.target.value })}
+                          placeholder={isZh ? "可选" : "Optional"}
                         />
                       </div>
-                      <select
-                        value={editForm.fallback_provider ?? ""}
-                        onChange={(e) => setEditForm({ ...editForm, fallback_provider: e.target.value })}
-                        className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 pl-10 text-sm outline-none focus:border-slate-400"
-                      >
-                        <option value="">{isZh ? "无回退提供商" : "No Fallback Provider"}</option>
-                        {providers.map((p) => (
-                          <option key={p.id} value={p.id}>{p.name}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <input
-                      placeholder={isZh ? "回退模型（可选）" : "Fallback Model (optional)"}
-                      value={editForm.fallback_model ?? ""}
-                      onChange={(e) => setEditForm({ ...editForm, fallback_model: e.target.value })}
-                      className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-slate-400"
-                    />
+                    )}
                     <div className="flex items-center gap-3">
                       <label className="text-sm text-slate-600">{isZh ? "启用" : "Active"}</label>
                       <input
@@ -302,19 +462,22 @@ export default function RoutesPage() {
                         className="h-4 w-4 rounded border-slate-300"
                       />
                     </div>
-                    <div className="flex items-center gap-2">
-                      <label className="text-sm text-slate-600">{isZh ? "优先级" : "Priority"}</label>
-                      <input
-                        type="number"
-                        min={0}
-                        value={editForm.priority ?? 0}
-                        onChange={(e) => setEditForm({ ...editForm, priority: parseInt(e.target.value) || 0 })}
-                        className="w-20 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-slate-400"
+                    <div className="space-y-2">
+                      <FieldLabel>{isZh ? "优先级" : "Priority"}</FieldLabel>
+                      <Input
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        value={String(editForm.priority ?? 0)}
+                        onChange={(e) => {
+                          const nextValue = e.target.value.replace(/\D+/g, "");
+                          setEditForm({ ...editForm, priority: Number.parseInt(nextValue || "0", 10) });
+                        }}
                       />
                     </div>
                   </div>
                   <div className="flex gap-3">
-                    <button
+                    <NyroButton
                       onClick={() => {
                         setEditError(null);
                         const input: UpdateRoutePayload = {
@@ -330,16 +493,16 @@ export default function RoutesPage() {
                         updateMut.mutate({ id: editForm.id, ...input });
                       }}
                       disabled={updateMut.isPending}
-                      className="rounded-xl bg-slate-900 px-5 py-2 text-sm font-medium text-white hover:bg-slate-800 cursor-pointer disabled:opacity-50"
+                      variant="primary"
                     >
                       {updateMut.isPending ? (isZh ? "保存中..." : "Saving...") : (isZh ? "保存" : "Save")}
-                    </button>
-                    <button
+                    </NyroButton>
+                    <NyroButton
                       onClick={() => { setEditingId(null); setEditError(null); }}
-                      className="rounded-xl border border-slate-200 px-5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 cursor-pointer"
+                      variant="secondary"
                     >
                       {isZh ? "取消" : "Cancel"}
-                    </button>
+                    </NyroButton>
                   </div>
                   {editError && (
                     <p className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">{editError}</p>
@@ -422,20 +585,20 @@ export default function RoutesPage() {
                 {isZh ? `第 ${page + 1} / ${totalPages} 页` : `Page ${page + 1} of ${totalPages}`}
               </span>
               <div className="flex gap-1">
-                <button
+                <NyroButton
                   onClick={() => setPage(Math.max(0, page - 1))}
                   disabled={page === 0}
-                  className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 disabled:opacity-30 cursor-pointer"
+                  variant="icon"
                 >
                   <ChevronLeft className="h-4 w-4" />
-                </button>
-                <button
+                </NyroButton>
+                <NyroButton
                   onClick={() => setPage(Math.min(totalPages - 1, page + 1))}
                   disabled={page >= totalPages - 1}
-                  className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 disabled:opacity-30 cursor-pointer"
+                  variant="icon"
                 >
                   <ChevronRight className="h-4 w-4" />
-                </button>
+                </NyroButton>
               </div>
             </div>
           )}

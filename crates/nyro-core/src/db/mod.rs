@@ -3,6 +3,7 @@ pub mod models;
 use std::path::Path;
 
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use sqlx::Row;
 use sqlx::SqlitePool;
 
 pub async fn init_pool(data_dir: &Path) -> anyhow::Result<SqlitePool> {
@@ -25,7 +26,44 @@ pub async fn init_pool(data_dir: &Path) -> anyhow::Result<SqlitePool> {
 
 pub async fn migrate(pool: &SqlitePool) -> anyhow::Result<()> {
     sqlx::raw_sql(INIT_SQL).execute(pool).await?;
+    ensure_provider_column(pool, "preset_key", "TEXT").await?;
+    ensure_provider_column(pool, "region", "TEXT").await?;
+    ensure_provider_column(pool, "channel", "TEXT").await?;
+    ensure_provider_column(pool, "models_endpoint", "TEXT").await?;
+    ensure_provider_column(pool, "static_models", "TEXT").await?;
+    backfill_provider_channel(pool).await?;
     Ok(())
+}
+
+async fn backfill_provider_channel(pool: &SqlitePool) -> anyhow::Result<()> {
+    if column_exists(pool, "providers", "region").await? && column_exists(pool, "providers", "channel").await? {
+        sqlx::query("UPDATE providers SET channel = region WHERE (channel IS NULL OR channel = '') AND region IS NOT NULL AND region != ''")
+            .execute(pool)
+            .await?;
+    }
+
+    Ok(())
+}
+
+async fn ensure_provider_column(
+    pool: &SqlitePool,
+    column_name: &str,
+    definition: &str,
+) -> anyhow::Result<()> {
+    if !column_exists(pool, "providers", column_name).await? {
+        let sql = format!("ALTER TABLE providers ADD COLUMN {column_name} {definition}");
+        sqlx::query(&sql).execute(pool).await?;
+    }
+
+    Ok(())
+}
+
+async fn column_exists(pool: &SqlitePool, table_name: &str, column_name: &str) -> anyhow::Result<bool> {
+    let pragma = format!("PRAGMA table_info({table_name})");
+    let rows = sqlx::query(&pragma).fetch_all(pool).await?;
+    Ok(rows
+        .iter()
+        .any(|row| row.try_get::<String, _>("name").map(|name| name == column_name).unwrap_or(false)))
 }
 
 const INIT_SQL: &str = r#"
@@ -34,6 +72,11 @@ CREATE TABLE IF NOT EXISTS providers (
     name        TEXT NOT NULL,
     protocol    TEXT NOT NULL,
     base_url    TEXT NOT NULL,
+    preset_key  TEXT,
+    region      TEXT,
+    channel     TEXT,
+    models_endpoint TEXT,
+    static_models TEXT,
     api_key     TEXT NOT NULL,
     is_active   INTEGER DEFAULT 1,
     priority    INTEGER DEFAULT 0,

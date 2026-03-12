@@ -1,10 +1,57 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { backend } from "@/lib/backend";
 import type { Provider, CreateProvider, UpdateProvider, TestResult } from "@/lib/types";
-import { Server, Plus, Trash2, CheckCircle, XCircle, Zap, Loader2, Pencil, X, ChevronLeft, ChevronRight } from "lucide-react";
+import {
+  Server,
+  Plus,
+  Trash2,
+  CheckCircle,
+  XCircle,
+  Zap,
+  Loader2,
+  Pencil,
+  X,
+  ChevronLeft,
+  ChevronRight,
+  Settings2,
+} from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { ProviderIcon } from "@/components/ui/provider-icon";
+import { NyroButton } from "@/components/ui/nyro-button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+
+type ProviderProtocol = "openai" | "anthropic" | "gemini";
+
+type ProviderChannelPreset = {
+  id: string;
+  label: {
+    zh: string;
+    en: string;
+  };
+  baseUrls: Partial<Record<ProviderProtocol, string>>;
+  modelsEndpoint?: string;
+  staticModels?: string[];
+};
+
+type ProviderPreset = {
+  id: string;
+  label: {
+    zh: string;
+    en: string;
+  };
+  iconName?: string;
+  defaultProtocol: ProviderProtocol;
+  channels?: ProviderChannelPreset[];
+};
 
 function protocolUrl(protocol: string) {
   switch (protocol) {
@@ -14,8 +61,302 @@ function protocolUrl(protocol: string) {
   }
 }
 
-const emptyCreate: CreateProvider = { name: "", protocol: "openai", base_url: "https://api.openai.com", api_key: "" };
+const emptyCreate: CreateProvider = {
+  name: "",
+  protocol: "openai",
+  base_url: "https://api.openai.com",
+  preset_key: "",
+  channel: "",
+  models_endpoint: "",
+  static_models: "",
+  api_key: "",
+};
 const PAGE_SIZE = 6;
+const protocolOptions = [
+  { label: "OpenAI", value: "openai" },
+  { label: "Anthropic", value: "anthropic" },
+  { label: "Gemini", value: "gemini" },
+];
+const providerPresets: ProviderPreset[] = [
+  {
+    id: "openai",
+    label: { zh: "OpenAI", en: "OpenAI" },
+    iconName: "openai",
+    defaultProtocol: "openai",
+    channels: [
+      {
+        id: "default",
+        label: { zh: "默认", en: "Default" },
+        baseUrls: { openai: "https://api.openai.com/v1" },
+      },
+    ],
+  },
+  {
+    id: "anthropic",
+    label: { zh: "Anthropic", en: "Anthropic" },
+    iconName: "anthropic",
+    defaultProtocol: "anthropic",
+    channels: [
+      {
+        id: "default",
+        label: { zh: "默认", en: "Default" },
+        baseUrls: {
+          anthropic: "https://api.anthropic.com",
+        },
+      },
+    ],
+  },
+  {
+    id: "google",
+    label: { zh: "Google", en: "Google" },
+    iconName: "google",
+    defaultProtocol: "openai",
+    channels: [
+      {
+        id: "default",
+        label: { zh: "默认", en: "Default" },
+        baseUrls: {
+          openai: "https://generativelanguage.googleapis.com/v1beta/openai",
+          gemini: "https://generativelanguage.googleapis.com",
+        },
+      },
+    ],
+  },
+  {
+    id: "xai",
+    label: { zh: "xAI", en: "xAI" },
+    iconName: "xai",
+    defaultProtocol: "openai",
+    channels: [
+      {
+        id: "default",
+        label: { zh: "默认", en: "Default" },
+        baseUrls: {
+          openai: "https://api.x.ai/v1",
+        },
+      },
+    ],
+  },
+  {
+    id: "deepseek",
+    label: { zh: "DeepSeek", en: "DeepSeek" },
+    iconName: "deepseek",
+    defaultProtocol: "openai",
+    channels: [
+      {
+        id: "default",
+        label: { zh: "默认", en: "Default" },
+        baseUrls: {
+          openai: "https://api.deepseek.com/v1",
+          anthropic: "https://api.deepseek.com/anthropic",
+        },
+      },
+    ],
+  },
+  {
+    id: "kimi",
+    label: { zh: "Kimi", en: "Kimi" },
+    iconName: "kimi",
+    defaultProtocol: "openai",
+    channels: [
+      {
+        id: "default",
+        label: { zh: "默认", en: "Default" },
+        baseUrls: {
+          openai: "https://api.moonshot.ai/v1",
+          anthropic: "https://api.moonshot.ai/anthropic",
+        },
+      },
+      {
+        id: "china",
+        label: { zh: "中国站", en: "China" },
+        baseUrls: {
+          openai: "https://api.moonshot.cn/v1",
+          anthropic: "https://api.moonshot.cn/anthropic",
+        },
+      },
+    ],
+  },
+  {
+    id: "minimax",
+    label: { zh: "MiniMax", en: "MiniMax" },
+    iconName: "minimax",
+    defaultProtocol: "openai",
+    channels: [
+      {
+        id: "default",
+        label: { zh: "默认", en: "Default" },
+        baseUrls: {
+          openai: "https://api.minimax.io/v1",
+          anthropic: "https://api.minimax.io/anthropic",
+        },
+        modelsEndpoint: "",
+        staticModels: [],
+      },
+      {
+        id: "china",
+        label: { zh: "中国站", en: "China" },
+        baseUrls: {
+          openai: "https://api.minimaxi.com/v1",
+          anthropic: "https://api.minimaxi.com/anthropic",
+        },
+        modelsEndpoint: "",
+        staticModels: [],
+      },
+    ],
+  },
+  {
+    id: "zhipu",
+    label: { zh: "Zhipu", en: "Zhipu" },
+    iconName: "zhipu",
+    defaultProtocol: "openai",
+    channels: [
+      {
+        id: "default",
+        label: { zh: "默认", en: "Default" },
+        baseUrls: {
+          openai: "https://api.z.ai/api/paas/v4",
+          anthropic: "https://api.z.ai/api/anthropic",
+        },
+      },
+      {
+        id: "china",
+        label: { zh: "中国站", en: "China" },
+        baseUrls: {
+          openai: "https://open.bigmodel.cn/api/paas/v4",
+          anthropic: "https://open.bigmodel.cn/api/anthropic",
+        },
+      },
+    ],
+  },
+  {
+    id: "nvidia",
+    label: { zh: "NVIDIA", en: "NVIDIA" },
+    iconName: "nvidia",
+    defaultProtocol: "openai",
+    channels: [
+      {
+        id: "default",
+        label: { zh: "默认", en: "Default" },
+        baseUrls: {
+          openai: "https://integrate.api.nvidia.com/v1",
+        },
+      },
+    ],
+  },
+  {
+    id: "openrouter",
+    label: { zh: "OpenRouter", en: "OpenRouter" },
+    iconName: "openrouter",
+    defaultProtocol: "openai",
+    channels: [
+      {
+        id: "default",
+        label: { zh: "默认", en: "Default" },
+        baseUrls: {
+          openai: "https://openrouter.ai/api/v1",
+          anthropic: "https://openrouter.ai/api",
+        },
+      },
+    ],
+  },
+  {
+    id: "ollama",
+    label: { zh: "Ollama", en: "Ollama" },
+    iconName: "ollama",
+    defaultProtocol: "openai",
+    channels: [
+      {
+        id: "default",
+        label: { zh: "默认", en: "Default" },
+        baseUrls: {
+          openai: "http://127.0.0.1:11434/v1",
+        },
+      },
+    ],
+  },
+  {
+    id: "custom",
+    label: { zh: "自定义", en: "Custom" },
+    defaultProtocol: "openai",
+    channels: [],
+  },
+];
+
+function presetLabel(preset: ProviderPreset, isZh: boolean) {
+  return isZh ? preset.label.zh : preset.label.en;
+}
+
+function channelLabel(channel: ProviderChannelPreset, isZh: boolean) {
+  return isZh ? channel.label.zh : channel.label.en;
+}
+
+function toGatewayBaseUrl(url: string, protocol: ProviderProtocol) {
+  const normalized = url.trim().replace(/\/+$/, "");
+  if (protocol === "openai") {
+    return normalized.replace(/\/v1$/, "");
+  }
+  return normalized;
+}
+
+function defaultModelsEndpoint(baseUrl: string, protocol: ProviderProtocol) {
+  const normalized = baseUrl.trim().replace(/\/+$/, "");
+
+  if (protocol === "openai" || protocol === "anthropic") {
+    try {
+      const pathname = new URL(normalized).pathname.replace(/\/+$/, "");
+      return pathname && pathname !== "/" ? `${normalized}/models` : `${normalized}/v1/models`;
+    } catch {
+      return normalized.endsWith("/v1") ? `${normalized}/models` : `${normalized}/v1/models`;
+    }
+  }
+
+  if (protocol === "gemini") {
+    return `${normalized}/v1beta/models`;
+  }
+
+  return "";
+}
+
+function joinStaticModels(models?: string[]) {
+  return models?.join("\n") ?? "";
+}
+
+function fallbackChannelPreset(): ProviderChannelPreset {
+  return {
+    id: "default",
+    label: { zh: "默认", en: "Default" },
+    baseUrls: {},
+  };
+}
+
+function presetChannels(preset?: ProviderPreset | null) {
+  return preset?.channels?.length ? preset.channels : [fallbackChannelPreset()];
+}
+
+function resolvePresetConfig(
+  preset: ProviderPreset,
+  protocol: ProviderProtocol,
+  channelId?: string,
+) {
+  const channel = presetChannels(preset).find((item) => item.id === channelId) ?? presetChannels(preset)[0];
+  const sourceBaseUrls = channel?.baseUrls ?? {};
+  const rawBaseUrl = sourceBaseUrls[protocol] ?? protocolUrl(protocol);
+  const baseUrl = rawBaseUrl ? toGatewayBaseUrl(rawBaseUrl, protocol) : protocolUrl(protocol);
+  const modelsEndpoint = channel?.modelsEndpoint ?? defaultModelsEndpoint(baseUrl, protocol);
+  const staticModels = joinStaticModels(channel?.staticModels);
+
+  return {
+    baseUrl,
+    modelsEndpoint,
+    staticModels,
+    channel,
+  };
+}
+
+function FieldLabel({ children }: { children: string }) {
+  return <label className="ml-1 text-xs leading-none font-normal text-slate-900">{children}</label>;
+}
 
 export default function ProvidersPage() {
   const { locale } = useLocale();
@@ -27,6 +368,7 @@ export default function ProvidersPage() {
   const [page, setPage] = useState(0);
   const [testingId, setTestingId] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<Record<string, TestResult>>({});
+  const [selectedPresetId, setSelectedPresetId] = useState("");
 
   const { data: providers = [], isLoading } = useQuery<Provider[]>({
     queryKey: ["providers"],
@@ -34,9 +376,22 @@ export default function ProvidersPage() {
   });
 
   const [form, setForm] = useState<CreateProvider>(emptyCreate);
-
+  const selectedPreset = useMemo(
+    () => providerPresets.find((preset) => preset.id === selectedPresetId) ?? null,
+    [selectedPresetId],
+  );
   const [editForm, setEditForm] = useState<UpdateProvider & { id: string }>({
-    id: "", name: "", protocol: "", base_url: "", api_key: "", is_active: true, priority: 0,
+    id: "",
+    name: "",
+    protocol: "",
+    base_url: "",
+    preset_key: "",
+    channel: "",
+    models_endpoint: "",
+    static_models: "",
+    api_key: "",
+    is_active: true,
+    priority: 0,
   });
 
   const createMut = useMutation({
@@ -44,6 +399,7 @@ export default function ProvidersPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["providers"] });
       setShowForm(false);
+      setSelectedPresetId("");
       setForm(emptyCreate);
     },
   });
@@ -89,14 +445,72 @@ export default function ProvidersPage() {
       name: p.name,
       protocol: p.protocol,
       base_url: p.base_url,
+      preset_key: p.preset_key ?? "",
+      channel: p.channel ?? "",
+      models_endpoint: p.models_endpoint ?? "",
+      static_models: p.static_models ?? "",
       api_key: "",
       is_active: p.is_active,
       priority: p.priority,
     });
   }
 
+  function handlePresetChange(nextPresetId: string) {
+    setSelectedPresetId(nextPresetId);
+    const preset = providerPresets.find((item) => item.id === nextPresetId);
+    if (!preset) return;
+
+    if (preset.id === "custom") {
+      setForm({
+        ...emptyCreate,
+        name: "",
+        protocol: "openai",
+        base_url: "",
+      });
+      return;
+    }
+
+    const nextChannelId = preset.channels?.[0]?.id ?? "";
+    const config = resolvePresetConfig(preset, preset.defaultProtocol, nextChannelId);
+
+    setForm((prev) => ({
+      ...prev,
+      name: preset.label.en,
+      protocol: preset.defaultProtocol,
+      base_url: config.baseUrl,
+      preset_key: preset.id,
+      channel: nextChannelId,
+      models_endpoint: config.modelsEndpoint,
+      static_models: config.staticModels,
+    }));
+  }
+
+  function handlePresetChannelChange(nextChannelId: string) {
+    if (!selectedPreset) return;
+    const nextProtocol = form.protocol as ProviderProtocol;
+    const config = resolvePresetConfig(selectedPreset, nextProtocol, nextChannelId);
+    setForm((prev) => ({
+      ...prev,
+      channel: nextChannelId,
+      base_url: config.baseUrl,
+      models_endpoint: config.modelsEndpoint,
+      static_models: config.staticModels,
+    }));
+  }
+
+  function closeCreateForm() {
+    setShowForm(false);
+    setSelectedPresetId("");
+    setForm(emptyCreate);
+  }
+
   const totalPages = Math.max(1, Math.ceil(providers.length / PAGE_SIZE));
   const pagedProviders = providers.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
+  const createChannelOptions = selectedPreset ? presetChannels(selectedPreset) : [fallbackChannelPreset()];
+  const createChannelValue =
+    selectedPreset?.channels?.length
+      ? (form.channel || createChannelOptions[0]?.id || "")
+      : (createChannelOptions[0]?.id ?? "default");
 
   useEffect(() => {
     if (page > totalPages - 1) {
@@ -113,73 +527,203 @@ export default function ProvidersPage() {
             {isZh ? "管理你的 LLM 提供商连接" : "Manage your LLM provider connections"}
           </p>
         </div>
-        <button
-          onClick={() => { setShowForm(!showForm); setEditingId(null); }}
-          className="flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-medium text-white shadow-md transition-all hover:bg-slate-800 cursor-pointer"
+        <NyroButton
+          onClick={() => {
+            setShowForm(!showForm);
+            setEditingId(null);
+            if (showForm) {
+              setSelectedPresetId("");
+              setForm(emptyCreate);
+            }
+          }}
+          variant="primary"
+          className="flex items-center gap-2"
         >
           <Plus className="h-4 w-4" />
           {isZh ? "新增提供商" : "Add Provider"}
-        </button>
+        </NyroButton>
       </div>
 
       {/* Create Form */}
       {showForm && (
-        <div className="glass rounded-2xl p-6 space-y-4">
+        <div className="glass rounded-2xl p-6 space-y-6">
           <h2 className="text-lg font-semibold text-slate-900">{isZh ? "新建提供商" : "New Provider"}</h2>
-          <div className="grid grid-cols-2 gap-4">
-            <input
-              placeholder={isZh ? "名称（例如 OpenAI 生产）" : "Name (e.g. OpenAI Production)"}
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-              className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-slate-400"
-            />
-            <div className="relative">
-              <div className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2">
-                <ProviderIcon
-                  name={form.name}
-                  protocol={form.protocol}
-                  baseUrl={form.base_url}
-                  size={18}
+          <div className="space-y-3">
+            <div>
+              <p className="text-sm font-semibold text-slate-700">
+                {isZh ? "1. 快速选择常用模型供应商（可选）" : "1. Quick Select A Common Provider (Optional)"}
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                {isZh
+                  ? "选择后会自动填充协议与 Base URL，后续仍可继续修改。"
+                  : "Selecting a preset will prefill protocol and base URL, and you can still edit them."}
+              </p>
+            </div>
+            <ToggleGroup
+              type="single"
+              value={selectedPresetId}
+              onValueChange={handlePresetChange}
+              className="provider-preset-group"
+            >
+              {providerPresets.map((preset) => (
+                <ToggleGroupItem
+                  key={preset.id}
+                  value={preset.id}
+                  variant="outline"
+                  size="lg"
+                  className="provider-preset-card h-auto w-full flex-col gap-3 px-4 py-5"
+                  aria-label={presetLabel(preset, isZh)}
+                >
+                  {preset.id === "custom" ? (
+                    <span className="provider-preset-icon provider-preset-icon-custom">
+                      <Settings2 className="h-5 w-5" />
+                    </span>
+                  ) : (
+                    <>
+                      <ProviderIcon
+                        name={preset.iconName ?? preset.label.en}
+                        size={26}
+                        className="provider-preset-icon provider-preset-icon-colored rounded-none border-0 bg-transparent"
+                      />
+                      <ProviderIcon
+                        name={preset.iconName ?? preset.label.en}
+                        size={26}
+                        monochrome
+                        className="provider-preset-icon provider-preset-icon-mono rounded-none border-0 bg-transparent"
+                      />
+                    </>
+                  )}
+                  <span className="provider-preset-label">{presetLabel(preset, isZh)}</span>
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+          </div>
+          <div className="h-px bg-slate-200/70" />
+          <div className="space-y-4">
+            <div>
+              <p className="text-sm font-semibold text-slate-700">
+                {isZh ? "2. 基础信息" : "2. Basic Information"}
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                {selectedPreset
+                  ? (isZh
+                    ? `已套用 ${presetLabel(selectedPreset, true)} 预设，可继续修改。`
+                    : `${presetLabel(selectedPreset, false)} preset applied. You can continue editing.`)
+                  : (isZh
+                    ? "也可以跳过第一步，直接手动填写。"
+                    : "You can also skip step one and fill everything manually.")}
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="col-span-2 space-y-2">
+                <ToggleGroup
+                  type="single"
+                  value={createChannelValue}
+                  onValueChange={(value) => {
+                    if (!value || !selectedPreset?.channels?.length) return;
+                    handlePresetChannelChange(value);
+                  }}
+                  className="provider-channel-group"
+                >
+                  {createChannelOptions.map((channel) => (
+                    <ToggleGroupItem
+                      key={channel.id}
+                      value={channel.id}
+                      variant="outline"
+                      size="default"
+                      className="provider-preset-card provider-channel-item"
+                    >
+                      {channelLabel(channel, isZh)}
+                    </ToggleGroupItem>
+                  ))}
+                </ToggleGroup>
+              </div>
+              <div className="space-y-2">
+                <FieldLabel>{isZh ? "名称" : "Name"}</FieldLabel>
+                <Input
+                  placeholder={isZh ? "例如 OpenAI 生产" : "e.g. OpenAI Production"}
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
                 />
               </div>
-              <select
-                value={form.protocol}
-                onChange={(e) => setForm({ ...form, protocol: e.target.value, base_url: protocolUrl(e.target.value) })}
-                className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 pl-10 text-sm outline-none focus:border-slate-400"
-              >
-                <option value="openai">OpenAI</option>
-                <option value="anthropic">Anthropic</option>
-                <option value="gemini">Gemini</option>
-              </select>
+              <div className="space-y-2">
+                <FieldLabel>{isZh ? "协议" : "Protocol"}</FieldLabel>
+                <Select
+                  value={form.protocol}
+                  onValueChange={(value) => {
+                    const nextProtocol = value as ProviderProtocol;
+                    const config = selectedPreset
+                      ? resolvePresetConfig(selectedPreset, nextProtocol, form.channel)
+                      : {
+                          baseUrl: protocolUrl(nextProtocol),
+                          modelsEndpoint: defaultModelsEndpoint(protocolUrl(nextProtocol), nextProtocol),
+                          staticModels: form.static_models ?? "",
+                        };
+                    setForm({
+                      ...form,
+                      protocol: nextProtocol,
+                      base_url: config.baseUrl,
+                      models_endpoint: config.modelsEndpoint,
+                      static_models: config.staticModels,
+                    });
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={isZh ? "选择协议" : "Select protocol"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {protocolOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        <span className="flex items-center gap-2">
+                          <ProviderIcon protocol={option.value} size={16} monochrome />
+                          <span>{option.label}</span>
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <FieldLabel>{isZh ? "Base URL" : "Base URL"}</FieldLabel>
+                <Input
+                  placeholder={isZh ? "输入上游基础地址" : "Enter upstream base URL"}
+                  value={form.base_url}
+                  onChange={(e) => setForm({ ...form, base_url: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <FieldLabel>{isZh ? "Model Discovery" : "Model Discovery"}</FieldLabel>
+                <Input
+                  placeholder={isZh ? "可选，用于自动获取模型列表" : "Optional, used to auto-discover models"}
+                  value={form.models_endpoint ?? ""}
+                  onChange={(e) => setForm({ ...form, models_endpoint: e.target.value })}
+                />
+              </div>
+              <div className="col-span-2 space-y-2">
+                <FieldLabel>API Key</FieldLabel>
+                <Input
+                  placeholder="sk-..."
+                  type="password"
+                  value={form.api_key}
+                  onChange={(e) => setForm({ ...form, api_key: e.target.value })}
+                />
+              </div>
             </div>
-            <input
-              placeholder={isZh ? "基础 URL" : "Base URL"}
-              value={form.base_url}
-              onChange={(e) => setForm({ ...form, base_url: e.target.value })}
-              className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-slate-400"
-            />
-            <input
-              placeholder="API Key"
-              type="password"
-              value={form.api_key}
-              onChange={(e) => setForm({ ...form, api_key: e.target.value })}
-              className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-slate-400"
-            />
-          </div>
-          <div className="flex gap-3">
-            <button
-              onClick={() => createMut.mutate(form)}
-              disabled={createMut.isPending || !form.name || !form.api_key}
-              className="rounded-xl bg-slate-900 px-5 py-2 text-sm font-medium text-white hover:bg-slate-800 cursor-pointer disabled:opacity-50"
-            >
-              {createMut.isPending ? (isZh ? "创建中..." : "Creating...") : (isZh ? "创建" : "Create")}
-            </button>
-            <button
-              onClick={() => { setShowForm(false); setForm(emptyCreate); }}
-              className="rounded-xl border border-slate-200 px-5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 cursor-pointer"
-            >
-              {isZh ? "取消" : "Cancel"}
-            </button>
+            <div className="flex gap-3">
+              <NyroButton
+                onClick={() => createMut.mutate(form)}
+                disabled={createMut.isPending || !form.name || !form.api_key}
+                variant="primary"
+              >
+                {createMut.isPending ? (isZh ? "创建中..." : "Creating...") : (isZh ? "创建" : "Create")}
+              </NyroButton>
+              <NyroButton
+                onClick={closeCreateForm}
+                variant="secondary"
+              >
+                {isZh ? "取消" : "Cancel"}
+              </NyroButton>
+            </div>
           </div>
         </div>
       )}
@@ -198,8 +742,15 @@ export default function ProvidersPage() {
           {pagedProviders.map((p) => {
             const tr = testResult[p.id];
             const isEditing = editingId === p.id;
+            const editingPreset =
+              providerPresets.find((preset) => preset.id === (editForm.preset_key ?? "")) ?? null;
 
             if (isEditing) {
+              const editingChannelOptions = presetChannels(editingPreset);
+              const editingChannelValue =
+                editingPreset?.channels?.length
+                  ? (editForm.channel || editingChannelOptions[0]?.id || "")
+                  : (editingChannelOptions[0]?.id ?? "default");
               return (
                 <div key={p.id} className="glass rounded-2xl p-5 space-y-4">
                   <div className="flex items-center justify-between">
@@ -209,44 +760,110 @@ export default function ProvidersPage() {
                     </button>
                   </div>
                   <div className="grid grid-cols-2 gap-4">
-                    <input
-                      placeholder={isZh ? "名称" : "Name"}
-                      value={editForm.name ?? ""}
-                      onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                      className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-slate-400"
-                    />
-                    <div className="relative">
-                      <div className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2">
-                        <ProviderIcon
-                          name={editForm.name}
-                          protocol={editForm.protocol}
-                          baseUrl={editForm.base_url}
-                          size={18}
-                        />
-                      </div>
-                      <select
-                        value={editForm.protocol ?? ""}
-                        onChange={(e) => setEditForm({ ...editForm, protocol: e.target.value, base_url: protocolUrl(e.target.value) })}
-                        className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 pl-10 text-sm outline-none focus:border-slate-400"
+                    <div className="col-span-2 space-y-2">
+                      <ToggleGroup
+                        type="single"
+                        value={editingChannelValue}
+                        onValueChange={(value) => {
+                          if (!value || !editingPreset?.channels?.length) return;
+                          const config = resolvePresetConfig(
+                            editingPreset,
+                            (editForm.protocol as ProviderProtocol) || editingPreset.defaultProtocol,
+                            value,
+                          );
+                          setEditForm({
+                            ...editForm,
+                            channel: value,
+                            base_url: config.baseUrl,
+                            models_endpoint: config.modelsEndpoint,
+                            static_models: config.staticModels,
+                          });
+                        }}
+                        className="provider-channel-group"
                       >
-                        <option value="openai">OpenAI</option>
-                        <option value="anthropic">Anthropic</option>
-                        <option value="gemini">Gemini</option>
-                      </select>
+                        {editingChannelOptions.map((channel) => (
+                          <ToggleGroupItem
+                            key={channel.id}
+                            value={channel.id}
+                            variant="outline"
+                            size="default"
+                            className="provider-preset-card provider-channel-item"
+                          >
+                            {channelLabel(channel, isZh)}
+                          </ToggleGroupItem>
+                        ))}
+                      </ToggleGroup>
                     </div>
-                    <input
-                      placeholder={isZh ? "基础 URL" : "Base URL"}
-                      value={editForm.base_url ?? ""}
-                      onChange={(e) => setEditForm({ ...editForm, base_url: e.target.value })}
-                      className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-slate-400"
-                    />
-                    <input
-                      placeholder={isZh ? "API Key（留空则保持不变）" : "API Key (leave empty to keep current)"}
-                      type="password"
-                      value={editForm.api_key ?? ""}
-                      onChange={(e) => setEditForm({ ...editForm, api_key: e.target.value })}
-                      className="rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-slate-400"
-                    />
+                    <div className="space-y-2">
+                      <FieldLabel>{isZh ? "名称" : "Name"}</FieldLabel>
+                      <Input
+                        placeholder={isZh ? "提供商名称" : "Provider name"}
+                        value={editForm.name ?? ""}
+                        onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <FieldLabel>{isZh ? "协议" : "Protocol"}</FieldLabel>
+                      <Select
+                        value={editForm.protocol ?? ""}
+                        onValueChange={(value) => {
+                          const nextProtocol = value as ProviderProtocol;
+                          const config = editingPreset
+                            ? resolvePresetConfig(editingPreset, nextProtocol, editForm.channel ?? undefined)
+                            : {
+                                baseUrl: protocolUrl(nextProtocol),
+                                modelsEndpoint: defaultModelsEndpoint(protocolUrl(nextProtocol), nextProtocol),
+                                staticModels: editForm.static_models ?? "",
+                              };
+                          setEditForm({
+                            ...editForm,
+                            protocol: nextProtocol,
+                            base_url: config.baseUrl,
+                            models_endpoint: config.modelsEndpoint,
+                            static_models: config.staticModels,
+                          });
+                        }}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder={isZh ? "选择协议" : "Select protocol"} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {protocolOptions.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              <span className="flex items-center gap-2">
+                                <ProviderIcon protocol={option.value} size={16} monochrome />
+                                <span>{option.label}</span>
+                              </span>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="space-y-2">
+                      <FieldLabel>{isZh ? "Base URL" : "Base URL"}</FieldLabel>
+                      <Input
+                        placeholder={isZh ? "输入上游基础地址" : "Enter upstream base URL"}
+                        value={editForm.base_url ?? ""}
+                        onChange={(e) => setEditForm({ ...editForm, base_url: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <FieldLabel>{isZh ? "Model Discovery" : "Model Discovery"}</FieldLabel>
+                      <Input
+                        placeholder={isZh ? "可选，用于自动获取模型列表" : "Optional, used to auto-discover models"}
+                        value={editForm.models_endpoint ?? ""}
+                        onChange={(e) => setEditForm({ ...editForm, models_endpoint: e.target.value })}
+                      />
+                    </div>
+                    <div className="col-span-2 space-y-2">
+                      <FieldLabel>{isZh ? "API Key" : "API Key"}</FieldLabel>
+                      <Input
+                        placeholder={isZh ? "留空则保持不变" : "Leave empty to keep current"}
+                        type="password"
+                        value={editForm.api_key ?? ""}
+                        onChange={(e) => setEditForm({ ...editForm, api_key: e.target.value })}
+                      />
+                    </div>
                     <div className="flex items-center gap-3">
                       <label className="text-sm text-slate-600">{isZh ? "启用" : "Active"}</label>
                       <input
@@ -256,25 +873,32 @@ export default function ProvidersPage() {
                         className="h-4 w-4 rounded border-slate-300"
                       />
                     </div>
-                    <div className="flex items-center gap-2">
-                      <label className="text-sm text-slate-600">{isZh ? "优先级" : "Priority"}</label>
-                      <input
-                        type="number"
-                        min={0}
-                        value={editForm.priority ?? 0}
-                        onChange={(e) => setEditForm({ ...editForm, priority: parseInt(e.target.value) || 0 })}
-                        className="w-20 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm outline-none focus:border-slate-400"
+                    <div className="space-y-2">
+                      <FieldLabel>{isZh ? "优先级" : "Priority"}</FieldLabel>
+                      <Input
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        value={String(editForm.priority ?? 0)}
+                        onChange={(e) => {
+                          const nextValue = e.target.value.replace(/\D+/g, "");
+                          setEditForm({ ...editForm, priority: Number.parseInt(nextValue || "0", 10) });
+                        }}
                       />
                     </div>
                   </div>
                   <div className="flex gap-3">
-                    <button
+                    <NyroButton
                       onClick={() => {
                         setEditError(null);
                         const input: UpdateProvider = {
                           name: editForm.name || undefined,
                           protocol: editForm.protocol || undefined,
                           base_url: editForm.base_url || undefined,
+                          preset_key: editForm.preset_key || undefined,
+                          channel: editForm.channel || undefined,
+                          models_endpoint: editForm.models_endpoint || undefined,
+                          static_models: editForm.static_models || undefined,
                           api_key: editForm.api_key || undefined,
                           is_active: editForm.is_active,
                           priority: editForm.priority,
@@ -282,16 +906,16 @@ export default function ProvidersPage() {
                         updateMut.mutate({ id: editForm.id, ...input });
                       }}
                       disabled={updateMut.isPending}
-                      className="rounded-xl bg-slate-900 px-5 py-2 text-sm font-medium text-white hover:bg-slate-800 cursor-pointer disabled:opacity-50"
+                      variant="primary"
                     >
                       {updateMut.isPending ? (isZh ? "保存中..." : "Saving...") : (isZh ? "保存" : "Save")}
-                    </button>
-                    <button
+                    </NyroButton>
+                    <NyroButton
                       onClick={() => { setEditingId(null); setEditError(null); }}
-                      className="rounded-xl border border-slate-200 px-5 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 cursor-pointer"
+                      variant="secondary"
                     >
                       {isZh ? "取消" : "Cancel"}
-                    </button>
+                    </NyroButton>
                   </div>
                   {editError && (
                     <p className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">{editError}</p>
@@ -381,20 +1005,20 @@ export default function ProvidersPage() {
                 {isZh ? `第 ${page + 1} / ${totalPages} 页` : `Page ${page + 1} of ${totalPages}`}
               </span>
               <div className="flex gap-1">
-                <button
+                <NyroButton
                   onClick={() => setPage(Math.max(0, page - 1))}
                   disabled={page === 0}
-                  className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 disabled:opacity-30 cursor-pointer"
+                  variant="icon"
                 >
                   <ChevronLeft className="h-4 w-4" />
-                </button>
-                <button
+                </NyroButton>
+                <NyroButton
                   onClick={() => setPage(Math.min(totalPages - 1, page + 1))}
                   disabled={page >= totalPages - 1}
-                  className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 disabled:opacity-30 cursor-pointer"
+                  variant="icon"
                 >
                   <ChevronRight className="h-4 w-4" />
-                </button>
+                </NyroButton>
               </div>
             </div>
           )}

@@ -1,11 +1,20 @@
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { backend } from "@/lib/backend";
-import type { LogPage, LogQuery } from "@/lib/types";
+import type { LogPage, LogQuery, Provider } from "@/lib/types";
 import { ScrollText, ChevronLeft, ChevronRight } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
+import { NyroButton } from "@/components/ui/nyro-button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 const PAGE_SIZE = 12;
+const ALL_OPTION = "__all__";
 
 export default function LogsPage() {
   const { locale } = useLocale();
@@ -21,10 +30,39 @@ export default function LogsPage() {
     queryFn: () => backend("query_logs", { query }),
     refetchInterval: 5_000,
   });
+  const { data: providers = [] } = useQuery<Provider[]>({
+    queryKey: ["providers"],
+    queryFn: () => backend("get_providers"),
+  });
 
   const items = data?.items ?? [];
   const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const providerOptions = useMemo(
+    () => [
+      { value: "", label: isZh ? "全部提供商" : "All Providers" },
+      ...providers.map((provider) => ({
+        value: provider.name,
+        label: provider.name,
+      })),
+    ],
+    [providers, isZh],
+  );
+  const statusOptions = useMemo(
+    () => [
+      { value: "", label: isZh ? "全部状态" : "All Status" },
+      { value: "ok", label: isZh ? "仅 2xx" : "2xx Only" },
+      { value: "error", label: isZh ? "4xx+ 错误" : "4xx+ Errors" },
+    ],
+    [isZh],
+  );
+  const providerFilterValue = filter.provider ?? ALL_OPTION;
+  const statusFilterValue =
+    (filter.status_min ?? null) === 200 && (filter.status_max ?? null) === 299
+      ? "ok"
+      : (filter.status_min ?? null) === 400 && (filter.status_max ?? null) == null
+        ? "error"
+        : ALL_OPTION;
 
   return (
     <div className="space-y-5">
@@ -36,32 +74,48 @@ export default function LogsPage() {
           </p>
         </div>
         <div className="flex gap-2">
-          <select
-            value={filter.provider ?? ""}
-            onChange={(e) => { setFilter({ ...filter, provider: e.target.value || undefined }); setPage(0); }}
-            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none"
+          <Select
+            value={providerFilterValue}
+            onValueChange={(value) => {
+              setFilter({ ...filter, provider: value === ALL_OPTION ? undefined : value });
+              setPage(0);
+            }}
           >
-            <option value="">{isZh ? "全部提供商" : "All Providers"}</option>
-          </select>
-          <select
-            value={filter.status_min != null ? String(filter.status_min) : ""}
-            onChange={(e) => {
-              const v = e.target.value;
-              if (v === "error") {
+            <SelectTrigger className="w-48">
+              <SelectValue placeholder={isZh ? "提供商过滤" : "Provider Filter"} />
+            </SelectTrigger>
+            <SelectContent>
+              {providerOptions.map((option) => (
+                <SelectItem key={`provider-${option.value || "all"}`} value={option.value || ALL_OPTION}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select
+            value={statusFilterValue}
+            onValueChange={(next) => {
+              if (next === "error") {
                 setFilter({ ...filter, status_min: 400, status_max: undefined });
-              } else if (v === "ok") {
+              } else if (next === "ok") {
                 setFilter({ ...filter, status_min: 200, status_max: 299 });
               } else {
                 setFilter({ ...filter, status_min: undefined, status_max: undefined });
               }
               setPage(0);
             }}
-            className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none"
           >
-            <option value="">{isZh ? "全部状态" : "All Status"}</option>
-            <option value="ok">{isZh ? "仅 2xx" : "2xx Only"}</option>
-            <option value="error">{isZh ? "4xx+ 错误" : "4xx+ Errors"}</option>
-          </select>
+            <SelectTrigger className="w-44">
+              <SelectValue placeholder={isZh ? "状态过滤" : "Status Filter"} />
+            </SelectTrigger>
+            <SelectContent>
+              {statusOptions.map((option) => (
+                <SelectItem key={`status-${option.value || "all"}`} value={option.value || ALL_OPTION}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
@@ -130,20 +184,20 @@ export default function LogsPage() {
               {isZh ? `第 ${page + 1} / ${totalPages} 页` : `Page ${page + 1} of ${totalPages}`}
             </span>
             <div className="flex gap-1">
-              <button
+              <NyroButton
                 onClick={() => setPage(Math.max(0, page - 1))}
                 disabled={page === 0}
-                className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 disabled:opacity-30 cursor-pointer"
+                variant="icon"
               >
                 <ChevronLeft className="h-4 w-4" />
-              </button>
-              <button
+              </NyroButton>
+              <NyroButton
                 onClick={() => setPage(Math.min(totalPages - 1, page + 1))}
                 disabled={page >= totalPages - 1}
-                className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 disabled:opacity-30 cursor-pointer"
+                variant="icon"
               >
                 <ChevronRight className="h-4 w-4" />
-              </button>
+              </NyroButton>
             </div>
           </div>
         </div>

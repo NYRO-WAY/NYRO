@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
 
 const iconModules = import.meta.glob("../../assets/icons/*.svg", {
+  query: "?raw",
   import: "default",
 }) as Record<string, () => Promise<string>>;
 
@@ -12,7 +13,7 @@ for (const [path, loader] of Object.entries(iconModules)) {
     iconLoaderMap[matched[1].toLowerCase()] = loader;
   }
 }
-const iconUrlCache = new Map<string, string>();
+const iconMarkupCache = new Map<string, string>();
 
 interface ProviderIconProps {
   name?: string;
@@ -20,6 +21,7 @@ interface ProviderIconProps {
   baseUrl?: string;
   size?: number;
   className?: string;
+  monochrome?: boolean;
 }
 
 const ICON_ALIASES: Record<string, string> = {
@@ -89,41 +91,44 @@ export function ProviderIcon({
   baseUrl,
   size = 20,
   className,
+  monochrome = false,
 }: ProviderIconProps) {
   const iconKey = resolveProviderIconKey({ name, protocol, baseUrl });
-  const [iconUrl, setIconUrl] = useState<string>("");
+  const [iconMarkup, setIconMarkup] = useState<string>("");
   const fallback = (name || protocol || "?").slice(0, 1).toUpperCase();
 
   useEffect(() => {
     if (!iconKey) {
-      setIconUrl("");
+      setIconMarkup("");
       return;
     }
-    const cached = iconUrlCache.get(iconKey);
+    const cacheKey = `${iconKey}:${monochrome ? "mono" : "color"}`;
+    const cached = iconMarkupCache.get(cacheKey);
     if (cached) {
-      setIconUrl(cached);
+      setIconMarkup(cached);
       return;
     }
     const loader = iconLoaderMap[iconKey];
     if (!loader) {
-      setIconUrl("");
+      setIconMarkup("");
       return;
     }
     let cancelled = false;
     loader()
-      .then((url) => {
+      .then((rawSvg) => {
         if (cancelled) return;
-        iconUrlCache.set(iconKey, url);
-        setIconUrl(url);
+        const markup = normalizeProviderSvg(rawSvg, monochrome);
+        iconMarkupCache.set(cacheKey, markup);
+        setIconMarkup(markup);
       })
       .catch(() => {
-        if (!cancelled) setIconUrl("");
+        if (!cancelled) setIconMarkup("");
       });
 
     return () => {
       cancelled = true;
     };
-  }, [iconKey]);
+  }, [iconKey, monochrome]);
 
   return (
     <span
@@ -134,16 +139,39 @@ export function ProviderIcon({
       style={{ width: size, height: size }}
       title={name || protocol || "provider"}
     >
-      {iconUrl ? (
-        <img
-          src={iconUrl}
-          alt=""
+      {iconMarkup ? (
+        <span
           aria-hidden="true"
-          className="h-[78%] w-[78%] object-contain"
+          className="provider-icon-markup h-[78%] w-[78%]"
+          dangerouslySetInnerHTML={{ __html: iconMarkup }}
         />
       ) : (
         fallback
       )}
     </span>
   );
+}
+
+function normalizeProviderSvg(svg: string, monochrome: boolean) {
+  let next = svg
+    .replace(/<title>.*?<\/title>/gis, "")
+    .replace(
+      /<svg\b([^>]*)>/i,
+      '<svg$1 class="provider-icon-svg" aria-hidden="true" focusable="false">',
+    );
+
+  if (!monochrome) return next;
+
+  next = next
+    .replace(/<defs>[\s\S]*?<\/defs>/gi, "")
+    .replace(/\sfill="(?!none)[^"]*"/gi, ' fill="currentColor"')
+    .replace(/\sstroke="(?!none)[^"]*"/gi, ' stroke="currentColor"')
+    .replace(/\sstop-color="[^"]*"/gi, ' stop-color="currentColor"')
+    .replace(/\sstyle="[^"]*"/gi, "")
+    .replace(
+      /<svg\b([^>]*)>/i,
+      '<svg$1 fill="currentColor" stroke="currentColor" color="currentColor">',
+    );
+
+  return next;
 }

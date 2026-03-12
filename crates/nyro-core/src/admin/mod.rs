@@ -1,5 +1,7 @@
 use std::time::Instant;
 
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
+use serde_json::Value;
 use sqlx::Row;
 
 use crate::db::models::*;
@@ -19,7 +21,7 @@ impl AdminService {
 
     pub async fn list_providers(&self) -> anyhow::Result<Vec<Provider>> {
         let rows = sqlx::query_as::<_, Provider>(
-            "SELECT id, name, protocol, base_url, api_key, is_active, priority, created_at, updated_at FROM providers ORDER BY priority ASC",
+            "SELECT id, name, protocol, base_url, preset_key, COALESCE(channel, region) AS channel, models_endpoint, static_models, api_key, is_active, priority, created_at, updated_at FROM providers ORDER BY priority ASC",
         )
         .fetch_all(&self.gw.db)
         .await?;
@@ -28,7 +30,7 @@ impl AdminService {
 
     pub async fn get_provider(&self, id: &str) -> anyhow::Result<Provider> {
         let row = sqlx::query_as::<_, Provider>(
-            "SELECT id, name, protocol, base_url, api_key, is_active, priority, created_at, updated_at FROM providers WHERE id = ?",
+            "SELECT id, name, protocol, base_url, preset_key, COALESCE(channel, region) AS channel, models_endpoint, static_models, api_key, is_active, priority, created_at, updated_at FROM providers WHERE id = ?",
         )
         .bind(id)
         .fetch_one(&self.gw.db)
@@ -39,12 +41,16 @@ impl AdminService {
     pub async fn create_provider(&self, input: CreateProvider) -> anyhow::Result<Provider> {
         let id = uuid::Uuid::new_v4().to_string();
         sqlx::query(
-            "INSERT INTO providers (id, name, protocol, base_url, api_key) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO providers (id, name, protocol, base_url, preset_key, channel, models_endpoint, static_models, api_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&input.name)
         .bind(&input.protocol)
         .bind(&input.base_url)
+        .bind(&input.preset_key)
+        .bind(&input.channel)
+        .bind(&input.models_endpoint)
+        .bind(&input.static_models)
         .bind(&input.api_key)
         .execute(&self.gw.db)
         .await?;
@@ -62,16 +68,24 @@ impl AdminService {
         let name = input.name.unwrap_or(current.name);
         let protocol = input.protocol.unwrap_or(current.protocol);
         let base_url = input.base_url.unwrap_or(current.base_url);
+        let preset_key = input.preset_key.or(current.preset_key);
+        let channel = input.channel.or(current.channel);
+        let models_endpoint = input.models_endpoint.or(current.models_endpoint);
+        let static_models = input.static_models.or(current.static_models);
         let api_key = input.api_key.unwrap_or(current.api_key);
         let is_active = input.is_active.unwrap_or(current.is_active);
         let priority = input.priority.unwrap_or(current.priority);
 
         sqlx::query(
-            "UPDATE providers SET name=?, protocol=?, base_url=?, api_key=?, is_active=?, priority=?, updated_at=datetime('now') WHERE id=?",
+            "UPDATE providers SET name=?, protocol=?, base_url=?, preset_key=?, channel=?, models_endpoint=?, static_models=?, api_key=?, is_active=?, priority=?, updated_at=datetime('now') WHERE id=?",
         )
         .bind(&name)
         .bind(&protocol)
         .bind(&base_url)
+        .bind(&preset_key)
+        .bind(&channel)
+        .bind(&models_endpoint)
+        .bind(&static_models)
         .bind(&api_key)
         .bind(is_active)
         .bind(priority)
@@ -95,7 +109,7 @@ impl AdminService {
         let start = Instant::now();
 
         let req = if provider.protocol == "anthropic" {
-            let url = format!("{}/v1/messages", provider.base_url.trim_end_matches('/'));
+            let url = build_provider_url(&provider.base_url, "/v1/messages", &provider.protocol);
             let body = serde_json::json!({
                 "model": "claude-3-haiku-20240307",
                 "messages": [{"role": "user", "content": "Hi"}],
@@ -107,7 +121,7 @@ impl AdminService {
                 .header("anthropic-version", "2023-06-01")
                 .json(&body)
         } else {
-            let url = format!("{}/v1/chat/completions", provider.base_url.trim_end_matches('/'));
+            let url = build_provider_url(&provider.base_url, "/v1/chat/completions", &provider.protocol);
             let body = serde_json::json!({
                 "model": "gpt-4o-mini",
                 "messages": [{"role": "user", "content": "Hi"}],
@@ -149,6 +163,38 @@ impl AdminService {
                 error: Some(e.to_string()),
             }),
         }
+    }
+
+    pub async fn get_provider_models(&self, id: &str) -> anyhow::Result<Vec<String>> {
+        let provider = self.get_provider(id).await?;
+
+        if let Some(endpoint) = resolve_models_endpoint(&provider) {
+            let mut request = self
+                .gw
+                .http_client
+                .get(&endpoint)
+                .headers(build_model_headers(&provider.protocol, &provider.api_key)?);
+
+            if provider.protocol == "gemini" {
+                let separator = if endpoint.contains('?') { '&' } else { '?' };
+                request = self
+                    .gw
+                    .http_client
+                    .get(format!("{endpoint}{separator}key={}", provider.api_key));
+            }
+
+            if let Ok(resp) = request.send().await {
+                if resp.status().is_success() {
+                    let json: Value = resp.json().await.unwrap_or_default();
+                    let models = extract_models_from_response(&provider.protocol, &json);
+                    if !models.is_empty() {
+                        return Ok(models);
+                    }
+                }
+            }
+        }
+
+        Ok(parse_static_models(provider.static_models.as_deref()))
     }
 
     // ── Routes ──
@@ -395,6 +441,10 @@ impl AdminService {
                     name: p.name,
                     protocol: p.protocol,
                     base_url: p.base_url,
+                    preset_key: p.preset_key,
+                    channel: p.channel,
+                    models_endpoint: p.models_endpoint,
+                    static_models: p.static_models,
                     api_key: p.api_key,
                     is_active: p.is_active,
                     priority: p.priority,
@@ -437,6 +487,10 @@ impl AdminService {
                         name: p.name.clone(),
                         protocol: p.protocol.clone(),
                         base_url: p.base_url.clone(),
+                        preset_key: p.preset_key.clone(),
+                        channel: p.channel.clone(),
+                        models_endpoint: p.models_endpoint.clone(),
+                        static_models: p.static_models.clone(),
                         api_key: p.api_key.clone(),
                     })
                     .await;
@@ -486,4 +540,109 @@ impl AdminService {
             settings_imported,
         })
     }
+}
+
+fn build_provider_url(base_url: &str, path: &str, protocol: &str) -> String {
+    let base = base_url.trim_end_matches('/');
+    if protocol == "openai" {
+        let has_base_path = reqwest::Url::parse(base)
+            .ok()
+            .map(|url| {
+                let pathname = url.path().trim_end_matches('/');
+                !pathname.is_empty() && pathname != "/"
+            })
+            .unwrap_or(false);
+
+        if has_base_path && path.starts_with("/v1/") {
+            return format!("{base}{}", &path[3..]);
+        }
+    }
+
+    format!("{base}{path}")
+}
+
+fn resolve_models_endpoint(provider: &Provider) -> Option<String> {
+    if let Some(endpoint) = provider.models_endpoint.as_ref() {
+        let trimmed = endpoint.trim();
+        if !trimmed.is_empty() {
+            return Some(trimmed.to_string());
+        }
+    }
+
+    let base = provider.base_url.trim_end_matches('/');
+    match provider.protocol.as_str() {
+        "openai" | "anthropic" => {
+            let has_base_path = reqwest::Url::parse(base)
+                .ok()
+                .map(|url| {
+                    let pathname = url.path().trim_end_matches('/');
+                    !pathname.is_empty() && pathname != "/"
+                })
+                .unwrap_or(false);
+            if has_base_path {
+                Some(format!("{base}/models"))
+            } else {
+                Some(format!("{base}/v1/models"))
+            }
+        }
+        "gemini" => Some(format!("{base}/v1beta/models")),
+        _ => None,
+    }
+}
+
+fn build_model_headers(protocol: &str, api_key: &str) -> anyhow::Result<HeaderMap> {
+    let mut headers = HeaderMap::new();
+    match protocol {
+        "anthropic" => {
+            headers.insert("x-api-key", HeaderValue::from_str(api_key)?);
+            headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
+        }
+        "gemini" => {}
+        _ => {
+            headers.insert(
+                AUTHORIZATION,
+                HeaderValue::from_str(&format!("Bearer {api_key}"))?,
+            );
+        }
+    }
+    Ok(headers)
+}
+
+fn extract_models_from_response(protocol: &str, json: &Value) -> Vec<String> {
+    let mut models = match protocol {
+        "gemini" => json
+            .get("models")
+            .and_then(|value| value.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|item| item.get("name").and_then(|value| value.as_str()))
+            .map(|name| name.rsplit('/').next().unwrap_or(name).to_string())
+            .collect::<Vec<_>>(),
+        _ => json
+            .get("data")
+            .and_then(|value| value.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|item| item.get("id").and_then(|value| value.as_str()))
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+    };
+
+    models.sort();
+    models.dedup();
+    models
+}
+
+fn parse_static_models(raw: Option<&str>) -> Vec<String> {
+    let mut models = raw
+        .unwrap_or("")
+        .lines()
+        .flat_map(|line| line.split(','))
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+    models.sort();
+    models.dedup();
+    models
 }

@@ -5,6 +5,13 @@ import { backend } from "@/lib/backend";
 import type { StatsOverview, StatsHourly, ModelStats, ProviderStats } from "@/lib/types";
 import { Zap, Clock, Activity } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#06b6d4", "#84cc16"];
 
@@ -72,16 +79,17 @@ export default function StatsPage() {
             {isZh ? "Token 使用、延迟与错误分析" : "Token usage, latency, and error analytics"}
           </p>
         </div>
-        <select
-          value={hours}
-          onChange={(e) => setHours(Number(e.target.value))}
-          className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm outline-none"
-        >
-          <option value={6}>{isZh ? "最近 6 小时" : "Last 6h"}</option>
-          <option value={24}>{isZh ? "最近 24 小时" : "Last 24h"}</option>
-          <option value={72}>{isZh ? "最近 3 天" : "Last 3d"}</option>
-          <option value={168}>{isZh ? "最近 7 天" : "Last 7d"}</option>
-        </select>
+        <Select value={String(hours)} onValueChange={(value) => setHours(Number(value))}>
+          <SelectTrigger className="w-40">
+            <SelectValue placeholder={isZh ? "选择时间范围" : "Select range"} />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="6">{isZh ? "最近 6 小时" : "Last 6h"}</SelectItem>
+            <SelectItem value="24">{isZh ? "最近 24 小时" : "Last 24h"}</SelectItem>
+            <SelectItem value="72">{isZh ? "最近 3 天" : "Last 3d"}</SelectItem>
+            <SelectItem value="168">{isZh ? "最近 7 天" : "Last 7d"}</SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">

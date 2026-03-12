@@ -11,6 +11,8 @@ import {
   Save,
   Loader2,
 } from "lucide-react";
+import { NyroButton } from "@/components/ui/nyro-button";
+import { Input } from "@/components/ui/input";
 
 export default function SettingsPage() {
   const { locale } = useLocale();
@@ -191,19 +193,21 @@ curl ${baseUrl}/v1/messages \\
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <input
+              <Input
                 type="number"
                 min={1}
                 max={365}
                 value={retentionValue}
                 onChange={(e) => setRetentionInput(e.target.value)}
-                className="w-24 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm outline-none focus:border-slate-400"
+                className="w-24"
               />
               <span className="text-sm text-slate-500">{isZh ? "天" : "days"}</span>
-              <button
+              <NyroButton
                 onClick={() => saveSetting.mutate(retentionValue)}
                 disabled={saveSetting.isPending}
-                className="ml-auto flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 cursor-pointer disabled:opacity-50"
+                variant="primary"
+                size="compact"
+                className="ml-auto flex items-center gap-1.5"
               >
                 {saveSetting.isPending ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -211,7 +215,7 @@ curl ${baseUrl}/v1/messages \\
                   <Save className="h-3.5 w-3.5" />
                 )}
                 {isZh ? "保存" : "Save"}
-              </button>
+              </NyroButton>
             </div>
             {saveSetting.isSuccess && (
               <p className="text-xs text-green-600">{isZh ? "保存成功" : "Saved successfully"}</p>
@@ -227,10 +231,12 @@ curl ${baseUrl}/v1/messages \\
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <button
+              <NyroButton
                 onClick={() => exportMut.mutate()}
                 disabled={exportMut.isPending}
-                className="flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800 cursor-pointer disabled:opacity-50"
+                variant="primary"
+                size="compact"
+                className="flex items-center gap-1.5"
               >
                 {exportMut.isPending ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -238,11 +244,13 @@ curl ${baseUrl}/v1/messages \\
                   <Download className="h-3.5 w-3.5" />
                 )}
                 {isZh ? "导出" : "Export"}
-              </button>
-              <button
+              </NyroButton>
+              <NyroButton
                 onClick={() => fileRef.current?.click()}
                 disabled={importMut.isPending}
-                className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-50 cursor-pointer disabled:opacity-50"
+                variant="secondary"
+                size="compact"
+                className="flex items-center gap-1.5"
               >
                 {importMut.isPending ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -250,7 +258,7 @@ curl ${baseUrl}/v1/messages \\
                   <Upload className="h-3.5 w-3.5" />
                 )}
                 {isZh ? "导入" : "Import"}
-              </button>
+              </NyroButton>
               <input
                 ref={fileRef}
                 type="file"

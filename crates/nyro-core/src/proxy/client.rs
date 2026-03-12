@@ -41,7 +41,25 @@ impl ProxyClient {
 
     fn build_url(base_url: &str, path: &str, protocol: Protocol, api_key: &str) -> String {
         let base = base_url.trim_end_matches('/');
-        let url = format!("{base}{path}");
+        let adjusted_path = match protocol {
+            Protocol::OpenAI => {
+                let has_base_path = reqwest::Url::parse(base)
+                    .ok()
+                    .map(|url| {
+                        let pathname = url.path().trim_end_matches('/');
+                        !pathname.is_empty() && pathname != "/"
+                    })
+                    .unwrap_or(false);
+
+                if has_base_path && path.starts_with("/v1/") {
+                    &path[3..]
+                } else {
+                    path
+                }
+            }
+            _ => path,
+        };
+        let url = format!("{base}{adjusted_path}");
         match protocol {
             Protocol::Gemini => {
                 if url.contains('?') {

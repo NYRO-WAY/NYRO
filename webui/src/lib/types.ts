@@ -3,6 +3,10 @@ export interface Provider {
   name: string;
   protocol: string;
   base_url: string;
+  preset_key?: string | null;
+  channel?: string | null;
+  models_endpoint?: string | null;
+  static_models?: string | null;
   is_active: boolean;
   priority: number;
   created_at: string;
@@ -92,6 +96,10 @@ export interface CreateProvider {
   name: string;
   protocol: string;
   base_url: string;
+  preset_key?: string;
+  channel?: string;
+  models_endpoint?: string;
+  static_models?: string;
   api_key: string;
 }
 
@@ -99,6 +107,10 @@ export interface UpdateProvider {
   name?: string;
   protocol?: string;
   base_url?: string;
+  preset_key?: string;
+  channel?: string;
+  models_endpoint?: string;
+  static_models?: string;
   api_key?: string;
   is_active?: boolean;
   priority?: number;
@@ -133,6 +145,10 @@ export interface ExportProvider {
   name: string;
   protocol: string;
   base_url: string;
+  preset_key?: string | null;
+  channel?: string | null;
+  models_endpoint?: string | null;
+  static_models?: string | null;
   api_key: string;
   is_active: boolean;
   priority: number;
