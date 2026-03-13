@@ -4,6 +4,45 @@ All notable changes to Nyro will be documented in this file.
 
 ---
 
+## v1.1.0
+
+> Released on 2026-03-13
+
+#### Features
+
+- **Route matching redesign**: switch from fuzzy `match_pattern` to exact matching on `(ingress_protocol, virtual_model)` for OpenAI / Anthropic / Gemini ingress
+- **New API key system**: add `api_keys` + `api_key_routes` data model and full CRUD management with `sk-nyro-xxxx` key format
+- **Route-level access control**: route first, then authorize API key only when `access_control` is enabled; support key binding to specific routes or global access
+- **Quota enforcement for API keys**: add `RPM`, `TPM`, `TPD`, key status, and expiration checks in proxy authorization flow
+
+#### Improvements
+
+- **Backend migration & compatibility**:
+  - add and backfill new route/provider/log fields (`ingress_protocol`, `virtual_model`, `access_control`, `channel`, `api_key_id`)
+  - remove legacy route/provider fallback and priority behavior from active flow
+- **Admin/API surface expansion**: add server + Tauri management endpoints/commands for API key operations
+- **WebUI route & key experience refresh**:
+  - new API Keys page with searchable multi-select route binding
+  - create-route layout aligns provider/model fields in one row and auto-inherits target model into virtual model
+  - provider create/edit flow now persists and re-anchors provider preset/channel identifiers
+- **UI component standardization**: introduce shadcn-style `Badge`, `Switch`, `Checkbox`, `Dialog`, `Combobox`, `Command`, `Popover`, `MultiSelect`, `Tabs`, and related fields
+- **Provider icon behavior polish**: provider list uses supplier icon as primary (light: color, dark: monochrome), protocol badge icon remains protocol-based
+- **Version display automation**: settings page version now reads build-injected app version instead of hard-coded text
+
+#### Fixes
+
+- Fix searchable dropdown visual layering and non-transparent panel background
+- Fix search result filtering and hover/highlight feedback in custom dropdown components
+- Align Homebrew install docs to standard `brew install --cask nyro` flow
+
+#### Documentation
+
+- Add route/API key design spec: `docs/design/route-apikey.md`
+- Add provider base URL/channel design note: `docs/design/provider-base-urls.md`
+- Update `README.md` and `README_CN.md` installation commands and related notes
+
+---
+
 ## v1.0.1
 
 > Released on 2026-03-10

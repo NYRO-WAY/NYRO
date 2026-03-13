@@ -4,6 +4,45 @@ Nyro 的所有重要变更均记录在此文件中。
 
 ---
 
+## v1.1.0
+
+> 发布于 2026-03-13
+
+#### 功能
+
+- **路由匹配重构**：从模糊 `match_pattern` 切换为 `(ingress_protocol, virtual_model)` 精确匹配，支持 OpenAI / Anthropic / Gemini 接入
+- **全新 API Key 体系**：新增 `api_keys` + `api_key_routes` 数据模型及完整 CRUD，默认密钥格式为 `sk-nyro-xxxx`
+- **路由级访问控制**：先匹配路由，再在 `access_control` 开启时校验 API Key；支持按路由绑定或全局生效
+- **API Key 配额能力**：在代理鉴权链路中新增 `RPM`、`TPM`、`TPD`、状态与过期时间校验
+
+#### 改进
+
+- **后端迁移与兼容处理**：
+  - 新增并回填路由/Provider/日志字段（`ingress_protocol`、`virtual_model`、`access_control`、`channel`、`api_key_id`）
+  - 现行流程移除旧的路由/Provider fallback 与 priority 机制
+- **管理接口扩展**：服务端与 Tauri 管理 API/命令新增 API Key 管理能力
+- **WebUI 路由与密钥体验升级**：
+  - 新增 API Keys 页面，支持可搜索多选绑定路由
+  - 创建路由时将提供商/模型同排展示，并自动将目标模型回填到虚拟模型
+  - Provider 创建/编辑流程持久化并自动锚定供应商与渠道标识
+- **UI 组件标准化**：引入并统一使用 shadcn 风格 `Badge`、`Switch`、`Checkbox`、`Dialog`、`Combobox`、`Command`、`Popover`、`MultiSelect`、`Tabs` 等组件
+- **Provider 图标策略优化**：Provider 列表主图标优先展示供应商图标（亮色彩色、暗色纯色），协议胶囊图标保持协议维度
+- **版本展示自动化**：设置页版本改为构建时注入，不再写死
+
+#### 修复
+
+- 修复搜索下拉面板背景透明导致内容混叠的问题
+- 修复自定义下拉搜索过滤与 hover/高亮反馈问题
+- Homebrew 安装文档改为标准 `brew install --cask nyro` 流程
+
+#### 文档
+
+- 新增路由与 API Key 设计文档：`docs/design/route-apikey.md`
+- 新增 Provider Base URL/渠道设计说明：`docs/design/provider-base-urls.md`
+- 更新 `README.md` 与 `README_CN.md` 安装命令及相关说明
+
+---
+
 ## v1.0.1
 
 > 发布于 2026-03-10
