@@ -3,7 +3,7 @@
 
 Covers:
 - admin auth
-- proxy auth
+- route-level API key auth
 - OpenAI ingress (non-stream + stream)
 - Anthropic ingress (stream event order)
 - Gemini ingress (non-stream + stream)
@@ -323,7 +323,6 @@ def start_mock_server(port: int) -> tuple[ThreadingHTTPServer, threading.Thread]
 
 def run_smoke() -> None:
     admin_key = "smoke-admin-key"
-    proxy_key = "smoke-proxy-key"
     mock_port = find_free_port()
     proxy_port = find_free_port()
     admin_port = find_free_port()
@@ -353,8 +352,6 @@ def run_smoke() -> None:
                 data_dir,
                 "--admin-key",
                 admin_key,
-                "--proxy-key",
-                proxy_key,
                 "--webui-dir",
                 "./webui/dist",
             ]
@@ -382,7 +379,7 @@ def run_smoke() -> None:
             proxy_base = f"http://127.0.0.1:{proxy_port}"
             mock_base = f"http://127.0.0.1:{mock_port}"
             admin_headers = {"authorization": f"Bearer {admin_key}"}
-            proxy_headers = {"authorization": f"Bearer {proxy_key}"}
+            proxy_headers: dict[str, str] = {}
 
             wait_until_ready(f"{admin_base}/api/v1/status", headers=admin_headers, timeout_sec=40)
 
@@ -413,31 +410,44 @@ def run_smoke() -> None:
 
             # Create routes.
             routes = [
-                ("nyro-chat", "nyro-chat", provider_ids["openai"], "gpt-mock"),
-                ("nyro-claude", "nyro-claude", provider_ids["anthropic"], "claude-mock"),
-                ("gemini-2.0-flash", "gemini-2.0-flash", provider_ids["gemini"], "gemini-2.0-flash"),
+                ("nyro-chat", "openai", "nyro-chat", provider_ids["openai"], "gpt-mock"),
+                ("nyro-claude", "anthropic", "nyro-claude", provider_ids["anthropic"], "claude-mock"),
+                ("gemini-2.0-flash", "gemini", "gemini-2.0-flash", provider_ids["gemini"], "gemini-2.0-flash"),
             ]
-            for name, pattern, target_provider, target_model in routes:
+            for name, ingress_protocol, virtual_model, target_provider, target_model in routes:
                 status, resp = http_request(
                     "POST",
                     f"{admin_base}/api/v1/routes",
                     payload={
                         "name": name,
-                        "match_pattern": pattern,
+                        "ingress_protocol": ingress_protocol,
+                        "virtual_model": virtual_model,
                         "target_provider": target_provider,
                         "target_model": target_model,
+                        "access_control": True,
                     },
                     headers=admin_headers,
                 )
                 assert_true(status == 200, f"create route {name} failed: {status} {resp}")
 
-            # Proxy auth must reject anonymous access.
+            # Access-controlled route must reject anonymous access.
             status, _ = http_request(
                 "POST",
                 f"{proxy_base}/v1/chat/completions",
                 payload={"model": "nyro-chat", "messages": [{"role": "user", "content": "hi"}]},
             )
-            assert_true(status == 401, f"expected proxy 401 without token, got {status}")
+            assert_true(status == 401, f"expected route auth 401 without api key, got {status}")
+
+            # Create API key (global route access).
+            status, key_resp = http_request(
+                "POST",
+                f"{admin_base}/api/v1/api-keys",
+                payload={"name": "smoke-key"},
+                headers=admin_headers,
+            )
+            assert_true(status == 200, f"create api key failed: {status} {key_resp}")
+            proxy_key = key_resp["data"]["key"]
+            proxy_headers = {"authorization": f"Bearer {proxy_key}"}
 
             # OpenAI non-stream
             status, resp = http_request(
@@ -528,7 +538,7 @@ def run_smoke() -> None:
                 time.sleep(0.3)
             assert_true(total_logs >= 3, f"expected log entries after traffic, got {total_logs}")
 
-            print("Smoke test passed: admin/proxy auth + OpenAI/Anthropic/Gemini flows")
+            print("Smoke test passed: admin auth + route API key auth + OpenAI/Anthropic/Gemini flows")
 
     finally:
         if proc is not None and proc.poll() is None:
