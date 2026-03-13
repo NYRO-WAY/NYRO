@@ -1,16 +1,14 @@
-use axum::middleware;
 use axum::routing::{get, post};
 use axum::Router;
 use axum::http::{HeaderValue, Method, header};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 
-use super::auth::{self, AuthKey};
 use super::handler;
 use crate::Gateway;
 
 pub fn create_router(gateway: Gateway) -> Router {
-    let mut router = Router::new()
+    let router = Router::new()
         .route("/v1/chat/completions", post(handler::openai_proxy))
         .route("/v1/messages", post(handler::anthropic_proxy))
         .route(
@@ -18,14 +16,6 @@ pub fn create_router(gateway: Gateway) -> Router {
             post(handler::gemini_proxy),
         )
         .route("/health", get(health));
-
-    if let Some(ref key) = gateway.config.auth_key {
-        if !key.is_empty() {
-            router = router
-                .layer(middleware::from_fn(auth::bearer_auth))
-                .layer(axum::Extension(AuthKey(key.clone())));
-        }
-    }
 
     let cors = build_proxy_cors_layer(&gateway.config.proxy_cors_origins, gateway.config.proxy_port);
 

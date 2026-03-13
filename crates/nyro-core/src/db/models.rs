@@ -15,7 +15,6 @@ pub struct Provider {
     #[serde(skip_serializing)]
     pub api_key: String,
     pub is_active: bool,
-    pub priority: i32,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -24,20 +23,49 @@ pub struct Provider {
 pub struct Route {
     pub id: String,
     pub name: String,
-    pub match_pattern: String,
+    pub ingress_protocol: String,
+    pub virtual_model: String,
     pub target_provider: String,
     pub target_model: String,
-    pub fallback_provider: Option<String>,
-    pub fallback_model: Option<String>,
+    pub access_control: bool,
     pub is_active: bool,
-    pub priority: i32,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct ApiKey {
+    pub id: String,
+    pub key: String,
+    pub name: String,
+    pub rpm: Option<i32>,
+    pub tpm: Option<i32>,
+    pub tpd: Option<i32>,
+    pub status: String,
+    pub expires_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiKeyWithBindings {
+    pub id: String,
+    pub key: String,
+    pub name: String,
+    pub rpm: Option<i32>,
+    pub tpm: Option<i32>,
+    pub tpd: Option<i32>,
+    pub status: String,
+    pub expires_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub route_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct RequestLog {
     pub id: String,
     pub created_at: String,
+    pub api_key_id: Option<String>,
     pub ingress_protocol: Option<String>,
     pub egress_protocol: Option<String>,
     pub request_model: Option<String>,
@@ -79,29 +107,49 @@ pub struct UpdateProvider {
     pub static_models: Option<String>,
     pub api_key: Option<String>,
     pub is_active: Option<bool>,
-    pub priority: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateRoute {
     pub name: Option<String>,
-    pub match_pattern: Option<String>,
+    pub ingress_protocol: Option<String>,
+    pub virtual_model: Option<String>,
     pub target_provider: Option<String>,
     pub target_model: Option<String>,
-    pub fallback_provider: Option<String>,
-    pub fallback_model: Option<String>,
+    pub access_control: Option<bool>,
     pub is_active: Option<bool>,
-    pub priority: Option<i32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateRoute {
     pub name: String,
-    pub match_pattern: String,
+    pub ingress_protocol: String,
+    pub virtual_model: String,
     pub target_provider: String,
     pub target_model: String,
-    pub fallback_provider: Option<String>,
-    pub fallback_model: Option<String>,
+    pub access_control: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateApiKey {
+    pub name: String,
+    pub rpm: Option<i32>,
+    pub tpm: Option<i32>,
+    pub tpd: Option<i32>,
+    pub expires_at: Option<String>,
+    #[serde(default)]
+    pub route_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateApiKey {
+    pub name: Option<String>,
+    pub rpm: Option<i32>,
+    pub tpm: Option<i32>,
+    pub tpd: Option<i32>,
+    pub status: Option<String>,
+    pub expires_at: Option<String>,
+    pub route_ids: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -184,19 +232,20 @@ pub struct ExportProvider {
     pub static_models: Option<String>,
     pub api_key: String,
     pub is_active: bool,
-    pub priority: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExportRoute {
     pub name: String,
-    pub match_pattern: String,
+    #[serde(default = "default_ingress_protocol")]
+    pub ingress_protocol: String,
+    #[serde(alias = "match_pattern")]
+    pub virtual_model: String,
     pub target_provider_name: String,
     pub target_model: String,
-    pub fallback_provider_name: Option<String>,
-    pub fallback_model: Option<String>,
+    #[serde(default)]
+    pub access_control: bool,
     pub is_active: bool,
-    pub priority: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -204,4 +253,8 @@ pub struct ImportResult {
     pub providers_imported: u32,
     pub routes_imported: u32,
     pub settings_imported: u32,
+}
+
+fn default_ingress_protocol() -> String {
+    "openai".to_string()
 }

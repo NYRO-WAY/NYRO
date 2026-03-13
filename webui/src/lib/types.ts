@@ -8,7 +8,6 @@ export interface Provider {
   models_endpoint?: string | null;
   static_models?: string | null;
   is_active: boolean;
-  priority: number;
   created_at: string;
   updated_at: string;
 }
@@ -16,14 +15,27 @@ export interface Provider {
 export interface Route {
   id: string;
   name: string;
-  match_pattern: string;
+  ingress_protocol: "openai" | "anthropic" | "gemini";
+  virtual_model: string;
   target_provider: string;
   target_model: string;
-  fallback_provider?: string;
-  fallback_model?: string;
+  access_control: boolean;
   is_active: boolean;
-  priority: number;
   created_at: string;
+}
+
+export interface ApiKey {
+  id: string;
+  key: string;
+  name: string;
+  rpm?: number | null;
+  tpm?: number | null;
+  tpd?: number | null;
+  status: "active" | "revoked";
+  expires_at?: string | null;
+  created_at: string;
+  updated_at: string;
+  route_ids: string[];
 }
 
 export interface RequestLog {
@@ -113,16 +125,44 @@ export interface UpdateProvider {
   static_models?: string;
   api_key?: string;
   is_active?: boolean;
-  priority?: number;
 }
 
 export interface CreateRoute {
   name: string;
-  match_pattern: string;
+  ingress_protocol: "openai" | "anthropic" | "gemini";
+  virtual_model: string;
   target_provider: string;
   target_model: string;
-  fallback_provider?: string;
-  fallback_model?: string;
+  access_control?: boolean;
+}
+
+export interface UpdateRoute {
+  name?: string;
+  ingress_protocol?: "openai" | "anthropic" | "gemini";
+  virtual_model?: string;
+  target_provider?: string;
+  target_model?: string;
+  access_control?: boolean;
+  is_active?: boolean;
+}
+
+export interface CreateApiKey {
+  name: string;
+  rpm?: number;
+  tpm?: number;
+  tpd?: number;
+  expires_at?: string;
+  route_ids: string[];
+}
+
+export interface UpdateApiKey {
+  name?: string;
+  rpm?: number;
+  tpm?: number;
+  tpd?: number;
+  status?: "active" | "revoked";
+  expires_at?: string;
+  route_ids?: string[];
 }
 
 export interface LogQuery {
@@ -151,18 +191,16 @@ export interface ExportProvider {
   static_models?: string | null;
   api_key: string;
   is_active: boolean;
-  priority: number;
 }
 
 export interface ExportRoute {
   name: string;
-  match_pattern: string;
+  ingress_protocol: "openai" | "anthropic" | "gemini";
+  virtual_model: string;
   target_provider_name: string;
   target_model: string;
-  fallback_provider_name?: string;
-  fallback_model?: string;
+  access_control: boolean;
   is_active: boolean;
-  priority: number;
 }
 
 export interface ImportResult {

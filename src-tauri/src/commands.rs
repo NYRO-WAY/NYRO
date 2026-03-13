@@ -81,6 +81,40 @@ pub async fn delete_route(gw: State<'_, Gateway>, id: String) -> Result<(), Stri
     gw.admin().delete_route(&id).await.map_err(|e| e.to_string())
 }
 
+// ── API Keys ──
+
+#[tauri::command]
+pub async fn list_api_keys(gw: State<'_, Gateway>) -> Result<Vec<ApiKeyWithBindings>, String> {
+    gw.admin().list_api_keys().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_api_key(gw: State<'_, Gateway>, id: String) -> Result<ApiKeyWithBindings, String> {
+    gw.admin().get_api_key(&id).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn create_api_key(
+    gw: State<'_, Gateway>,
+    input: CreateApiKey,
+) -> Result<ApiKeyWithBindings, String> {
+    gw.admin().create_api_key(input).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn update_api_key(
+    gw: State<'_, Gateway>,
+    id: String,
+    input: UpdateApiKey,
+) -> Result<ApiKeyWithBindings, String> {
+    gw.admin().update_api_key(&id, input).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_api_key(gw: State<'_, Gateway>, id: String) -> Result<(), String> {
+    gw.admin().delete_api_key(&id).await.map_err(|e| e.to_string())
+}
+
 // ── Logs ──
 
 #[tauri::command]

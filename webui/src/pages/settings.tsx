@@ -11,12 +11,13 @@ import {
   Save,
   Loader2,
 } from "lucide-react";
-import { NyroButton } from "@/components/ui/nyro-button";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 export default function SettingsPage() {
   const { locale } = useLocale();
   const isZh = locale === "zh-CN";
+  const appVersion = import.meta.env.VITE_APP_VERSION;
 
   const qc = useQueryClient();
   const [copied, setCopied] = useState(false);
@@ -100,7 +101,7 @@ export default function SettingsPage() {
 
 client = OpenAI(
     base_url="${baseUrl}/v1",
-    api_key="any-key",  # auth key if configured
+    api_key="sk-nyro-xxxx",  # Nyro API key
 )
 
 resp = client.chat.completions.create(
@@ -112,7 +113,7 @@ print(resp.choices[0].message.content)`,
 
 client = anthropic.Anthropic(
     base_url="${baseUrl}",
-    api_key="any-key",  # auth key if configured
+    api_key="sk-nyro-xxxx",  # Nyro API key
 )
 
 message = client.messages.create(
@@ -126,7 +127,7 @@ from google.generativeai.client import configure
 
 # Point the SDK at the Nyro gateway
 configure(
-    api_key="any-key",
+    api_key="sk-nyro-xxxx",
     client_options={"api_endpoint": "127.0.0.1:${status?.proxy_port ?? 19530}"},
     transport="rest",
 )
@@ -137,6 +138,7 @@ print(response.text)`,
     curl: `# OpenAI-compatible
 curl ${baseUrl}/v1/chat/completions \\
   -H "Content-Type: application/json" \\
+  -H "Authorization: Bearer sk-nyro-xxxx" \\
   -d '{"model":"gpt-4o","messages":[{"role":"user","content":"Hi"}]}'
 
 # Anthropic-compatible
@@ -174,7 +176,7 @@ curl ${baseUrl}/v1/messages \\
           </div>
           <div className="rounded-xl bg-slate-50 p-4">
             <p className="text-xs text-slate-500">{isZh ? "版本" : "Version"}</p>
-            <p className="mt-1 font-semibold text-slate-900">0.1.0</p>
+            <p className="mt-1 font-semibold text-slate-900">{appVersion}</p>
           </div>
         </div>
       </div>
@@ -202,11 +204,10 @@ curl ${baseUrl}/v1/messages \\
                 className="w-24"
               />
               <span className="text-sm text-slate-500">{isZh ? "天" : "days"}</span>
-              <NyroButton
+              <Button
                 onClick={() => saveSetting.mutate(retentionValue)}
                 disabled={saveSetting.isPending}
-                variant="primary"
-                size="compact"
+                size="sm"
                 className="ml-auto flex items-center gap-1.5"
               >
                 {saveSetting.isPending ? (
@@ -215,7 +216,7 @@ curl ${baseUrl}/v1/messages \\
                   <Save className="h-3.5 w-3.5" />
                 )}
                 {isZh ? "保存" : "Save"}
-              </NyroButton>
+              </Button>
             </div>
             {saveSetting.isSuccess && (
               <p className="text-xs text-green-600">{isZh ? "保存成功" : "Saved successfully"}</p>
@@ -231,11 +232,10 @@ curl ${baseUrl}/v1/messages \\
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <NyroButton
+              <Button
                 onClick={() => exportMut.mutate()}
                 disabled={exportMut.isPending}
-                variant="primary"
-                size="compact"
+                size="sm"
                 className="flex items-center gap-1.5"
               >
                 {exportMut.isPending ? (
@@ -244,12 +244,12 @@ curl ${baseUrl}/v1/messages \\
                   <Download className="h-3.5 w-3.5" />
                 )}
                 {isZh ? "导出" : "Export"}
-              </NyroButton>
-              <NyroButton
+              </Button>
+              <Button
                 onClick={() => fileRef.current?.click()}
                 disabled={importMut.isPending}
                 variant="secondary"
-                size="compact"
+                size="sm"
                 className="flex items-center gap-1.5"
               >
                 {importMut.isPending ? (
@@ -258,7 +258,7 @@ curl ${baseUrl}/v1/messages \\
                   <Upload className="h-3.5 w-3.5" />
                 )}
                 {isZh ? "导入" : "Import"}
-              </NyroButton>
+              </Button>
               <input
                 ref={fileRef}
                 type="file"
@@ -334,7 +334,7 @@ curl ${baseUrl}/v1/messages \\
             {
               step: 2,
               title: isZh ? "创建路由" : "Create a Route",
-              desc: isZh ? "前往 Routes，配置模型匹配规则映射到提供商" : "Go to Routes → Map model patterns (e.g. gpt-4*, claude-*, gemini-*) to a provider",
+              desc: isZh ? "前往 Routes，配置接入协议 + 虚拟模型的精确映射" : "Go to Routes → Map ingress protocol + virtual model to a provider",
             },
             {
               step: 3,

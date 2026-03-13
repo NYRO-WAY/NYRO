@@ -3,14 +3,14 @@ use std::time::Instant;
 
 use axum::body::Body;
 use axum::extract::{Path, State};
-use axum::http::{header, StatusCode};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
 use futures::StreamExt;
 use serde_json::Value;
 use tokio_stream::wrappers::ReceiverStream;
 
-use crate::db::models::Provider;
+use crate::db::models::{Provider, Route};
 use crate::logging::LogEntry;
 use crate::protocol::gemini::decoder::GeminiDecoder;
 use crate::protocol::types::*;
@@ -20,20 +20,29 @@ use crate::Gateway;
 
 // ── OpenAI ingress: POST /v1/chat/completions ──
 
-pub async fn openai_proxy(State(gw): State<Gateway>, Json(body): Json<Value>) -> Response {
-    universal_proxy(gw, body, Protocol::OpenAI).await
+pub async fn openai_proxy(
+    State(gw): State<Gateway>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    universal_proxy(gw, headers, body, Protocol::OpenAI).await
 }
 
 // ── Anthropic ingress: POST /v1/messages ──
 
-pub async fn anthropic_proxy(State(gw): State<Gateway>, Json(body): Json<Value>) -> Response {
-    universal_proxy(gw, body, Protocol::Anthropic).await
+pub async fn anthropic_proxy(
+    State(gw): State<Gateway>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    universal_proxy(gw, headers, body, Protocol::Anthropic).await
 }
 
 // ── Gemini ingress: POST /v1beta/models/:model_action ──
 
 pub async fn gemini_proxy(
     State(gw): State<Gateway>,
+    headers: HeaderMap,
     Path(model_action): Path<String>,
     Json(body): Json<Value>,
 ) -> Response {
@@ -49,33 +58,39 @@ pub async fn gemini_proxy(
         Err(e) => return error_response(400, &format!("invalid Gemini request: {e}")),
     };
 
-    proxy_pipeline(gw, internal, Protocol::Gemini).await
+    proxy_pipeline(gw, headers, internal, Protocol::Gemini).await
 }
 
 // ── Universal proxy pipeline ──
 
-async fn universal_proxy(gw: Gateway, body: Value, ingress: Protocol) -> Response {
+async fn universal_proxy(gw: Gateway, headers: HeaderMap, body: Value, ingress: Protocol) -> Response {
     let decoder = crate::protocol::get_decoder(ingress);
     let internal = match decoder.decode_request(body) {
         Ok(r) => r,
         Err(e) => return error_response(400, &format!("invalid request: {e}")),
     };
 
-    proxy_pipeline(gw, internal, ingress).await
+    proxy_pipeline(gw, headers, internal, ingress).await
 }
 
-async fn proxy_pipeline(gw: Gateway, internal: InternalRequest, ingress: Protocol) -> Response {
+async fn proxy_pipeline(gw: Gateway, headers: HeaderMap, internal: InternalRequest, ingress: Protocol) -> Response {
     let start = Instant::now();
     let request_model = internal.model.clone();
     let is_stream = internal.stream;
 
+    let ingress_str = ingress.to_string();
     let route = {
         let cache = gw.route_cache.read().await;
-        cache.match_route(&request_model).cloned()
+        cache.match_route(&ingress_str, &request_model).cloned()
     };
     let route = match route {
         Some(r) => r,
         None => return error_response(404, &format!("no route for model: {request_model}")),
+    };
+
+    let auth_key = match authorize_route_access(&gw, &route, &headers).await {
+        Ok(v) => v,
+        Err(resp) => return resp,
     };
 
     let provider = match get_provider(&gw, &route.target_provider).await {
@@ -101,7 +116,6 @@ async fn proxy_pipeline(gw: Gateway, internal: InternalRequest, ingress: Protoco
     let egress_path = encoder.egress_path(&actual_model, is_stream);
 
     let client = ProxyClient::new(gw.http_client.clone());
-    let ingress_str = ingress.to_string();
     let egress_str = egress.to_string();
 
     if is_stream {
@@ -118,6 +132,7 @@ async fn proxy_pipeline(gw: Gateway, internal: InternalRequest, ingress: Protoco
             &egress_str,
             &request_model,
             &actual_model,
+            auth_key.id.as_deref(),
             start,
         )
         .await
@@ -135,6 +150,7 @@ async fn proxy_pipeline(gw: Gateway, internal: InternalRequest, ingress: Protoco
             &egress_str,
             &request_model,
             &actual_model,
+            auth_key.id.as_deref(),
             start,
         )
         .await
@@ -155,6 +171,7 @@ async fn handle_non_stream(
     egress_str: &str,
     request_model: &str,
     actual_model: &str,
+    api_key_id: Option<&str>,
     start: Instant,
 ) -> Response {
     let (resp, status) = match client
@@ -172,6 +189,7 @@ async fn handle_non_stream(
         Err(e) => {
             emit_log(
                 &gw, ingress_str, egress_str, request_model, actual_model,
+                api_key_id,
                 &provider.name, 502, start.elapsed().as_millis() as f64,
                 TokenUsage::default(), false, false,
                 Some(e.to_string()), None, None,
@@ -184,6 +202,7 @@ async fn handle_non_stream(
         let preview = serde_json::to_string(&resp).ok().map(|s| s.chars().take(500).collect());
         emit_log(
             &gw, ingress_str, egress_str, request_model, actual_model,
+            api_key_id,
             &provider.name, status as i32, start.elapsed().as_millis() as f64,
             TokenUsage::default(), false, false,
             preview.clone(), None, None,
@@ -213,6 +232,7 @@ async fn handle_non_stream(
 
     emit_log(
         &gw, ingress_str, egress_str, request_model, actual_model,
+        api_key_id,
         &provider.name, status as i32, start.elapsed().as_millis() as f64,
         usage, false, is_tool, None, None, response_preview,
     );
@@ -238,6 +258,7 @@ async fn handle_stream(
     egress_str: &str,
     request_model: &str,
     actual_model: &str,
+    api_key_id: Option<&str>,
     start: Instant,
 ) -> Response {
     let (resp, status) = match client
@@ -255,6 +276,7 @@ async fn handle_stream(
         Err(e) => {
             emit_log(
                 &gw, ingress_str, egress_str, request_model, actual_model,
+                api_key_id,
                 &provider.name, 502, start.elapsed().as_millis() as f64,
                 TokenUsage::default(), true, false,
                 Some(e.to_string()), None, None,
@@ -270,6 +292,7 @@ async fn handle_stream(
             .unwrap_or_else(|_| serde_json::json!({"error": {"message": "upstream error"}}));
         emit_log(
             &gw, ingress_str, egress_str, request_model, actual_model,
+            api_key_id,
             &provider.name, status as i32, start.elapsed().as_millis() as f64,
             TokenUsage::default(), true, false,
             Some(err_body.to_string()), None, None,
@@ -293,6 +316,7 @@ async fn handle_stream(
     let egress_s = egress_str.to_string();
     let req_model = request_model.to_string();
     let act_model = actual_model.to_string();
+    let key_id = api_key_id.map(ToString::to_string);
 
     tokio::spawn(async move {
         while let Some(chunk) = byte_stream.next().await {
@@ -326,6 +350,7 @@ async fn handle_stream(
         let usage = stream_formatter.usage();
         emit_log(
             &gw_log, &ingress_s, &egress_s, &req_model, &act_model,
+            key_id.as_deref(),
             &provider_name, 200, start.elapsed().as_millis() as f64,
             usage, true, false, None, None, None,
         );
@@ -345,9 +370,136 @@ async fn handle_stream(
 
 // ── Helpers ──
 
+struct AuthenticatedKey {
+    id: Option<String>,
+}
+
+async fn authorize_route_access(gw: &Gateway, route: &Route, headers: &HeaderMap) -> Result<AuthenticatedKey, Response> {
+    if !route.access_control {
+        return Ok(AuthenticatedKey { id: None });
+    }
+
+    let Some(raw_key) = extract_api_key(headers) else {
+        return Err(error_response(401, "missing api key"));
+    };
+
+    let key_row = sqlx::query_as::<_, (String, String, Option<String>, Option<i32>, Option<i32>, Option<i32>)>(
+        "SELECT id, status, expires_at, rpm, tpm, tpd FROM api_keys WHERE key = ?",
+    )
+    .bind(&raw_key)
+    .fetch_optional(&gw.db)
+    .await
+    .map_err(|e| error_response(500, &format!("auth db error: {e}")))?;
+
+    let Some((api_key_id, status, expires_at, rpm, tpm, tpd)) = key_row else {
+        return Err(error_response(401, "invalid api key"));
+    };
+
+    if status != "active" {
+        return Err(error_response(403, "api key revoked"));
+    }
+
+    if let Some(expires) = expires_at.as_ref() {
+        let is_expired = sqlx::query_scalar::<_, i64>(
+            "SELECT CASE WHEN datetime(?) <= datetime('now') THEN 1 ELSE 0 END",
+        )
+        .bind(expires)
+        .fetch_one(&gw.db)
+        .await
+        .map(|v| v > 0)
+        .unwrap_or(false);
+        if is_expired {
+            return Err(error_response(403, "api key expired"));
+        }
+    }
+
+    let bindings_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM api_key_routes WHERE api_key_id = ?",
+    )
+    .bind(&api_key_id)
+    .fetch_one(&gw.db)
+    .await
+    .map_err(|e| error_response(500, &format!("auth db error: {e}")))?;
+
+    if bindings_count > 0 {
+        let allowed = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM api_key_routes WHERE api_key_id = ? AND route_id = ?",
+        )
+        .bind(&api_key_id)
+        .bind(&route.id)
+        .fetch_one(&gw.db)
+        .await
+        .map_err(|e| error_response(500, &format!("auth db error: {e}")))?;
+        if allowed == 0 {
+            return Err(error_response(403, "api key not allowed for this route"));
+        }
+    }
+
+    if let Some(limit) = rpm.filter(|v| *v > 0) {
+        let req_count = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM request_logs WHERE api_key_id = ? AND created_at >= datetime('now', '-1 minute')",
+        )
+        .bind(&api_key_id)
+        .fetch_one(&gw.db)
+        .await
+        .map_err(|e| error_response(500, &format!("quota db error: {e}")))?;
+        if req_count >= i64::from(limit) {
+            return Err(error_response(429, "api key rpm quota exceeded"));
+        }
+    }
+
+    if let Some(limit) = tpm.filter(|v| *v > 0) {
+        let token_count = sqlx::query_scalar::<_, i64>(
+            "SELECT COALESCE(SUM(input_tokens + output_tokens), 0) FROM request_logs WHERE api_key_id = ? AND created_at >= datetime('now', '-1 minute')",
+        )
+        .bind(&api_key_id)
+        .fetch_one(&gw.db)
+        .await
+        .map_err(|e| error_response(500, &format!("quota db error: {e}")))?;
+        if token_count >= i64::from(limit) {
+            return Err(error_response(429, "api key tpm quota exceeded"));
+        }
+    }
+
+    if let Some(limit) = tpd.filter(|v| *v > 0) {
+        let token_count = sqlx::query_scalar::<_, i64>(
+            "SELECT COALESCE(SUM(input_tokens + output_tokens), 0) FROM request_logs WHERE api_key_id = ? AND created_at >= datetime('now', '-1 day')",
+        )
+        .bind(&api_key_id)
+        .fetch_one(&gw.db)
+        .await
+        .map_err(|e| error_response(500, &format!("quota db error: {e}")))?;
+        if token_count >= i64::from(limit) {
+            return Err(error_response(429, "api key tpd quota exceeded"));
+        }
+    }
+
+    Ok(AuthenticatedKey {
+        id: Some(api_key_id),
+    })
+}
+
+fn extract_api_key(headers: &HeaderMap) -> Option<String> {
+    if let Some(value) = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()) {
+        if let Some(token) = value.strip_prefix("Bearer ") {
+            let token = token.trim();
+            if !token.is_empty() {
+                return Some(token.to_string());
+            }
+        }
+    }
+
+    headers
+        .get("x-api-key")
+        .and_then(|v| v.to_str().ok())
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(ToString::to_string)
+}
+
 async fn get_provider(gw: &Gateway, id: &str) -> anyhow::Result<Provider> {
     sqlx::query_as::<_, Provider>(
-        "SELECT id, name, protocol, base_url, api_key, is_active, priority, created_at, updated_at \
+        "SELECT id, name, protocol, base_url, preset_key, COALESCE(channel, region) AS channel, models_endpoint, static_models, api_key, is_active, created_at, updated_at \
          FROM providers WHERE id = ? AND is_active = 1",
     )
     .bind(id)
@@ -389,6 +541,7 @@ fn emit_log(
     egress: &str,
     request_model: &str,
     actual_model: &str,
+    api_key_id: Option<&str>,
     provider_name: &str,
     status_code: i32,
     duration_ms: f64,
@@ -400,6 +553,7 @@ fn emit_log(
     response_preview: Option<String>,
 ) {
     let _ = gw.log_tx.try_send(LogEntry {
+        api_key_id: api_key_id.map(ToString::to_string),
         ingress_protocol: ingress.to_string(),
         egress_protocol: egress.to_string(),
         request_model: request_model.to_string(),

@@ -6,6 +6,7 @@ import {
   Server,
   ScrollText,
   BarChart3,
+  KeyRound,
   ChevronLeft,
   Settings,
 } from "lucide-react";
@@ -17,6 +18,7 @@ const NAV_ITEMS = [
   { label: "Dashboard", path: "/", icon: LayoutDashboard },
   { label: "Providers", path: "/providers", icon: Server },
   { label: "Routes", path: "/routes", icon: Route },
+  { label: "API Keys", path: "/api-keys", icon: KeyRound },
   { type: "divider" as const },
   { label: "Logs", path: "/logs", icon: ScrollText },
   { label: "Stats", path: "/stats", icon: BarChart3 },
@@ -89,6 +91,8 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
                         ? "提供商"
                         : label === "Routes"
                           ? "路由"
+                          : label === "API Keys"
+                            ? "API Key"
                           : label === "Logs"
                             ? "日志"
                             : label === "Stats"

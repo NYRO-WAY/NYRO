@@ -4,7 +4,7 @@ import { backend } from "@/lib/backend";
 import type { LogPage, LogQuery, Provider } from "@/lib/types";
 import { ScrollText, ChevronLeft, ChevronRight } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
-import { NyroButton } from "@/components/ui/nyro-button";
+import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -184,20 +184,22 @@ export default function LogsPage() {
               {isZh ? `第 ${page + 1} / ${totalPages} 页` : `Page ${page + 1} of ${totalPages}`}
             </span>
             <div className="flex gap-1">
-              <NyroButton
+              <Button
                 onClick={() => setPage(Math.max(0, page - 1))}
                 disabled={page === 0}
-                variant="icon"
+                variant="outline"
+                size="icon"
               >
                 <ChevronLeft className="h-4 w-4" />
-              </NyroButton>
-              <NyroButton
+              </Button>
+              <Button
                 onClick={() => setPage(Math.min(totalPages - 1, page + 1))}
                 disabled={page >= totalPages - 1}
-                variant="icon"
+                variant="outline"
+                size="icon"
               >
                 <ChevronRight className="h-4 w-4" />
-              </NyroButton>
+              </Button>
             </div>
           </div>
         </div>

@@ -8,6 +8,7 @@ import { AppErrorBoundary } from "@/components/error-boundary";
 import DashboardPage from "@/pages/dashboard";
 import ProvidersPage from "@/pages/providers";
 import RoutesPage from "@/pages/routes";
+import ApiKeysPage from "@/pages/api-keys";
 import LogsPage from "@/pages/logs";
 import StatsPage from "@/pages/stats";
 import SettingsPage from "@/pages/settings";
@@ -36,6 +37,7 @@ createRoot(document.getElementById("root")!).render(
                 <Route index element={<DashboardPage />} />
                 <Route path="providers" element={<ProvidersPage />} />
                 <Route path="routes" element={<RoutesPage />} />
+                <Route path="api-keys" element={<ApiKeysPage />} />
                 <Route path="logs" element={<LogsPage />} />
                 <Route path="stats" element={<StatsPage />} />
                 <Route path="settings" element={<SettingsPage />} />

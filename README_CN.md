@@ -78,7 +78,7 @@ Nyro 提供两种形态：
 
 ```bash
 brew tap shuaijinchao/nyro
-brew install --cask --no-quarantine nyro
+brew install --cask nyro
 ```
 
 ### 桌面应用 — 脚本安装

@@ -78,7 +78,7 @@ Nyro ships in two forms:
 
 ```bash
 brew tap shuaijinchao/nyro
-brew install --cask --no-quarantine nyro
+brew install --cask nyro
 ```
 
 ### Desktop App — Shell Script

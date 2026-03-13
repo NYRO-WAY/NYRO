@@ -56,6 +56,17 @@ function resolveHTTP(cmd: string, args?: Record<string, unknown>): HTTPMapping {
     case "delete_route":
       return { method: "DELETE", url: `${base}/routes/${args?.id}` };
 
+    case "list_api_keys":
+      return { method: "GET", url: `${base}/api-keys` };
+    case "get_api_key":
+      return { method: "GET", url: `${base}/api-keys/${args?.id}` };
+    case "create_api_key":
+      return { method: "POST", url: `${base}/api-keys`, body: args?.input as Record<string, unknown> };
+    case "update_api_key":
+      return { method: "PUT", url: `${base}/api-keys/${args?.id}`, body: args?.input as Record<string, unknown> };
+    case "delete_api_key":
+      return { method: "DELETE", url: `${base}/api-keys/${args?.id}` };
+
     case "query_logs": {
       const q = (args?.query ?? {}) as Record<string, unknown>;
       const params = new URLSearchParams();

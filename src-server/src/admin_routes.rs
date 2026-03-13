@@ -47,6 +47,9 @@ pub fn create_router(gateway: Gateway, admin_key: Option<String>) -> Router {
         .delete(delete_provider_handler);
 
     let routes_item = put(update_route_handler).delete(delete_route_handler);
+    let api_keys_item = get(get_api_key_handler)
+        .put(update_api_key_handler)
+        .delete(delete_api_key_handler);
 
     let mut api = Router::new()
         .route("/providers", get(list_providers).post(create_provider_handler))
@@ -55,6 +58,8 @@ pub fn create_router(gateway: Gateway, admin_key: Option<String>) -> Router {
         .route("/providers/:id/models", get(provider_models_handler))
         .route("/routes", get(list_routes_handler).post(create_route_handler))
         .route("/routes/:id", routes_item)
+        .route("/api-keys", get(list_api_keys_handler).post(create_api_key_handler))
+        .route("/api-keys/:id", api_keys_item)
         .route("/logs", get(query_logs_handler))
         .route("/stats/overview", get(stats_overview))
         .route("/stats/hourly", get(stats_hourly))
@@ -182,6 +187,56 @@ async fn delete_route_handler(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     match gw.admin().delete_route(&id).await {
+        Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+// ── API Keys ──
+
+async fn list_api_keys_handler(State(gw): State<Gateway>) -> impl IntoResponse {
+    match gw.admin().list_api_keys().await {
+        Ok(v) => Json(serde_json::json!({ "data": v })).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+async fn get_api_key_handler(
+    State(gw): State<Gateway>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match gw.admin().get_api_key(&id).await {
+        Ok(v) => Json(serde_json::json!({ "data": v })).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+async fn create_api_key_handler(
+    State(gw): State<Gateway>,
+    Json(input): Json<CreateApiKey>,
+) -> impl IntoResponse {
+    match gw.admin().create_api_key(input).await {
+        Ok(v) => Json(serde_json::json!({ "data": v })).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+async fn update_api_key_handler(
+    State(gw): State<Gateway>,
+    Path(id): Path<String>,
+    Json(input): Json<UpdateApiKey>,
+) -> impl IntoResponse {
+    match gw.admin().update_api_key(&id, input).await {
+        Ok(v) => Json(serde_json::json!({ "data": v })).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+async fn delete_api_key_handler(
+    State(gw): State<Gateway>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match gw.admin().delete_api_key(&id).await {
         Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
         Err(e) => err(e),
     }

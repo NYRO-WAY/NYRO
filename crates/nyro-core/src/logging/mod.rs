@@ -7,6 +7,7 @@ const DEFAULT_RETENTION_DAYS: i64 = 30;
 
 #[derive(Debug, Clone)]
 pub struct LogEntry {
+    pub api_key_id: Option<String>,
     pub ingress_protocol: String,
     pub egress_protocol: String,
     pub request_model: String,
@@ -75,12 +76,13 @@ async fn flush(db: &SqlitePool, buffer: &mut Vec<LogEntry>) {
         let id = uuid::Uuid::new_v4().to_string();
         let _ = sqlx::query(
             r#"INSERT INTO request_logs
-                (id, ingress_protocol, egress_protocol, request_model, actual_model,
+                (id, api_key_id, ingress_protocol, egress_protocol, request_model, actual_model,
                  provider_name, status_code, duration_ms, input_tokens, output_tokens,
                  is_stream, is_tool_call, error_message, request_preview, response_preview)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
         )
         .bind(&id)
+        .bind(&entry.api_key_id)
         .bind(&entry.ingress_protocol)
         .bind(&entry.egress_protocol)
         .bind(&entry.request_model)

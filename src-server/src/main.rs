@@ -28,9 +28,6 @@ struct Args {
     #[arg(long, help = "Bearer token for admin API authentication")]
     admin_key: Option<String>,
 
-    #[arg(long, help = "Bearer token for proxy API authentication")]
-    proxy_key: Option<String>,
-
     #[arg(
         long = "admin-cors-origin",
         action = clap::ArgAction::Append,
@@ -59,19 +56,12 @@ async fn main() -> anyhow::Result<()> {
 
     let data_dir = shellexpand::tilde(&args.data_dir).to_string();
     let admin_key = args.admin_key.filter(|k| !k.trim().is_empty());
-    let proxy_key = args.proxy_key.filter(|k| !k.trim().is_empty());
 
     if !is_loopback_host(&args.admin_host) && admin_key.is_none() {
         anyhow::bail!(
             "--admin-key is required when --admin-host is not loopback (localhost/127.0.0.1/::1)"
         );
     }
-    if !is_loopback_host(&args.proxy_host) && proxy_key.is_none() {
-        anyhow::bail!(
-            "--proxy-key is required when --proxy-host is not loopback (localhost/127.0.0.1/::1)"
-        );
-    }
-
     let admin_cors_origins = if args.admin_cors_origins.is_empty() {
         default_local_origins(&[args.admin_port])
     } else {
@@ -88,7 +78,6 @@ async fn main() -> anyhow::Result<()> {
         proxy_port: args.proxy_port,
         proxy_cors_origins,
         data_dir: PathBuf::from(data_dir),
-        auth_key: proxy_key.clone(),
         ..Default::default()
     };
 
@@ -127,10 +116,6 @@ async fn main() -> anyhow::Result<()> {
     if admin_key.is_none() {
         tracing::warn!("admin API auth disabled: set --admin-key for production");
     }
-    if proxy_key.is_none() {
-        tracing::warn!("proxy API auth disabled: set --proxy-key for production");
-    }
-
     axum::serve(listener, app).await?;
     Ok(())
 }

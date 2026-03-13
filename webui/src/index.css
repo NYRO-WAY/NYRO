@@ -56,23 +56,6 @@ html[data-theme="dark"] {
   --nyro-field-panel-bg: rgba(20, 23, 33, 0.96);
 }
 
-html[data-theme="dark"] .nyro-shadcn-btn-default {
-  background: #ffffff;
-  border-color: #ffffff;
-  color: #111827;
-}
-
-html[data-theme="dark"] .nyro-shadcn-btn-default:hover:not(:disabled) {
-  background: #f3f4f6;
-  border-color: #f3f4f6;
-}
-
-html[data-theme="dark"] .nyro-shadcn-btn-default:disabled {
-  background: #9ca3af;
-  border-color: #9ca3af;
-  color: rgba(17, 24, 39, 0.72);
-}
-
 html,
 body,
 #root {
@@ -562,6 +545,14 @@ body {
   display: block;
 }
 
+.nyro-icon {
+  display: inline-block;
+}
+
+.nyro-icon-mono {
+  background-image: none !important;
+}
+
 .provider-preset-icon-colored {
   color: inherit;
 }
@@ -572,9 +563,10 @@ body {
 }
 
 .provider-preset-icon-custom {
-  border-radius: 999px;
-  color: #6b7280;
-  background: rgba(248, 250, 252, 0.96);
+  border: 0;
+  border-radius: 0;
+  background-color: transparent;
+  color: #111827;
 }
 
 .provider-preset-label {
@@ -786,8 +778,8 @@ html[data-theme="dark"] .provider-preset-icon-mono {
 }
 
 html[data-theme="dark"] .provider-preset-icon-custom {
-  color: #eef2ff;
-  background: rgba(255, 255, 255, 0.08);
+  color: #ffffff;
+  background-color: transparent;
 }
 
 html[data-theme="dark"] .nyro-shadcn-input,

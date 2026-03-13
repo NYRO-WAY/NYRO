@@ -14,11 +14,11 @@ import {
   X,
   ChevronLeft,
   ChevronRight,
-  Settings2,
 } from "lucide-react";
 import { useLocale } from "@/lib/i18n";
 import { ProviderIcon } from "@/components/ui/provider-icon";
-import { NyroButton } from "@/components/ui/nyro-button";
+import { NyroIcon } from "@/components/ui/nyro-icon";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -72,12 +72,19 @@ const emptyCreate: CreateProvider = {
   api_key: "",
 };
 const PAGE_SIZE = 6;
+const DEFAULT_PRESET_ID = "custom";
 const protocolOptions = [
   { label: "OpenAI", value: "openai" },
   { label: "Anthropic", value: "anthropic" },
   { label: "Gemini", value: "gemini" },
 ];
 const providerPresets: ProviderPreset[] = [
+  {
+    id: "custom",
+    label: { zh: "自定义", en: "Custom" },
+    defaultProtocol: "openai",
+    channels: [],
+  },
   {
     id: "openai",
     label: { zh: "OpenAI", en: "OpenAI" },
@@ -275,12 +282,6 @@ const providerPresets: ProviderPreset[] = [
       },
     ],
   },
-  {
-    id: "custom",
-    label: { zh: "自定义", en: "Custom" },
-    defaultProtocol: "openai",
-    channels: [],
-  },
 ];
 
 function presetLabel(preset: ProviderPreset, isZh: boolean) {
@@ -368,7 +369,7 @@ export default function ProvidersPage() {
   const [page, setPage] = useState(0);
   const [testingId, setTestingId] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<Record<string, TestResult>>({});
-  const [selectedPresetId, setSelectedPresetId] = useState("");
+  const [selectedPresetId, setSelectedPresetId] = useState(DEFAULT_PRESET_ID);
 
   const { data: providers = [], isLoading } = useQuery<Provider[]>({
     queryKey: ["providers"],
@@ -390,8 +391,6 @@ export default function ProvidersPage() {
     models_endpoint: "",
     static_models: "",
     api_key: "",
-    is_active: true,
-    priority: 0,
   });
 
   const createMut = useMutation({
@@ -399,7 +398,7 @@ export default function ProvidersPage() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["providers"] });
       setShowForm(false);
-      setSelectedPresetId("");
+      setSelectedPresetId(DEFAULT_PRESET_ID);
       setForm(emptyCreate);
     },
   });
@@ -445,17 +444,16 @@ export default function ProvidersPage() {
       name: p.name,
       protocol: p.protocol,
       base_url: p.base_url,
-      preset_key: p.preset_key ?? "",
-      channel: p.channel ?? "",
+      preset_key: p.preset_key || DEFAULT_PRESET_ID,
+      channel: p.channel || "default",
       models_endpoint: p.models_endpoint ?? "",
       static_models: p.static_models ?? "",
       api_key: "",
-      is_active: p.is_active,
-      priority: p.priority,
     });
   }
 
   function handlePresetChange(nextPresetId: string) {
+    if (!nextPresetId) return;
     setSelectedPresetId(nextPresetId);
     const preset = providerPresets.find((item) => item.id === nextPresetId);
     if (!preset) return;
@@ -466,6 +464,8 @@ export default function ProvidersPage() {
         name: "",
         protocol: "openai",
         base_url: "",
+        preset_key: DEFAULT_PRESET_ID,
+        channel: "default",
       });
       return;
     }
@@ -498,9 +498,39 @@ export default function ProvidersPage() {
     }));
   }
 
+  function handleEditPresetChange(nextPresetId: string) {
+    if (!nextPresetId) return;
+    const preset = providerPresets.find((item) => item.id === nextPresetId);
+    if (!preset) return;
+
+    if (preset.id === DEFAULT_PRESET_ID) {
+      setEditForm((prev) => (prev ? { ...prev, preset_key: DEFAULT_PRESET_ID, channel: "default" } : prev));
+      return;
+    }
+
+    const nextChannelId = preset.channels?.[0]?.id ?? "";
+    setEditForm((prev) =>
+      prev
+        ? (() => {
+            const nextProtocol = (prev.protocol as ProviderProtocol) || preset.defaultProtocol;
+            const config = resolvePresetConfig(preset, nextProtocol, nextChannelId);
+            return {
+              ...prev,
+              preset_key: preset.id,
+              channel: nextChannelId,
+              protocol: nextProtocol,
+              base_url: config.baseUrl,
+              models_endpoint: config.modelsEndpoint,
+              static_models: config.staticModels,
+            };
+          })()
+        : prev,
+    );
+  }
+
   function closeCreateForm() {
     setShowForm(false);
-    setSelectedPresetId("");
+    setSelectedPresetId(DEFAULT_PRESET_ID);
     setForm(emptyCreate);
   }
 
@@ -527,21 +557,21 @@ export default function ProvidersPage() {
             {isZh ? "管理你的 LLM 提供商连接" : "Manage your LLM provider connections"}
           </p>
         </div>
-        <NyroButton
+        <Button
           onClick={() => {
-            setShowForm(!showForm);
             setEditingId(null);
             if (showForm) {
-              setSelectedPresetId("");
-              setForm(emptyCreate);
+              closeCreateForm();
+              return;
             }
+            setShowForm(true);
+            handlePresetChange(DEFAULT_PRESET_ID);
           }}
-          variant="primary"
           className="flex items-center gap-2"
         >
           <Plus className="h-4 w-4" />
           {isZh ? "新增提供商" : "Add Provider"}
-        </NyroButton>
+        </Button>
       </div>
 
       {/* Create Form */}
@@ -565,7 +595,9 @@ export default function ProvidersPage() {
               onValueChange={handlePresetChange}
               className="provider-preset-group"
             >
-              {providerPresets.map((preset) => (
+              {[...providerPresets]
+                .sort((a, b) => (a.id === DEFAULT_PRESET_ID ? -1 : b.id === DEFAULT_PRESET_ID ? 1 : 0))
+                .map((preset) => (
                 <ToggleGroupItem
                   key={preset.id}
                   value={preset.id}
@@ -575,9 +607,17 @@ export default function ProvidersPage() {
                   aria-label={presetLabel(preset, isZh)}
                 >
                   {preset.id === "custom" ? (
-                    <span className="provider-preset-icon provider-preset-icon-custom">
-                      <Settings2 className="h-5 w-5" />
-                    </span>
+                    <>
+                      <NyroIcon
+                        size={26}
+                        className="provider-preset-icon provider-preset-icon-custom provider-preset-icon-colored"
+                      />
+                      <NyroIcon
+                        size={26}
+                        monochrome
+                        className="provider-preset-icon provider-preset-icon-custom provider-preset-icon-mono"
+                      />
+                    </>
                   ) : (
                     <>
                       <ProviderIcon
@@ -710,19 +750,18 @@ export default function ProvidersPage() {
               </div>
             </div>
             <div className="flex gap-3">
-              <NyroButton
+              <Button
                 onClick={() => createMut.mutate(form)}
                 disabled={createMut.isPending || !form.name || !form.api_key}
-                variant="primary"
               >
                 {createMut.isPending ? (isZh ? "创建中..." : "Creating...") : (isZh ? "创建" : "Create")}
-              </NyroButton>
-              <NyroButton
+              </Button>
+              <Button
                 onClick={closeCreateForm}
                 variant="secondary"
               >
                 {isZh ? "取消" : "Cancel"}
-              </NyroButton>
+              </Button>
             </div>
           </div>
         </div>
@@ -742,8 +781,9 @@ export default function ProvidersPage() {
           {pagedProviders.map((p) => {
             const tr = testResult[p.id];
             const isEditing = editingId === p.id;
+            const editingPresetId = editForm.preset_key || DEFAULT_PRESET_ID;
             const editingPreset =
-              providerPresets.find((preset) => preset.id === (editForm.preset_key ?? "")) ?? null;
+              providerPresets.find((preset) => preset.id === editingPresetId) ?? providerPresets[0] ?? null;
 
             if (isEditing) {
               const editingChannelOptions = presetChannels(editingPreset);
@@ -759,8 +799,62 @@ export default function ProvidersPage() {
                       <X className="h-4 w-4" />
                     </button>
                   </div>
+                  <div className="space-y-3">
+                    <p className="text-sm font-semibold text-slate-700">
+                      {isZh ? "1. 供应商" : "1. Provider"}
+                    </p>
+                    <ToggleGroup
+                      type="single"
+                      value={editingPresetId}
+                      onValueChange={handleEditPresetChange}
+                      className="provider-preset-group"
+                    >
+                      {[...providerPresets]
+                        .sort((a, b) => (a.id === DEFAULT_PRESET_ID ? -1 : b.id === DEFAULT_PRESET_ID ? 1 : 0))
+                        .map((preset) => (
+                        <ToggleGroupItem
+                          key={preset.id}
+                          value={preset.id}
+                          variant="outline"
+                          size="lg"
+                          className="provider-preset-card h-auto w-full flex-col gap-3 px-4 py-5"
+                          aria-label={presetLabel(preset, isZh)}
+                        >
+                          {preset.id === "custom" ? (
+                            <>
+                              <NyroIcon
+                                size={26}
+                                className="provider-preset-icon provider-preset-icon-custom provider-preset-icon-colored"
+                              />
+                              <NyroIcon
+                                size={26}
+                                monochrome
+                                className="provider-preset-icon provider-preset-icon-custom provider-preset-icon-mono"
+                              />
+                            </>
+                          ) : (
+                            <>
+                              <ProviderIcon
+                                name={preset.iconName ?? preset.label.en}
+                                size={26}
+                                className="provider-preset-icon provider-preset-icon-colored rounded-none border-0 bg-transparent"
+                              />
+                              <ProviderIcon
+                                name={preset.iconName ?? preset.label.en}
+                                size={26}
+                                monochrome
+                                className="provider-preset-icon provider-preset-icon-mono rounded-none border-0 bg-transparent"
+                              />
+                            </>
+                          )}
+                          <span className="provider-preset-label">{presetLabel(preset, isZh)}</span>
+                        </ToggleGroupItem>
+                      ))}
+                    </ToggleGroup>
+                  </div>
                   <div className="grid grid-cols-2 gap-4">
                     <div className="col-span-2 space-y-2">
+                      <FieldLabel>{isZh ? "渠道" : "Channel"}</FieldLabel>
                       <ToggleGroup
                         type="single"
                         value={editingChannelValue}
@@ -864,31 +958,9 @@ export default function ProvidersPage() {
                         onChange={(e) => setEditForm({ ...editForm, api_key: e.target.value })}
                       />
                     </div>
-                    <div className="flex items-center gap-3">
-                      <label className="text-sm text-slate-600">{isZh ? "启用" : "Active"}</label>
-                      <input
-                        type="checkbox"
-                        checked={editForm.is_active ?? true}
-                        onChange={(e) => setEditForm({ ...editForm, is_active: e.target.checked })}
-                        className="h-4 w-4 rounded border-slate-300"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <FieldLabel>{isZh ? "优先级" : "Priority"}</FieldLabel>
-                      <Input
-                        type="text"
-                        inputMode="numeric"
-                        pattern="[0-9]*"
-                        value={String(editForm.priority ?? 0)}
-                        onChange={(e) => {
-                          const nextValue = e.target.value.replace(/\D+/g, "");
-                          setEditForm({ ...editForm, priority: Number.parseInt(nextValue || "0", 10) });
-                        }}
-                      />
-                    </div>
                   </div>
                   <div className="flex gap-3">
-                    <NyroButton
+                    <Button
                       onClick={() => {
                         setEditError(null);
                         const input: UpdateProvider = {
@@ -900,22 +972,19 @@ export default function ProvidersPage() {
                           models_endpoint: editForm.models_endpoint || undefined,
                           static_models: editForm.static_models || undefined,
                           api_key: editForm.api_key || undefined,
-                          is_active: editForm.is_active,
-                          priority: editForm.priority,
                         };
                         updateMut.mutate({ id: editForm.id, ...input });
                       }}
                       disabled={updateMut.isPending}
-                      variant="primary"
                     >
                       {updateMut.isPending ? (isZh ? "保存中..." : "Saving...") : (isZh ? "保存" : "Save")}
-                    </NyroButton>
-                    <NyroButton
+                    </Button>
+                    <Button
                       onClick={() => { setEditingId(null); setEditError(null); }}
                       variant="secondary"
                     >
                       {isZh ? "取消" : "Cancel"}
-                    </NyroButton>
+                    </Button>
                   </div>
                   {editError && (
                     <p className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">{editError}</p>
@@ -933,7 +1002,18 @@ export default function ProvidersPage() {
                         name={p.name}
                         protocol={p.protocol}
                         baseUrl={p.base_url}
-                        size={24}
+                        size={40}
+                        fill
+                        className="provider-preset-icon provider-preset-icon-colored rounded-xl border border-slate-300/70 bg-transparent"
+                      />
+                      <ProviderIcon
+                        name={p.name}
+                        protocol={p.protocol}
+                        baseUrl={p.base_url}
+                        size={40}
+                        fill
+                        monochrome
+                        className="provider-preset-icon provider-preset-icon-mono rounded-xl border border-slate-300/70 bg-transparent"
                       />
                     </div>
                     <div>
@@ -941,11 +1021,15 @@ export default function ProvidersPage() {
                         <span className="font-semibold text-slate-900">{p.name}</span>
                         <span className="protocol-pill inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium uppercase">
                           <ProviderIcon
-                            name={p.name}
                             protocol={p.protocol}
-                            baseUrl={p.base_url}
                             size={12}
-                            className="rounded-sm border-0 bg-transparent"
+                            className="provider-preset-icon provider-preset-icon-colored rounded-sm border-0 bg-transparent"
+                          />
+                          <ProviderIcon
+                            protocol={p.protocol}
+                            size={12}
+                            monochrome
+                            className="provider-preset-icon provider-preset-icon-mono rounded-sm border-0 bg-transparent"
                           />
                           {p.protocol}
                         </span>
@@ -1005,20 +1089,22 @@ export default function ProvidersPage() {
                 {isZh ? `第 ${page + 1} / ${totalPages} 页` : `Page ${page + 1} of ${totalPages}`}
               </span>
               <div className="flex gap-1">
-                <NyroButton
+                <Button
                   onClick={() => setPage(Math.max(0, page - 1))}
                   disabled={page === 0}
-                  variant="icon"
+                  variant="outline"
+                  size="icon"
                 >
                   <ChevronLeft className="h-4 w-4" />
-                </NyroButton>
-                <NyroButton
+                </Button>
+                <Button
                   onClick={() => setPage(Math.min(totalPages - 1, page + 1))}
                   disabled={page >= totalPages - 1}
-                  variant="icon"
+                  variant="outline"
+                  size="icon"
                 >
                   <ChevronRight className="h-4 w-4" />
-                </NyroButton>
+                </Button>
               </div>
             </div>
           )}

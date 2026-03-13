@@ -10,14 +10,14 @@ impl RouteCache {
     pub async fn load(pool: &SqlitePool) -> anyhow::Result<Self> {
         let routes: Vec<Route> = sqlx::query_as::<_, Route>(
             r#"SELECT
-                id, name, match_pattern, target_provider, target_model,
-                fallback_provider, fallback_model,
+                id, name, COALESCE(ingress_protocol, 'openai') AS ingress_protocol,
+                COALESCE(NULLIF(virtual_model, ''), match_pattern) AS virtual_model,
+                target_provider, target_model,
+                COALESCE(access_control, 0) AS access_control,
                 is_active,
-                priority,
                 created_at
             FROM routes
-            WHERE is_active = 1
-            ORDER BY priority ASC"#,
+            WHERE is_active = 1"#,
         )
         .fetch_all(pool)
         .await?;
@@ -31,31 +31,8 @@ impl RouteCache {
     }
 }
 
-pub fn match_route<'a>(routes: &'a [Route], model: &str) -> Option<&'a Route> {
-    let mut best: Option<(u8, &'a Route)> = None;
-
-    for route in routes {
-        let score = match_score(&route.match_pattern, model);
-        if score == 0 {
-            continue;
-        }
-        if best.is_none() || score > best.unwrap().0 {
-            best = Some((score, route));
-        }
-    }
-
-    best.map(|(_, r)| r)
-}
-
-fn match_score(pattern: &str, model: &str) -> u8 {
-    if pattern == model {
-        return 3; // exact
-    }
-    if pattern != "*" && glob_match::glob_match(pattern, model) {
-        return 2; // glob
-    }
-    if pattern == "*" {
-        return 1; // wildcard
-    }
-    0
+pub fn match_route<'a>(routes: &'a [Route], ingress_protocol: &str, model: &str) -> Option<&'a Route> {
+    routes
+        .iter()
+        .find(|route| route.ingress_protocol == ingress_protocol && route.virtual_model == model)
 }

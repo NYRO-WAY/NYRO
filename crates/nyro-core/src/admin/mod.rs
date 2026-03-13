@@ -21,7 +21,7 @@ impl AdminService {
 
     pub async fn list_providers(&self) -> anyhow::Result<Vec<Provider>> {
         let rows = sqlx::query_as::<_, Provider>(
-            "SELECT id, name, protocol, base_url, preset_key, COALESCE(channel, region) AS channel, models_endpoint, static_models, api_key, is_active, priority, created_at, updated_at FROM providers ORDER BY priority ASC",
+            "SELECT id, name, protocol, base_url, preset_key, COALESCE(channel, region) AS channel, models_endpoint, static_models, api_key, is_active, created_at, updated_at FROM providers ORDER BY created_at DESC",
         )
         .fetch_all(&self.gw.db)
         .await?;
@@ -30,7 +30,7 @@ impl AdminService {
 
     pub async fn get_provider(&self, id: &str) -> anyhow::Result<Provider> {
         let row = sqlx::query_as::<_, Provider>(
-            "SELECT id, name, protocol, base_url, preset_key, COALESCE(channel, region) AS channel, models_endpoint, static_models, api_key, is_active, priority, created_at, updated_at FROM providers WHERE id = ?",
+            "SELECT id, name, protocol, base_url, preset_key, COALESCE(channel, region) AS channel, models_endpoint, static_models, api_key, is_active, created_at, updated_at FROM providers WHERE id = ?",
         )
         .bind(id)
         .fetch_one(&self.gw.db)
@@ -74,10 +74,9 @@ impl AdminService {
         let static_models = input.static_models.or(current.static_models);
         let api_key = input.api_key.unwrap_or(current.api_key);
         let is_active = input.is_active.unwrap_or(current.is_active);
-        let priority = input.priority.unwrap_or(current.priority);
 
         sqlx::query(
-            "UPDATE providers SET name=?, protocol=?, base_url=?, preset_key=?, channel=?, models_endpoint=?, static_models=?, api_key=?, is_active=?, priority=?, updated_at=datetime('now') WHERE id=?",
+            "UPDATE providers SET name=?, protocol=?, base_url=?, preset_key=?, channel=?, models_endpoint=?, static_models=?, api_key=?, is_active=?, updated_at=datetime('now') WHERE id=?",
         )
         .bind(&name)
         .bind(&protocol)
@@ -88,7 +87,6 @@ impl AdminService {
         .bind(&static_models)
         .bind(&api_key)
         .bind(is_active)
-        .bind(priority)
         .bind(id)
         .execute(&self.gw.db)
         .await?;
@@ -201,7 +199,7 @@ impl AdminService {
 
     pub async fn list_routes(&self) -> anyhow::Result<Vec<Route>> {
         let rows = sqlx::query_as::<_, Route>(
-            "SELECT id, name, match_pattern, target_provider, target_model, fallback_provider, fallback_model, is_active, priority, created_at FROM routes ORDER BY priority ASC",
+            "SELECT id, name, COALESCE(ingress_protocol, 'openai') AS ingress_protocol, COALESCE(NULLIF(virtual_model, ''), match_pattern) AS virtual_model, target_provider, target_model, COALESCE(access_control, 0) AS access_control, is_active, created_at FROM routes ORDER BY created_at DESC",
         )
         .fetch_all(&self.gw.db)
         .await?;
@@ -209,30 +207,29 @@ impl AdminService {
     }
 
     pub async fn create_route(&self, input: CreateRoute) -> anyhow::Result<Route> {
+        ensure_protocol(&input.ingress_protocol)?;
+        ensure_virtual_model(&input.virtual_model)?;
+        self.ensure_route_unique(None, &input.ingress_protocol, &input.virtual_model)
+            .await?;
+
         let id = uuid::Uuid::new_v4().to_string();
-        let max_priority: Option<i32> = sqlx::query("SELECT MAX(priority) as mp FROM routes")
-            .fetch_one(&self.gw.db)
-            .await?
-            .try_get("mp")
-            .ok();
-        let priority = max_priority.unwrap_or(0) + 1;
 
         sqlx::query(
-            "INSERT INTO routes (id, name, match_pattern, target_provider, target_model, fallback_provider, fallback_model, priority) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO routes (id, name, ingress_protocol, virtual_model, match_pattern, target_provider, target_model, access_control) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&input.name)
-        .bind(&input.match_pattern)
+        .bind(input.ingress_protocol.trim().to_lowercase())
+        .bind(input.virtual_model.trim())
+        .bind(input.virtual_model.trim())
         .bind(&input.target_provider)
         .bind(&input.target_model)
-        .bind(&input.fallback_provider)
-        .bind(&input.fallback_model)
-        .bind(priority)
+        .bind(input.access_control.unwrap_or(false))
         .execute(&self.gw.db)
         .await?;
 
         let route = sqlx::query_as::<_, Route>(
-            "SELECT id, name, match_pattern, target_provider, target_model, fallback_provider, fallback_model, is_active, priority, created_at FROM routes WHERE id = ?",
+            "SELECT id, name, COALESCE(ingress_protocol, 'openai') AS ingress_protocol, COALESCE(NULLIF(virtual_model, ''), match_pattern) AS virtual_model, target_provider, target_model, COALESCE(access_control, 0) AS access_control, is_active, created_at FROM routes WHERE id = ?",
         )
         .bind(&id)
         .fetch_one(&self.gw.db)
@@ -244,32 +241,35 @@ impl AdminService {
 
     pub async fn update_route(&self, id: &str, input: UpdateRoute) -> anyhow::Result<Route> {
         let current = sqlx::query_as::<_, Route>(
-            "SELECT id, name, match_pattern, target_provider, target_model, fallback_provider, fallback_model, is_active, priority, created_at FROM routes WHERE id = ?",
+            "SELECT id, name, COALESCE(ingress_protocol, 'openai') AS ingress_protocol, COALESCE(NULLIF(virtual_model, ''), match_pattern) AS virtual_model, target_provider, target_model, COALESCE(access_control, 0) AS access_control, is_active, created_at FROM routes WHERE id = ?",
         )
         .bind(id)
         .fetch_one(&self.gw.db)
         .await?;
 
         let name = input.name.unwrap_or(current.name);
-        let match_pattern = input.match_pattern.unwrap_or(current.match_pattern);
+        let ingress_protocol = input.ingress_protocol.unwrap_or(current.ingress_protocol);
+        let virtual_model = input.virtual_model.unwrap_or(current.virtual_model);
         let target_provider = input.target_provider.unwrap_or(current.target_provider);
         let target_model = input.target_model.unwrap_or(current.target_model);
-        let fallback_provider = input.fallback_provider.or(current.fallback_provider);
-        let fallback_model = input.fallback_model.or(current.fallback_model);
+        let access_control = input.access_control.unwrap_or(current.access_control);
         let is_active = input.is_active.unwrap_or(current.is_active);
-        let priority = input.priority.unwrap_or(current.priority);
+        ensure_protocol(&ingress_protocol)?;
+        ensure_virtual_model(&virtual_model)?;
+        self.ensure_route_unique(Some(id), &ingress_protocol, &virtual_model)
+            .await?;
 
         sqlx::query(
-            "UPDATE routes SET name=?, match_pattern=?, target_provider=?, target_model=?, fallback_provider=?, fallback_model=?, is_active=?, priority=? WHERE id=?",
+            "UPDATE routes SET name=?, ingress_protocol=?, virtual_model=?, match_pattern=?, target_provider=?, target_model=?, access_control=?, is_active=? WHERE id=?",
         )
         .bind(&name)
-        .bind(&match_pattern)
+        .bind(ingress_protocol.trim().to_lowercase())
+        .bind(virtual_model.trim())
+        .bind(virtual_model.trim())
         .bind(&target_provider)
         .bind(&target_model)
-        .bind(&fallback_provider)
-        .bind(&fallback_model)
+        .bind(access_control)
         .bind(is_active)
-        .bind(priority)
         .bind(id)
         .execute(&self.gw.db)
         .await?;
@@ -277,7 +277,7 @@ impl AdminService {
         self.gw.route_cache.write().await.reload(&self.gw.db).await?;
 
         sqlx::query_as::<_, Route>(
-            "SELECT id, name, match_pattern, target_provider, target_model, fallback_provider, fallback_model, is_active, priority, created_at FROM routes WHERE id = ?",
+            "SELECT id, name, COALESCE(ingress_protocol, 'openai') AS ingress_protocol, COALESCE(NULLIF(virtual_model, ''), match_pattern) AS virtual_model, target_provider, target_model, COALESCE(access_control, 0) AS access_control, is_active, created_at FROM routes WHERE id = ?",
         )
         .bind(id)
         .fetch_one(&self.gw.db)
@@ -291,6 +291,127 @@ impl AdminService {
             .execute(&self.gw.db)
             .await?;
         self.gw.route_cache.write().await.reload(&self.gw.db).await?;
+        Ok(())
+    }
+
+    // ── API Keys ──
+
+    pub async fn list_api_keys(&self) -> anyhow::Result<Vec<ApiKeyWithBindings>> {
+        let rows = sqlx::query_as::<_, ApiKey>(
+            "SELECT id, key, name, rpm, tpm, tpd, status, expires_at, created_at, updated_at FROM api_keys ORDER BY created_at DESC",
+        )
+        .fetch_all(&self.gw.db)
+        .await?;
+
+        let mut items = Vec::with_capacity(rows.len());
+        for row in rows {
+            let route_ids = self.list_api_key_route_ids(&row.id).await?;
+            items.push(ApiKeyWithBindings {
+                id: row.id,
+                key: row.key,
+                name: row.name,
+                rpm: row.rpm,
+                tpm: row.tpm,
+                tpd: row.tpd,
+                status: row.status,
+                expires_at: row.expires_at,
+                created_at: row.created_at,
+                updated_at: row.updated_at,
+                route_ids,
+            });
+        }
+        Ok(items)
+    }
+
+    pub async fn get_api_key(&self, id: &str) -> anyhow::Result<ApiKeyWithBindings> {
+        let row = sqlx::query_as::<_, ApiKey>(
+            "SELECT id, key, name, rpm, tpm, tpd, status, expires_at, created_at, updated_at FROM api_keys WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_one(&self.gw.db)
+        .await?;
+        let route_ids = self.list_api_key_route_ids(id).await?;
+        Ok(ApiKeyWithBindings {
+            id: row.id,
+            key: row.key,
+            name: row.name,
+            rpm: row.rpm,
+            tpm: row.tpm,
+            tpd: row.tpd,
+            status: row.status,
+            expires_at: row.expires_at,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            route_ids,
+        })
+    }
+
+    pub async fn create_api_key(&self, input: CreateApiKey) -> anyhow::Result<ApiKeyWithBindings> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let raw_key = format!("sk-nyro-{}", uuid::Uuid::new_v4().simple());
+        let key = raw_key.chars().take(28).collect::<String>();
+
+        sqlx::query(
+            "INSERT INTO api_keys (id, key, name, rpm, tpm, tpd, status, expires_at) VALUES (?, ?, ?, ?, ?, ?, 'active', ?)",
+        )
+        .bind(&id)
+        .bind(&key)
+        .bind(input.name.trim())
+        .bind(input.rpm)
+        .bind(input.tpm)
+        .bind(input.tpd)
+        .bind(input.expires_at.as_ref().map(|v| v.trim()).filter(|v| !v.is_empty()))
+        .execute(&self.gw.db)
+        .await?;
+
+        self.replace_api_key_routes(&id, &input.route_ids).await?;
+        self.get_api_key(&id).await
+    }
+
+    pub async fn update_api_key(&self, id: &str, input: UpdateApiKey) -> anyhow::Result<ApiKeyWithBindings> {
+        let current = sqlx::query_as::<_, ApiKey>(
+            "SELECT id, key, name, rpm, tpm, tpd, status, expires_at, created_at, updated_at FROM api_keys WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_one(&self.gw.db)
+        .await?;
+
+        let name = input.name.unwrap_or(current.name);
+        let rpm = input.rpm.or(current.rpm);
+        let tpm = input.tpm.or(current.tpm);
+        let tpd = input.tpd.or(current.tpd);
+        let status = input.status.unwrap_or(current.status);
+        let expires_at = input.expires_at.or(current.expires_at);
+
+        if status != "active" && status != "revoked" {
+            anyhow::bail!("invalid key status: {status}");
+        }
+
+        sqlx::query(
+            "UPDATE api_keys SET name=?, rpm=?, tpm=?, tpd=?, status=?, expires_at=?, updated_at=datetime('now') WHERE id=?",
+        )
+        .bind(name.trim())
+        .bind(rpm)
+        .bind(tpm)
+        .bind(tpd)
+        .bind(status)
+        .bind(expires_at.as_ref().map(|v| v.trim()).filter(|v| !v.is_empty()))
+        .bind(id)
+        .execute(&self.gw.db)
+        .await?;
+
+        if let Some(route_ids) = input.route_ids {
+            self.replace_api_key_routes(id, &route_ids).await?;
+        }
+
+        self.get_api_key(id).await
+    }
+
+    pub async fn delete_api_key(&self, id: &str) -> anyhow::Result<()> {
+        sqlx::query("DELETE FROM api_keys WHERE id = ?")
+            .bind(id)
+            .execute(&self.gw.db)
+            .await?;
         Ok(())
     }
 
@@ -323,7 +444,7 @@ impl AdminService {
             .unwrap_or(0);
 
         let data_sql = format!(
-            "SELECT id, created_at, ingress_protocol, egress_protocol, request_model, actual_model, provider_name, status_code, duration_ms, input_tokens, output_tokens, is_stream, is_tool_call, error_message, request_preview, response_preview FROM request_logs WHERE {where_sql} ORDER BY created_at DESC LIMIT {limit} OFFSET {offset}"
+            "SELECT id, created_at, api_key_id, ingress_protocol, egress_protocol, request_model, actual_model, provider_name, status_code, duration_ms, input_tokens, output_tokens, is_stream, is_tool_call, error_message, request_preview, response_preview FROM request_logs WHERE {where_sql} ORDER BY created_at DESC LIMIT {limit} OFFSET {offset}"
         );
         let items = sqlx::query_as::<_, RequestLog>(&data_sql)
             .fetch_all(&self.gw.db)
@@ -447,20 +568,18 @@ impl AdminService {
                     static_models: p.static_models,
                     api_key: p.api_key,
                     is_active: p.is_active,
-                    priority: p.priority,
                 })
                 .collect(),
             routes: routes
                 .into_iter()
                 .map(|r| ExportRoute {
                     name: r.name,
-                    match_pattern: r.match_pattern,
+                    ingress_protocol: r.ingress_protocol,
+                    virtual_model: r.virtual_model,
                     target_provider_name: String::new(),
                     target_model: r.target_model,
-                    fallback_provider_name: None,
-                    fallback_model: r.fallback_model,
+                    access_control: r.access_control,
                     is_active: r.is_active,
-                    priority: r.priority,
                 })
                 .collect(),
             settings: settings.into_iter().collect(),
@@ -517,11 +636,11 @@ impl AdminService {
                     let _ = self
                         .create_route(CreateRoute {
                             name: r.name.clone(),
-                            match_pattern: r.match_pattern.clone(),
+                            ingress_protocol: r.ingress_protocol.clone(),
+                            virtual_model: r.virtual_model.clone(),
                             target_provider: pid,
                             target_model: r.target_model.clone(),
-                            fallback_provider: None,
-                            fallback_model: r.fallback_model.clone(),
+                            access_control: Some(r.access_control),
                         })
                         .await;
                     routes_imported += 1;
@@ -540,6 +659,84 @@ impl AdminService {
             settings_imported,
         })
     }
+
+    async fn ensure_route_unique(
+        &self,
+        exclude_id: Option<&str>,
+        ingress_protocol: &str,
+        virtual_model: &str,
+    ) -> anyhow::Result<()> {
+        let normalized_protocol = ingress_protocol.trim().to_lowercase();
+        let normalized_model = virtual_model.trim();
+        let sql = if exclude_id.is_some() {
+            "SELECT id FROM routes WHERE COALESCE(ingress_protocol, 'openai') = ? AND COALESCE(NULLIF(virtual_model, ''), match_pattern) = ? AND id != ? LIMIT 1"
+        } else {
+            "SELECT id FROM routes WHERE COALESCE(ingress_protocol, 'openai') = ? AND COALESCE(NULLIF(virtual_model, ''), match_pattern) = ? LIMIT 1"
+        };
+
+        let exists = if let Some(route_id) = exclude_id {
+            sqlx::query_scalar::<_, String>(sql)
+                .bind(&normalized_protocol)
+                .bind(normalized_model)
+                .bind(route_id)
+                .fetch_optional(&self.gw.db)
+                .await?
+        } else {
+            sqlx::query_scalar::<_, String>(sql)
+                .bind(&normalized_protocol)
+                .bind(normalized_model)
+                .fetch_optional(&self.gw.db)
+                .await?
+        };
+
+        if exists.is_some() {
+            anyhow::bail!("route already exists for protocol={normalized_protocol}, model={normalized_model}");
+        }
+        Ok(())
+    }
+
+    async fn list_api_key_route_ids(&self, api_key_id: &str) -> anyhow::Result<Vec<String>> {
+        let route_ids = sqlx::query_scalar::<_, String>(
+            "SELECT route_id FROM api_key_routes WHERE api_key_id = ? ORDER BY route_id ASC",
+        )
+        .bind(api_key_id)
+        .fetch_all(&self.gw.db)
+        .await?;
+        Ok(route_ids)
+    }
+
+    async fn replace_api_key_routes(&self, api_key_id: &str, route_ids: &[String]) -> anyhow::Result<()> {
+        let mut tx = self.gw.db.begin().await?;
+        sqlx::query("DELETE FROM api_key_routes WHERE api_key_id = ?")
+            .bind(api_key_id)
+            .execute(&mut *tx)
+            .await?;
+
+        for route_id in route_ids.iter().filter(|id| !id.trim().is_empty()) {
+            sqlx::query("INSERT OR IGNORE INTO api_key_routes (api_key_id, route_id) VALUES (?, ?)")
+                .bind(api_key_id)
+                .bind(route_id.trim())
+                .execute(&mut *tx)
+                .await?;
+        }
+
+        tx.commit().await?;
+        Ok(())
+    }
+}
+
+fn ensure_protocol(protocol: &str) -> anyhow::Result<()> {
+    match protocol.trim().to_lowercase().as_str() {
+        "openai" | "anthropic" | "gemini" => Ok(()),
+        _ => anyhow::bail!("unsupported ingress protocol: {protocol}"),
+    }
+}
+
+fn ensure_virtual_model(model: &str) -> anyhow::Result<()> {
+    if model.trim().is_empty() {
+        anyhow::bail!("virtual_model cannot be empty");
+    }
+    Ok(())
 }
 
 fn build_provider_url(base_url: &str, path: &str, protocol: &str) -> String {

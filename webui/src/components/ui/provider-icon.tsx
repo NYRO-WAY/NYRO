@@ -22,6 +22,7 @@ interface ProviderIconProps {
   size?: number;
   className?: string;
   monochrome?: boolean;
+  fill?: boolean;
 }
 
 const ICON_ALIASES: Record<string, string> = {
@@ -73,7 +74,7 @@ export function resolveProviderIconKey({
   protocol?: string;
   baseUrl?: string;
 }): string | null {
-  const raw = [...tokenize(protocol), ...tokenize(name), ...hostTokens(baseUrl)];
+  const raw = [...tokenize(name), ...hostTokens(baseUrl), ...tokenize(protocol)];
   const candidates = raw.flatMap((token) => {
     const normalized = normalizeToken(token);
     return normalized === token ? [token] : [normalized, token];
@@ -92,6 +93,7 @@ export function ProviderIcon({
   size = 20,
   className,
   monochrome = false,
+  fill = false,
 }: ProviderIconProps) {
   const iconKey = resolveProviderIconKey({ name, protocol, baseUrl });
   const [iconMarkup, setIconMarkup] = useState<string>("");
@@ -142,7 +144,7 @@ export function ProviderIcon({
       {iconMarkup ? (
         <span
           aria-hidden="true"
-          className="provider-icon-markup h-[78%] w-[78%]"
+          className={cn("provider-icon-markup", fill ? "h-full w-full" : "h-[78%] w-[78%]")}
           dangerouslySetInnerHTML={{ __html: iconMarkup }}
         />
       ) : (
