@@ -102,8 +102,8 @@ export default function RoutesPage() {
     [providers],
   );
 
-  function hasProviderModelOptions(provider?: Provider) {
-    return Boolean(provider?.models_endpoint || provider?.static_models);
+  function hasProviderModelsEndpoint(provider?: Provider) {
+    return Boolean(provider?.models_endpoint?.trim());
   }
   function withCurrentModel(options: string[], current?: string) {
     if (!current || options.includes(current)) return options;
@@ -116,13 +116,13 @@ export default function RoutesPage() {
   const { data: createTargetModels = [] } = useQuery<string[]>({
     queryKey: ["provider-models", createForm.target_provider],
     queryFn: () => backend("get_provider_models", { id: createForm.target_provider }),
-    enabled: !!createForm.target_provider && hasProviderModelOptions(createProvider),
+    enabled: !!createForm.target_provider && hasProviderModelsEndpoint(createProvider),
     staleTime: 60_000,
   });
   const { data: editTargetModels = [] } = useQuery<string[]>({
     queryKey: ["provider-models", editForm?.target_provider],
     queryFn: () => backend("get_provider_models", { id: editForm?.target_provider }),
-    enabled: !!editForm?.target_provider && hasProviderModelOptions(editProvider),
+    enabled: !!editForm?.target_provider && hasProviderModelsEndpoint(editProvider),
     staleTime: 60_000,
   });
 
@@ -241,7 +241,7 @@ export default function RoutesPage() {
                 </SelectContent>
               </Select>
             </div>
-            {hasProviderModelOptions(createProvider) ? (
+            {hasProviderModelsEndpoint(createProvider) ? (
               <div className="space-y-2">
                 <FieldLabel>{isZh ? "目标模型" : "Target Model"}</FieldLabel>
                 <Combobox
@@ -403,7 +403,7 @@ export default function RoutesPage() {
                         </SelectContent>
                       </Select>
                     </div>
-                    {hasProviderModelOptions(editProvider) ? (
+                    {hasProviderModelsEndpoint(editProvider) ? (
                       <div className="space-y-2">
                         <FieldLabel>{isZh ? "目标模型" : "Target Model"}</FieldLabel>
                         <Combobox
