@@ -98,7 +98,9 @@ pub struct InternalResponse {
     pub id: String,
     pub model: String,
     pub content: String,
+    pub reasoning_content: Option<String>,
     pub tool_calls: Vec<ToolCall>,
+    pub response_items: Option<Vec<ResponseItem>>,
     pub stop_reason: Option<String>,
     pub usage: TokenUsage,
 }
@@ -117,11 +119,27 @@ pub struct ToolDef {
     pub parameters: Value,
 }
 
+#[derive(Debug, Clone)]
+pub enum ResponseItem {
+    Reasoning {
+        text: String,
+    },
+    FunctionCall {
+        call_id: String,
+        name: String,
+        arguments: String,
+    },
+    Message {
+        text: String,
+    },
+}
+
 // ── Streaming ──
 
 #[derive(Debug, Clone)]
 pub enum StreamDelta {
     MessageStart { id: String, model: String },
+    ReasoningDelta(String),
     TextDelta(String),
     ToolCallStart { index: usize, id: String, name: String },
     ToolCallDelta { index: usize, arguments: String },
