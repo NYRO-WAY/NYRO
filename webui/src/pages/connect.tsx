@@ -857,13 +857,14 @@ export default function ConnectPage() {
                             ? <Check className="h-4 w-4" />
                             : (isZh ? "同步配置" : "Sync Config")}
                       </Button>
-                      <p className={`min-h-4 text-xs ${
-                        cliActionMessage?.action === "sync"
-                          ? (cliActionMessage.kind === "success" ? "text-green-600" : "text-red-600")
-                          : "invisible"
-                      }`}
+                      <p
+                        className={`min-h-5 text-xs ${
+                          cliActionMessage?.action === "sync"
+                            ? (cliActionMessage.kind === "success" ? "text-green-600" : "text-red-600")
+                            : "text-transparent"
+                        }`}
                       >
-                        {cliActionMessage?.action === "sync" ? cliActionMessage.text : "."}
+                        {cliActionMessage?.action === "sync" ? cliActionMessage.text : "\u00A0"}
                       </p>
                     </div>
                     <div className="space-y-1">
@@ -882,13 +883,14 @@ export default function ConnectPage() {
                             ? <Check className="h-4 w-4" />
                             : (isZh ? "恢复配置" : "Restore Config")}
                       </Button>
-                      <p className={`min-h-4 text-xs ${
-                        cliActionMessage?.action === "restore"
-                          ? (cliActionMessage.kind === "success" ? "text-green-600" : "text-red-600")
-                          : "invisible"
-                      }`}
+                      <p
+                        className={`min-h-5 text-xs ${
+                          cliActionMessage?.action === "restore"
+                            ? (cliActionMessage.kind === "success" ? "text-green-600" : "text-red-600")
+                            : "text-transparent"
+                        }`}
                       >
-                        {cliActionMessage?.action === "restore" ? cliActionMessage.text : "."}
+                        {cliActionMessage?.action === "restore" ? cliActionMessage.text : "\u00A0"}
                       </p>
                     </div>
                     <div>
@@ -902,7 +904,7 @@ export default function ConnectPage() {
                 </div>
                 {isCliPreviewVisible && (
                   <div className="-mt-3 space-y-2">
-                    <p className="text-xs text-slate-500">
+                    <p className="ml-1 text-xs text-slate-500">
                       {isZh ? "仅展示将被更新的配置片段" : "Only showing configuration fragments to be updated"}
                     </p>
                     <div className="connect-cli-preview relative overflow-hidden rounded-lg border">
