@@ -1,4 +1,4 @@
-.PHONY: dev build server check clean webui smoke release-check help
+.PHONY: dev build server check clean webui smoke smoke-storage release-check help
 
 # Development — start Tauri desktop app with hot reload
 dev: webui-build
@@ -29,6 +29,10 @@ check:
 smoke:
 	python3 scripts/smoke/server_smoke.py
 
+# Storage backend smoke (default: sqlite + postgres; optional: mysql + mongo)
+smoke-storage:
+	python3 scripts/smoke/storage_backends_smoke.py
+
 # Pre-release verification gate
 release-check: check smoke
 
@@ -47,5 +51,6 @@ help:
 	@echo "  make webui-build  Build frontend only"
 	@echo "  make check        Type check Rust + TypeScript"
 	@echo "  make smoke        Run local server smoke tests"
+	@echo "  make smoke-storage Run storage smoke tests (default sqlite + postgres; mysql/mongo via --backend)"
 	@echo "  make release-check Run check + smoke before release"
 	@echo "  make clean        Remove build artifacts"

@@ -1,12 +1,13 @@
+use anyhow::Context;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
 use serde_json::Value;
-use sqlx::Row;
 
 use crate::db::models::*;
+use crate::storage::traits::ProviderTestResult;
 use crate::Gateway;
 
 const MODELS_DEV_SNAPSHOT: &str = include_str!("../../assets/models.dev.json");
@@ -28,12 +29,7 @@ impl AdminService {
     // ── Providers ──
 
     pub async fn list_providers(&self) -> anyhow::Result<Vec<Provider>> {
-        let rows = sqlx::query_as::<_, Provider>(
-            "SELECT id, name, vendor, protocol, base_url, preset_key, COALESCE(channel, region) AS channel, models_endpoint, COALESCE(models_source, models_endpoint) AS models_source, capabilities_source, static_models, api_key, last_test_success, last_test_at, is_active, created_at, updated_at FROM providers ORDER BY created_at DESC",
-        )
-        .fetch_all(&self.gw.db)
-        .await?;
-        Ok(rows)
+        self.gw.storage.providers().list().await
     }
 
     pub async fn list_provider_presets(&self) -> anyhow::Result<Vec<Value>> {
@@ -41,42 +37,35 @@ impl AdminService {
     }
 
     pub async fn get_provider(&self, id: &str) -> anyhow::Result<Provider> {
-        let row = sqlx::query_as::<_, Provider>(
-            "SELECT id, name, vendor, protocol, base_url, preset_key, COALESCE(channel, region) AS channel, models_endpoint, COALESCE(models_source, models_endpoint) AS models_source, capabilities_source, static_models, api_key, last_test_success, last_test_at, is_active, created_at, updated_at FROM providers WHERE id = ?",
-        )
-        .bind(id)
-        .fetch_one(&self.gw.db)
-        .await?;
-        Ok(row)
+        self.gw
+            .storage
+            .providers()
+            .get(id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("provider not found: {id}"))
     }
 
     pub async fn create_provider(&self, input: CreateProvider) -> anyhow::Result<Provider> {
-        let id = uuid::Uuid::new_v4().to_string();
         let name = normalize_name(&input.name, "provider name")?;
         self.ensure_provider_name_unique(None, &name).await?;
         let vendor = normalize_vendor(input.vendor.as_deref());
-        let models_source = input
-            .effective_models_source()
-            .map(ToString::to_string);
-        sqlx::query(
-            "INSERT INTO providers (id, name, vendor, protocol, base_url, preset_key, channel, models_endpoint, models_source, capabilities_source, static_models, api_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&id)
-        .bind(&name)
-        .bind(&vendor)
-        .bind(&input.protocol)
-        .bind(&input.base_url)
-        .bind(&input.preset_key)
-        .bind(&input.channel)
-        .bind(&models_source)
-        .bind(&models_source)
-        .bind(&input.capabilities_source)
-        .bind(&input.static_models)
-        .bind(&input.api_key)
-        .execute(&self.gw.db)
-        .await?;
-
-        self.get_provider(&id).await
+        self.gw
+            .storage
+            .providers()
+            .create(CreateProvider {
+                name,
+                vendor,
+                protocol: input.protocol,
+                base_url: input.base_url,
+                preset_key: input.preset_key,
+                channel: input.channel,
+                models_endpoint: input.models_endpoint,
+                models_source: input.models_source,
+                capabilities_source: input.capabilities_source,
+                static_models: input.static_models,
+                api_key: input.api_key,
+            })
+            .await
     }
 
     pub async fn update_provider(
@@ -117,64 +106,38 @@ impl AdminService {
         let is_active = input.is_active.unwrap_or(current.is_active);
         let base_url_changed = base_url != current_base_url;
 
-        sqlx::query(
-            "UPDATE providers SET name=?, vendor=?, protocol=?, base_url=?, preset_key=?, channel=?, models_endpoint=?, models_source=?, capabilities_source=?, static_models=?, api_key=?, is_active=?, updated_at=datetime('now') WHERE id=?",
-        )
-        .bind(&name)
-        .bind(&vendor)
-        .bind(&protocol)
-        .bind(&base_url)
-        .bind(&preset_key)
-        .bind(&channel)
-        .bind(&models_source)
-        .bind(&models_source)
-        .bind(&capabilities_source)
-        .bind(&static_models)
-        .bind(&api_key)
-        .bind(is_active)
-        .bind(id)
-        .execute(&self.gw.db)
-        .await?;
+        let provider = self
+            .gw
+            .storage
+            .providers()
+            .update(
+                id,
+                UpdateProvider {
+                    name: Some(name),
+                    vendor,
+                    protocol: Some(protocol),
+                    base_url: Some(base_url),
+                    preset_key,
+                    channel,
+                    models_endpoint: models_source.clone(),
+                    models_source,
+                    capabilities_source,
+                    static_models,
+                    api_key: Some(api_key),
+                    is_active: Some(is_active),
+                },
+            )
+            .await?;
 
         if base_url_changed {
             self.gw.clear_ollama_capability_cache_for_provider(id).await;
         }
 
-        self.get_provider(id).await
+        Ok(provider)
     }
 
     pub async fn delete_provider(&self, id: &str) -> anyhow::Result<()> {
-        let route_ref_count = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(1) FROM routes WHERE target_provider = ?",
-        )
-        .bind(id)
-        .fetch_one(&self.gw.db)
-        .await
-        .unwrap_or(0);
-        if route_ref_count > 0 {
-            return Err(coded_error(
-                "PROVIDER_IN_USE",
-                &format!("provider is used by {route_ref_count} routes"),
-                serde_json::json!({ "id": id, "routeCount": route_ref_count }),
-            ));
-        }
-
-        let delete_result = sqlx::query("DELETE FROM providers WHERE id = ?")
-            .bind(id)
-            .execute(&self.gw.db)
-            .await;
-        if let Err(e) = delete_result {
-            if let sqlx::Error::Database(db_err) = &e {
-                if db_err.code().as_deref() == Some("787") {
-                    return Err(coded_error(
-                        "PROVIDER_IN_USE",
-                        "provider is still referenced by other resources",
-                        serde_json::json!({ "id": id }),
-                    ));
-                }
-            }
-            return Err(e.into());
-        }
+        self.gw.storage.providers().delete(id).await?;
         self.gw.clear_ollama_capability_cache_for_provider(id).await;
         Ok(())
     }
@@ -233,16 +196,17 @@ impl AdminService {
         provider_id: &str,
         result: &TestResult,
     ) -> anyhow::Result<()> {
-        sqlx::query(
-            "UPDATE providers \
-             SET last_test_success = ?, last_test_at = datetime('now') \
-             WHERE id = ?",
-        )
-        .bind(result.success)
-        .bind(provider_id)
-        .execute(&self.gw.db)
-        .await?;
-        Ok(())
+        self.gw
+            .storage
+            .providers()
+            .record_test_result(
+                provider_id,
+                ProviderTestResult {
+                    success: result.success,
+                    tested_at: String::new(),
+                },
+            )
+            .await
     }
 
     pub async fn test_provider_models(&self, id: &str) -> anyhow::Result<Vec<String>> {
@@ -467,12 +431,7 @@ impl AdminService {
     // ── Routes ──
 
     pub async fn list_routes(&self) -> anyhow::Result<Vec<Route>> {
-        let rows = sqlx::query_as::<_, Route>(
-            "SELECT id, name, COALESCE(ingress_protocol, 'openai') AS ingress_protocol, COALESCE(NULLIF(virtual_model, ''), match_pattern) AS virtual_model, target_provider, target_model, COALESCE(access_control, 0) AS access_control, is_active, created_at FROM routes ORDER BY created_at DESC",
-        )
-        .fetch_all(&self.gw.db)
-        .await?;
-        Ok(rows)
+        self.gw.storage.routes().list().await
     }
 
     pub async fn create_route(&self, input: CreateRoute) -> anyhow::Result<Route> {
@@ -483,40 +442,25 @@ impl AdminService {
         self.ensure_route_unique(None, &input.ingress_protocol, &input.virtual_model)
             .await?;
 
-        let id = uuid::Uuid::new_v4().to_string();
-
-        sqlx::query(
-            "INSERT INTO routes (id, name, ingress_protocol, virtual_model, match_pattern, target_provider, target_model, access_control) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&id)
-        .bind(&name)
-        .bind(input.ingress_protocol.trim().to_lowercase())
-        .bind(input.virtual_model.trim())
-        .bind(input.virtual_model.trim())
-        .bind(&input.target_provider)
-        .bind(&input.target_model)
-        .bind(input.access_control.unwrap_or(false))
-        .execute(&self.gw.db)
-        .await?;
-
-        let route = sqlx::query_as::<_, Route>(
-            "SELECT id, name, COALESCE(ingress_protocol, 'openai') AS ingress_protocol, COALESCE(NULLIF(virtual_model, ''), match_pattern) AS virtual_model, target_provider, target_model, COALESCE(access_control, 0) AS access_control, is_active, created_at FROM routes WHERE id = ?",
-        )
-        .bind(&id)
-        .fetch_one(&self.gw.db)
-        .await?;
-
-        self.gw.route_cache.write().await.reload(&self.gw.db).await?;
+        let route = self
+            .gw
+            .storage
+            .routes()
+            .create(CreateRoute {
+                name,
+                ingress_protocol: input.ingress_protocol,
+                virtual_model: input.virtual_model,
+                target_provider: input.target_provider,
+                target_model: input.target_model,
+                access_control: input.access_control,
+            })
+            .await?;
+        self.reload_route_cache().await?;
         Ok(route)
     }
 
     pub async fn update_route(&self, id: &str, input: UpdateRoute) -> anyhow::Result<Route> {
-        let current = sqlx::query_as::<_, Route>(
-            "SELECT id, name, COALESCE(ingress_protocol, 'openai') AS ingress_protocol, COALESCE(NULLIF(virtual_model, ''), match_pattern) AS virtual_model, target_provider, target_model, COALESCE(access_control, 0) AS access_control, is_active, created_at FROM routes WHERE id = ?",
-        )
-        .bind(id)
-        .fetch_one(&self.gw.db)
-        .await?;
+        let current = self.get_route_by_id(id).await?;
 
         let name = normalize_name(&input.name.unwrap_or(current.name), "route name")?;
         self.ensure_route_name_unique(Some(id), &name).await?;
@@ -531,126 +475,67 @@ impl AdminService {
         self.ensure_route_unique(Some(id), &ingress_protocol, &virtual_model)
             .await?;
 
-        sqlx::query(
-            "UPDATE routes SET name=?, ingress_protocol=?, virtual_model=?, match_pattern=?, target_provider=?, target_model=?, access_control=?, is_active=? WHERE id=?",
-        )
-        .bind(&name)
-        .bind(ingress_protocol.trim().to_lowercase())
-        .bind(virtual_model.trim())
-        .bind(virtual_model.trim())
-        .bind(&target_provider)
-        .bind(&target_model)
-        .bind(access_control)
-        .bind(is_active)
-        .bind(id)
-        .execute(&self.gw.db)
-        .await?;
-
-        self.gw.route_cache.write().await.reload(&self.gw.db).await?;
-
-        sqlx::query_as::<_, Route>(
-            "SELECT id, name, COALESCE(ingress_protocol, 'openai') AS ingress_protocol, COALESCE(NULLIF(virtual_model, ''), match_pattern) AS virtual_model, target_provider, target_model, COALESCE(access_control, 0) AS access_control, is_active, created_at FROM routes WHERE id = ?",
-        )
-        .bind(id)
-        .fetch_one(&self.gw.db)
-        .await
-        .map_err(Into::into)
+        self.gw
+            .storage
+            .routes()
+            .update(
+                id,
+                UpdateRoute {
+                    name: Some(name),
+                    ingress_protocol: Some(ingress_protocol),
+                    virtual_model: Some(virtual_model),
+                    target_provider: Some(target_provider),
+                    target_model: Some(target_model),
+                    access_control: Some(access_control),
+                    is_active: Some(is_active),
+                },
+            )
+            .await?;
+        self.reload_route_cache().await?;
+        self.get_route_by_id(id).await
     }
 
     pub async fn delete_route(&self, id: &str) -> anyhow::Result<()> {
-        sqlx::query("DELETE FROM routes WHERE id = ?")
-            .bind(id)
-            .execute(&self.gw.db)
-            .await?;
-        self.gw.route_cache.write().await.reload(&self.gw.db).await?;
+        self.gw.storage.routes().delete(id).await?;
+        self.reload_route_cache().await?;
         Ok(())
     }
 
     // ── API Keys ──
 
     pub async fn list_api_keys(&self) -> anyhow::Result<Vec<ApiKeyWithBindings>> {
-        let rows = sqlx::query_as::<_, ApiKey>(
-            "SELECT id, key, name, rpm, rpd, tpm, tpd, status, expires_at, created_at, updated_at FROM api_keys ORDER BY created_at DESC",
-        )
-        .fetch_all(&self.gw.db)
-        .await?;
-
-        let mut items = Vec::with_capacity(rows.len());
-        for row in rows {
-            let route_ids = self.list_api_key_route_ids(&row.id).await?;
-            items.push(ApiKeyWithBindings {
-                id: row.id,
-                key: row.key,
-                name: row.name,
-                rpm: row.rpm,
-                rpd: row.rpd,
-                tpm: row.tpm,
-                tpd: row.tpd,
-                status: row.status,
-                expires_at: row.expires_at,
-                created_at: row.created_at,
-                updated_at: row.updated_at,
-                route_ids,
-            });
-        }
-        Ok(items)
+        self.api_keys_store()?.list().await
     }
 
     pub async fn get_api_key(&self, id: &str) -> anyhow::Result<ApiKeyWithBindings> {
-        let row = sqlx::query_as::<_, ApiKey>(
-            "SELECT id, key, name, rpm, rpd, tpm, tpd, status, expires_at, created_at, updated_at FROM api_keys WHERE id = ?",
-        )
-        .bind(id)
-        .fetch_one(&self.gw.db)
-        .await?;
-        let route_ids = self.list_api_key_route_ids(id).await?;
-        Ok(ApiKeyWithBindings {
-            id: row.id,
-            key: row.key,
-            name: row.name,
-            rpm: row.rpm,
-            rpd: row.rpd,
-            tpm: row.tpm,
-            tpd: row.tpd,
-            status: row.status,
-            expires_at: row.expires_at,
-            created_at: row.created_at,
-            updated_at: row.updated_at,
-            route_ids,
-        })
+        self.api_keys_store()?
+            .get(id)
+            .await?
+            .context("api key not found")
     }
 
     pub async fn create_api_key(&self, input: CreateApiKey) -> anyhow::Result<ApiKeyWithBindings> {
-        let id = uuid::Uuid::new_v4().to_string();
-        let key = format!("sk-{}", uuid::Uuid::new_v4().simple());
         let name = normalize_name(&input.name, "api key name")?;
         self.ensure_api_key_name_unique(None, &name).await?;
-
-        sqlx::query(
-            "INSERT INTO api_keys (id, key, name, rpm, rpd, tpm, tpd, status, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?)",
-        )
-        .bind(&id)
-        .bind(&key)
-        .bind(&name)
-        .bind(input.rpm)
-        .bind(input.rpd)
-        .bind(input.tpm)
-        .bind(input.tpd)
-        .bind(input.expires_at.as_ref().map(|v| v.trim()).filter(|v| !v.is_empty()))
-        .execute(&self.gw.db)
-        .await?;
-
-        self.replace_api_key_routes(&id, &input.route_ids).await?;
-        self.get_api_key(&id).await
+        self.api_keys_store()?
+            .create(CreateApiKey {
+                name,
+                rpm: input.rpm,
+                rpd: input.rpd,
+                tpm: input.tpm,
+                tpd: input.tpd,
+                expires_at: input.expires_at,
+                route_ids: input.route_ids,
+            })
+            .await
     }
 
     pub async fn update_api_key(&self, id: &str, input: UpdateApiKey) -> anyhow::Result<ApiKeyWithBindings> {
-        let current = sqlx::query_as::<_, ApiKey>(
-            "SELECT id, key, name, rpm, rpd, tpm, tpd, status, expires_at, created_at, updated_at FROM api_keys WHERE id = ?",
-        )
-        .bind(id)
-        .fetch_one(&self.gw.db)
-        .await?;
+        let current = self
+            .api_keys_store()?
+            .get(id)
+            .await?
+            .context("api key not found")?;
 
         let name = normalize_name(&input.name.unwrap_or(current.name), "api key name")?;
         self.ensure_api_key_name_unique(Some(id), &name).await?;
@@ -665,71 +550,35 @@ impl AdminService {
             anyhow::bail!("invalid key status: {status}");
         }
 
-        sqlx::query(
-            "UPDATE api_keys SET name=?, rpm=?, rpd=?, tpm=?, tpd=?, status=?, expires_at=?, updated_at=datetime('now') WHERE id=?",
-        )
-        .bind(&name)
-        .bind(rpm)
-        .bind(rpd)
-        .bind(tpm)
-        .bind(tpd)
-        .bind(status)
-        .bind(expires_at.as_ref().map(|v| v.trim()).filter(|v| !v.is_empty()))
-        .bind(id)
-        .execute(&self.gw.db)
-        .await?;
-
-        if let Some(route_ids) = input.route_ids {
-            self.replace_api_key_routes(id, &route_ids).await?;
-        }
-
-        self.get_api_key(id).await
+        self.api_keys_store()?
+            .update(
+                id,
+                UpdateApiKey {
+                    name: Some(name),
+                    rpm,
+                    rpd,
+                    tpm,
+                    tpd,
+                    status: Some(status),
+                    expires_at,
+                    route_ids: input.route_ids,
+                },
+            )
+            .await
     }
 
     pub async fn delete_api_key(&self, id: &str) -> anyhow::Result<()> {
-        sqlx::query("DELETE FROM api_keys WHERE id = ?")
-            .bind(id)
-            .execute(&self.gw.db)
-            .await?;
+        self.api_keys_store()?.delete(id).await?;
         Ok(())
     }
 
     // ── Logs ──
 
     pub async fn query_logs(&self, q: LogQuery) -> anyhow::Result<LogPage> {
-        let limit = q.limit.unwrap_or(50).min(500);
-        let offset = q.offset.unwrap_or(0);
-
-        let mut where_clauses = vec!["1=1".to_string()];
-        if let Some(ref p) = q.provider {
-            where_clauses.push(format!("provider_name = '{}'", p.replace('\'', "''")));
-        }
-        if let Some(ref m) = q.model {
-            where_clauses.push(format!("actual_model = '{}'", m.replace('\'', "''")));
-        }
-        if let Some(min) = q.status_min {
-            where_clauses.push(format!("status_code >= {min}"));
-        }
-        if let Some(max) = q.status_max {
-            where_clauses.push(format!("status_code <= {max}"));
-        }
-        let where_sql = where_clauses.join(" AND ");
-
-        let count_sql = format!("SELECT COUNT(*) as cnt FROM request_logs WHERE {where_sql}");
-        let total: i64 = sqlx::query(&count_sql)
-            .fetch_one(&self.gw.db)
-            .await?
-            .try_get("cnt")
-            .unwrap_or(0);
-
-        let data_sql = format!(
-            "SELECT id, created_at, api_key_id, ingress_protocol, egress_protocol, request_model, actual_model, provider_name, status_code, duration_ms, input_tokens, output_tokens, is_stream, is_tool_call, error_message, request_preview, response_preview FROM request_logs WHERE {where_sql} ORDER BY created_at DESC LIMIT {limit} OFFSET {offset}"
-        );
-        let items = sqlx::query_as::<_, RequestLog>(&data_sql)
-            .fetch_all(&self.gw.db)
-            .await?;
-
-        Ok(LogPage { items, total })
+        let mut q = q;
+        q.limit = Some(q.limit.unwrap_or(50).min(500));
+        q.offset = Some(q.offset.unwrap_or(0));
+        self.gw.storage.logs().query(q).await
     }
 
     // ── Stats ──
@@ -739,147 +588,48 @@ impl AdminService {
     }
 
     pub async fn get_stats_overview(&self, hours: Option<i32>) -> anyhow::Result<StatsOverview> {
-        let row = if let Some(hours) = Self::normalize_hours(hours) {
-            sqlx::query_as::<_, StatsOverview>(
-                r#"SELECT
-                    COUNT(*) as total_requests,
-                    COALESCE(SUM(input_tokens), 0) as total_input_tokens,
-                    COALESCE(SUM(output_tokens), 0) as total_output_tokens,
-                    COALESCE(AVG(duration_ms), 0) as avg_duration_ms,
-                    COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0) as error_count
-                FROM request_logs
-                WHERE created_at >= datetime('now', ? || ' hours')"#,
-            )
-            .bind(format!("-{hours}"))
-            .fetch_one(&self.gw.db)
-            .await?
-        } else {
-            sqlx::query_as::<_, StatsOverview>(
-                r#"SELECT
-                    COUNT(*) as total_requests,
-                    COALESCE(SUM(input_tokens), 0) as total_input_tokens,
-                    COALESCE(SUM(output_tokens), 0) as total_output_tokens,
-                    COALESCE(AVG(duration_ms), 0) as avg_duration_ms,
-                    COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0) as error_count
-                FROM request_logs"#,
-            )
-            .fetch_one(&self.gw.db)
-            .await?
-        };
-        Ok(row)
+        self.gw
+            .storage
+            .logs()
+            .stats_overview(Self::normalize_hours(hours).map(i64::from))
+            .await
     }
 
     pub async fn get_stats_hourly(&self, hours: i32) -> anyhow::Result<Vec<StatsHourly>> {
-        let hours = hours.max(1);
-        let rows = sqlx::query_as::<_, StatsHourly>(
-            r#"SELECT
-                strftime('%Y-%m-%d %H:00', created_at) as hour,
-                COUNT(*) as request_count,
-                SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) as error_count,
-                COALESCE(SUM(input_tokens), 0) as total_input_tokens,
-                COALESCE(SUM(output_tokens), 0) as total_output_tokens,
-                COALESCE(AVG(duration_ms), 0) as avg_duration_ms
-            FROM request_logs
-            WHERE created_at >= datetime('now', ? || ' hours')
-            GROUP BY hour
-            ORDER BY hour ASC"#,
-        )
-        .bind(format!("-{hours}"))
-        .fetch_all(&self.gw.db)
-        .await?;
-        Ok(rows)
+        self.gw
+            .storage
+            .logs()
+            .stats_hourly(i64::from(hours.max(1)))
+            .await
     }
 
     pub async fn get_stats_by_model(&self, hours: Option<i32>) -> anyhow::Result<Vec<ModelStats>> {
-        let rows = if let Some(hours) = Self::normalize_hours(hours) {
-            sqlx::query_as::<_, ModelStats>(
-                r#"SELECT
-                    COALESCE(actual_model, 'unknown') as model,
-                    COUNT(*) as request_count,
-                    COALESCE(SUM(input_tokens), 0) as total_input_tokens,
-                    COALESCE(SUM(output_tokens), 0) as total_output_tokens,
-                    COALESCE(AVG(duration_ms), 0) as avg_duration_ms
-                FROM request_logs
-                WHERE created_at >= datetime('now', ? || ' hours')
-                GROUP BY actual_model
-                ORDER BY request_count DESC"#,
-            )
-            .bind(format!("-{hours}"))
-            .fetch_all(&self.gw.db)
-            .await?
-        } else {
-            sqlx::query_as::<_, ModelStats>(
-                r#"SELECT
-                    COALESCE(actual_model, 'unknown') as model,
-                    COUNT(*) as request_count,
-                    COALESCE(SUM(input_tokens), 0) as total_input_tokens,
-                    COALESCE(SUM(output_tokens), 0) as total_output_tokens,
-                    COALESCE(AVG(duration_ms), 0) as avg_duration_ms
-                FROM request_logs
-                GROUP BY actual_model
-                ORDER BY request_count DESC"#,
-            )
-            .fetch_all(&self.gw.db)
-            .await?
-        };
-        Ok(rows)
+        self.gw
+            .storage
+            .logs()
+            .stats_by_model(Self::normalize_hours(hours).map(i64::from))
+            .await
     }
 
     pub async fn get_stats_by_provider(
         &self,
         hours: Option<i32>,
     ) -> anyhow::Result<Vec<ProviderStats>> {
-        let rows = if let Some(hours) = Self::normalize_hours(hours) {
-            sqlx::query_as::<_, ProviderStats>(
-                r#"SELECT
-                    COALESCE(provider_name, 'unknown') as provider,
-                    COUNT(*) as request_count,
-                    SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) as error_count,
-                    COALESCE(AVG(duration_ms), 0) as avg_duration_ms
-                FROM request_logs
-                WHERE created_at >= datetime('now', ? || ' hours')
-                GROUP BY provider_name
-                ORDER BY request_count DESC"#,
-            )
-            .bind(format!("-{hours}"))
-            .fetch_all(&self.gw.db)
-            .await?
-        } else {
-            sqlx::query_as::<_, ProviderStats>(
-                r#"SELECT
-                    COALESCE(provider_name, 'unknown') as provider,
-                    COUNT(*) as request_count,
-                    SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) as error_count,
-                    COALESCE(AVG(duration_ms), 0) as avg_duration_ms
-                FROM request_logs
-                GROUP BY provider_name
-                ORDER BY request_count DESC"#,
-            )
-            .fetch_all(&self.gw.db)
-            .await?
-        };
-        Ok(rows)
+        self.gw
+            .storage
+            .logs()
+            .stats_by_provider(Self::normalize_hours(hours).map(i64::from))
+            .await
     }
 
     // ── Settings ──
 
     pub async fn get_setting(&self, key: &str) -> anyhow::Result<Option<String>> {
-        let row: Option<(String,)> = sqlx::query_as("SELECT value FROM settings WHERE key = ?")
-            .bind(key)
-            .fetch_optional(&self.gw.db)
-            .await?;
-        Ok(row.map(|r| r.0))
+        self.gw.storage.settings().get(key).await
     }
 
     pub async fn set_setting(&self, key: &str, value: &str) -> anyhow::Result<()> {
-        sqlx::query(
-            "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now')) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
-        )
-        .bind(key)
-        .bind(value)
-        .execute(&self.gw.db)
-        .await?;
-        Ok(())
+        self.gw.storage.settings().set(key, value).await
     }
 
     // ── Config Import/Export ──
@@ -887,10 +637,7 @@ impl AdminService {
     pub async fn export_config(&self) -> anyhow::Result<ExportData> {
         let providers = self.list_providers().await?;
         let routes = self.list_routes().await?;
-        let settings: Vec<(String, String)> =
-            sqlx::query_as("SELECT key, value FROM settings")
-                .fetch_all(&self.gw.db)
-                .await?;
+        let settings = self.gw.storage.settings().list_all().await?;
 
         Ok(ExportData {
             version: 1,
@@ -933,15 +680,15 @@ impl AdminService {
         let mut settings_imported = 0u32;
 
         for p in &data.providers {
-            let exists = sqlx::query_scalar::<_, i64>(
-                "SELECT COUNT(*) FROM providers WHERE lower(trim(name)) = lower(trim(?))",
-            )
-            .bind(&p.name)
-            .fetch_one(&self.gw.db)
-            .await
-            .unwrap_or(0);
+            let exists = self
+                .gw
+                .storage
+                .providers()
+                .exists_by_name(&p.name, None)
+                .await
+                .unwrap_or(false);
 
-            if exists == 0 {
+            if !exists {
                 if self
                     .create_provider(CreateProvider {
                         name: p.name.clone(),
@@ -964,24 +711,24 @@ impl AdminService {
             }
         }
 
+        let fallback_provider_id = self
+            .list_providers()
+            .await?
+            .into_iter()
+            .next()
+            .map(|provider| provider.id);
+
         for r in &data.routes {
-            let exists =
-                sqlx::query_scalar::<_, i64>(
-                    "SELECT COUNT(*) FROM routes WHERE lower(trim(name)) = lower(trim(?))",
-                )
-                    .bind(&r.name)
-                    .fetch_one(&self.gw.db)
-                    .await
-                    .unwrap_or(0);
+            let exists = self
+                .gw
+                .storage
+                .routes()
+                .exists_by_name(&r.name, None)
+                .await
+                .unwrap_or(false);
 
-            if exists == 0 {
-                let provider_id = sqlx::query_scalar::<_, String>(
-                    "SELECT id FROM providers LIMIT 1",
-                )
-                .fetch_optional(&self.gw.db)
-                .await?;
-
-                if let Some(pid) = provider_id {
+            if !exists {
+                if let Some(pid) = fallback_provider_id.clone() {
                     if self
                         .create_route(CreateRoute {
                             name: r.name.clone(),
@@ -1018,40 +765,16 @@ impl AdminService {
         ingress_protocol: &str,
         virtual_model: &str,
     ) -> anyhow::Result<()> {
-        let normalized_protocol = ingress_protocol.trim().to_lowercase();
-        let normalized_model = virtual_model.trim();
-        let sql = if exclude_id.is_some() {
-            "SELECT id FROM routes WHERE COALESCE(ingress_protocol, 'openai') = ? AND COALESCE(NULLIF(virtual_model, ''), match_pattern) = ? AND id != ? LIMIT 1"
-        } else {
-            "SELECT id FROM routes WHERE COALESCE(ingress_protocol, 'openai') = ? AND COALESCE(NULLIF(virtual_model, ''), match_pattern) = ? LIMIT 1"
-        };
-
-        let exists = if let Some(route_id) = exclude_id {
-            sqlx::query_scalar::<_, String>(sql)
-                .bind(&normalized_protocol)
-                .bind(normalized_model)
-                .bind(route_id)
-                .fetch_optional(&self.gw.db)
-                .await?
-        } else {
-            sqlx::query_scalar::<_, String>(sql)
-                .bind(&normalized_protocol)
-                .bind(normalized_model)
-                .fetch_optional(&self.gw.db)
-                .await?
-        };
-
-        if exists.is_some() {
-            return Err(coded_error(
-                "ROUTE_PROTOCOL_MODEL_CONFLICT",
-                &format!(
-                    "route already exists for protocol={normalized_protocol}, model={normalized_model}"
-                ),
-                serde_json::json!({
-                    "protocol": normalized_protocol,
-                    "model": normalized_model,
-                }),
-            ));
+        if self
+            .gw
+            .storage
+            .routes()
+            .exists_by_protocol_model(ingress_protocol, virtual_model, exclude_id)
+            .await?
+        {
+            let normalized_protocol = ingress_protocol.trim().to_lowercase();
+            let normalized_model = virtual_model.trim();
+            anyhow::bail!("route already exists for protocol={normalized_protocol}, model={normalized_model}");
         }
         Ok(())
     }
@@ -1061,26 +784,13 @@ impl AdminService {
         exclude_id: Option<&str>,
         name: &str,
     ) -> anyhow::Result<()> {
-        let sql = if exclude_id.is_some() {
-            "SELECT id FROM providers WHERE lower(trim(name)) = lower(trim(?)) AND id != ? LIMIT 1"
-        } else {
-            "SELECT id FROM providers WHERE lower(trim(name)) = lower(trim(?)) LIMIT 1"
-        };
-
-        let exists = if let Some(provider_id) = exclude_id {
-            sqlx::query_scalar::<_, String>(sql)
-                .bind(name)
-                .bind(provider_id)
-                .fetch_optional(&self.gw.db)
-                .await?
-        } else {
-            sqlx::query_scalar::<_, String>(sql)
-                .bind(name)
-                .fetch_optional(&self.gw.db)
-                .await?
-        };
-
-        if exists.is_some() {
+        if self
+            .gw
+            .storage
+            .providers()
+            .exists_by_name(name, exclude_id)
+            .await?
+        {
             return Err(coded_error(
                 "PROVIDER_NAME_CONFLICT",
                 &format!("provider name already exists: {name}"),
@@ -1095,26 +805,13 @@ impl AdminService {
         exclude_id: Option<&str>,
         name: &str,
     ) -> anyhow::Result<()> {
-        let sql = if exclude_id.is_some() {
-            "SELECT id FROM routes WHERE lower(trim(name)) = lower(trim(?)) AND id != ? LIMIT 1"
-        } else {
-            "SELECT id FROM routes WHERE lower(trim(name)) = lower(trim(?)) LIMIT 1"
-        };
-
-        let exists = if let Some(route_id) = exclude_id {
-            sqlx::query_scalar::<_, String>(sql)
-                .bind(name)
-                .bind(route_id)
-                .fetch_optional(&self.gw.db)
-                .await?
-        } else {
-            sqlx::query_scalar::<_, String>(sql)
-                .bind(name)
-                .fetch_optional(&self.gw.db)
-                .await?
-        };
-
-        if exists.is_some() {
+        if self
+            .gw
+            .storage
+            .routes()
+            .exists_by_name(name, exclude_id)
+            .await?
+        {
             return Err(coded_error(
                 "ROUTE_NAME_CONFLICT",
                 &format!("route name already exists: {name}"),
@@ -1129,26 +826,7 @@ impl AdminService {
         exclude_id: Option<&str>,
         name: &str,
     ) -> anyhow::Result<()> {
-        let sql = if exclude_id.is_some() {
-            "SELECT id FROM api_keys WHERE lower(trim(name)) = lower(trim(?)) AND id != ? LIMIT 1"
-        } else {
-            "SELECT id FROM api_keys WHERE lower(trim(name)) = lower(trim(?)) LIMIT 1"
-        };
-
-        let exists = if let Some(api_key_id) = exclude_id {
-            sqlx::query_scalar::<_, String>(sql)
-                .bind(name)
-                .bind(api_key_id)
-                .fetch_optional(&self.gw.db)
-                .await?
-        } else {
-            sqlx::query_scalar::<_, String>(sql)
-                .bind(name)
-                .fetch_optional(&self.gw.db)
-                .await?
-        };
-
-        if exists.is_some() {
+        if self.api_keys_store()?.exists_by_name(name, exclude_id).await? {
             return Err(coded_error(
                 "API_KEY_NAME_CONFLICT",
                 &format!("api key name already exists: {name}"),
@@ -1158,33 +836,29 @@ impl AdminService {
         Ok(())
     }
 
-    async fn list_api_key_route_ids(&self, api_key_id: &str) -> anyhow::Result<Vec<String>> {
-        let route_ids = sqlx::query_scalar::<_, String>(
-            "SELECT route_id FROM api_key_routes WHERE api_key_id = ? ORDER BY route_id ASC",
-        )
-        .bind(api_key_id)
-        .fetch_all(&self.gw.db)
-        .await?;
-        Ok(route_ids)
+    async fn get_route_by_id(&self, id: &str) -> anyhow::Result<Route> {
+        self.gw
+            .storage
+            .routes()
+            .get(id)
+            .await?
+            .context("route not found")
     }
 
-    async fn replace_api_key_routes(&self, api_key_id: &str, route_ids: &[String]) -> anyhow::Result<()> {
-        let mut tx = self.gw.db.begin().await?;
-        sqlx::query("DELETE FROM api_key_routes WHERE api_key_id = ?")
-            .bind(api_key_id)
-            .execute(&mut *tx)
-            .await?;
+    async fn reload_route_cache(&self) -> anyhow::Result<()> {
+        self.gw
+            .route_cache
+            .write()
+            .await
+            .reload(self.gw.storage.snapshots())
+            .await
+    }
 
-        for route_id in route_ids.iter().filter(|id| !id.trim().is_empty()) {
-            sqlx::query("INSERT OR IGNORE INTO api_key_routes (api_key_id, route_id) VALUES (?, ?)")
-                .bind(api_key_id)
-                .bind(route_id.trim())
-                .execute(&mut *tx)
-                .await?;
-        }
-
-        tx.commit().await?;
-        Ok(())
+    fn api_keys_store(&self) -> anyhow::Result<&dyn crate::storage::traits::ApiKeyStore> {
+        self.gw
+            .storage
+            .api_keys()
+            .context("selected storage backend does not support api key management")
     }
 }
 

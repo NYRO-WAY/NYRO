@@ -1,6 +1,8 @@
 use std::convert::Infallible;
 use std::time::Instant;
 
+use chrono::{NaiveDateTime, Utc};
+use async_trait::async_trait;
 use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
@@ -17,6 +19,7 @@ use crate::protocol::gemini::decoder::GeminiDecoder;
 use crate::protocol::types::*;
 use crate::protocol::Protocol;
 use crate::proxy::client::ProxyClient;
+use crate::storage::traits::{ApiKeyAccessRecord, UsageWindow};
 use crate::Gateway;
 
 const OLLAMA_CAPABILITY_CACHE_TTL_SECS: u64 = 3600;
@@ -107,12 +110,14 @@ async fn proxy_pipeline(
         None => return error_response(404, &format!("no route for model: {request_model}")),
     };
 
-    let auth_key = match authorize_route_access(&gw, &route, &headers).await {
+    let access_store = GatewayProxyAccessStore::new(&gw);
+
+    let auth_key = match authorize_route_access(&access_store, &route, &headers).await {
         Ok(v) => v,
         Err(resp) => return resp,
     };
 
-    let provider = match get_provider(&gw, &route.target_provider).await {
+    let provider = match get_provider(&access_store, &route.target_provider).await {
         Ok(p) => p,
         Err(e) => return error_response(502, &format!("provider error: {e}")),
     };
@@ -515,7 +520,66 @@ struct AuthenticatedKey {
     id: Option<String>,
 }
 
-async fn authorize_route_access(gw: &Gateway, route: &Route, headers: &HeaderMap) -> Result<AuthenticatedKey, Response> {
+#[async_trait]
+trait ProxyAccessStore {
+    async fn get_active_provider(&self, id: &str) -> anyhow::Result<Option<Provider>>;
+    async fn find_api_key(&self, raw_key: &str) -> anyhow::Result<Option<ApiKeyAccessRecord>>;
+    async fn route_binding_exists(&self, api_key_id: &str, route_id: &str) -> anyhow::Result<bool>;
+    async fn request_count_since(&self, api_key_id: &str, window: UsageWindow) -> anyhow::Result<i64>;
+    async fn token_count_since(&self, api_key_id: &str, window: UsageWindow) -> anyhow::Result<i64>;
+}
+
+struct GatewayProxyAccessStore<'a> {
+    gw: &'a Gateway,
+}
+
+impl<'a> GatewayProxyAccessStore<'a> {
+    fn new(gw: &'a Gateway) -> Self {
+        Self { gw }
+    }
+}
+
+#[async_trait]
+impl ProxyAccessStore for GatewayProxyAccessStore<'_> {
+    async fn get_active_provider(&self, id: &str) -> anyhow::Result<Option<Provider>> {
+        let provider = self.gw.storage.providers().get(id).await?;
+        Ok(provider.filter(|p| p.is_active))
+    }
+
+    async fn find_api_key(&self, raw_key: &str) -> anyhow::Result<Option<ApiKeyAccessRecord>> {
+        match self.gw.storage.auth() {
+            Some(store) => store.find_api_key(raw_key).await,
+            None => Ok(None),
+        }
+    }
+
+    async fn route_binding_exists(&self, api_key_id: &str, route_id: &str) -> anyhow::Result<bool> {
+        match self.gw.storage.auth() {
+            Some(store) => store.route_binding_exists(api_key_id, route_id).await,
+            None => Ok(false),
+        }
+    }
+
+    async fn request_count_since(&self, api_key_id: &str, window: UsageWindow) -> anyhow::Result<i64> {
+        match self.gw.storage.auth() {
+            Some(store) => store.request_count_since(api_key_id, window).await,
+            None => Ok(0),
+        }
+    }
+
+    async fn token_count_since(&self, api_key_id: &str, window: UsageWindow) -> anyhow::Result<i64> {
+        match self.gw.storage.auth() {
+            Some(store) => store.token_count_since(api_key_id, window).await,
+            None => Ok(0),
+        }
+    }
+}
+
+async fn authorize_route_access<S: ProxyAccessStore + ?Sized>(
+    access_store: &S,
+    route: &Route,
+    headers: &HeaderMap,
+) -> Result<AuthenticatedKey, Response> {
     if !route.access_control {
         return Ok(AuthenticatedKey { id: None });
     }
@@ -524,103 +588,86 @@ async fn authorize_route_access(gw: &Gateway, route: &Route, headers: &HeaderMap
         return Err(error_response(401, "missing api key"));
     };
 
-    let key_row = sqlx::query_as::<_, (String, String, Option<String>, Option<i32>, Option<i32>, Option<i32>, Option<i32>)>(
-        "SELECT id, status, expires_at, rpm, rpd, tpm, tpd FROM api_keys WHERE key = ?",
-    )
-    .bind(&raw_key)
-    .fetch_optional(&gw.db)
-    .await
-    .map_err(|e| error_response(500, &format!("auth db error: {e}")))?;
+    let key_row = access_store
+        .find_api_key(&raw_key)
+        .await
+        .map_err(|e| error_response(500, &format!("auth db error: {e}")))?;
 
-    let Some((api_key_id, status, expires_at, rpm, rpd, tpm, tpd)) = key_row else {
+    let Some(key_row) = key_row else {
         return Err(error_response(401, "invalid api key"));
     };
 
-    if status != "active" {
+    if key_row.status != "active" {
         return Err(error_response(403, "api key revoked"));
     }
 
-    if let Some(expires) = expires_at.as_ref() {
-        let is_expired = sqlx::query_scalar::<_, i64>(
-            "SELECT CASE WHEN datetime(?) <= datetime('now') THEN 1 ELSE 0 END",
-        )
-        .bind(expires)
-        .fetch_one(&gw.db)
-        .await
-        .map(|v| v > 0)
-        .unwrap_or(false);
-        if is_expired {
+    if let Some(expires) = key_row.expires_at.as_ref() {
+        if is_key_expired(expires) {
             return Err(error_response(403, "api key expired"));
         }
     }
 
-    let allowed = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM api_key_routes WHERE api_key_id = ? AND route_id = ?",
-    )
-    .bind(&api_key_id)
-    .bind(&route.id)
-    .fetch_one(&gw.db)
-    .await
-    .map_err(|e| error_response(500, &format!("auth db error: {e}")))?;
-    if allowed == 0 {
+    let allowed = access_store
+        .route_binding_exists(&key_row.id, &route.id)
+        .await
+        .map_err(|e| error_response(500, &format!("auth db error: {e}")))?;
+    if !allowed {
         return Err(error_response(403, "api key not allowed for this route"));
     }
 
-    if let Some(limit) = rpm.filter(|v| *v > 0) {
-        let req_count = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM request_logs WHERE api_key_id = ? AND created_at >= datetime('now', '-1 minute')",
-        )
-        .bind(&api_key_id)
-        .fetch_one(&gw.db)
-        .await
-        .map_err(|e| error_response(500, &format!("quota db error: {e}")))?;
+    if let Some(limit) = key_row.rpm.filter(|v| *v > 0) {
+        let req_count = access_store
+            .request_count_since(&key_row.id, UsageWindow::Minute)
+            .await
+            .map_err(|e| error_response(500, &format!("quota db error: {e}")))?;
         if req_count >= i64::from(limit) {
             return Err(error_response(429, "api key rpm quota exceeded"));
         }
     }
 
-    if let Some(limit) = rpd.filter(|v| *v > 0) {
-        let req_count = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM request_logs WHERE api_key_id = ? AND created_at >= datetime('now', '-1 day')",
-        )
-        .bind(&api_key_id)
-        .fetch_one(&gw.db)
-        .await
-        .map_err(|e| error_response(500, &format!("quota db error: {e}")))?;
+    if let Some(limit) = key_row.rpd.filter(|v| *v > 0) {
+        let req_count = access_store
+            .request_count_since(&key_row.id, UsageWindow::Day)
+            .await
+            .map_err(|e| error_response(500, &format!("quota db error: {e}")))?;
         if req_count >= i64::from(limit) {
             return Err(error_response(429, "api key rpd quota exceeded"));
         }
     }
 
-    if let Some(limit) = tpm.filter(|v| *v > 0) {
-        let token_count = sqlx::query_scalar::<_, i64>(
-            "SELECT COALESCE(SUM(input_tokens + output_tokens), 0) FROM request_logs WHERE api_key_id = ? AND created_at >= datetime('now', '-1 minute')",
-        )
-        .bind(&api_key_id)
-        .fetch_one(&gw.db)
-        .await
-        .map_err(|e| error_response(500, &format!("quota db error: {e}")))?;
+    if let Some(limit) = key_row.tpm.filter(|v| *v > 0) {
+        let token_count = access_store
+            .token_count_since(&key_row.id, UsageWindow::Minute)
+            .await
+            .map_err(|e| error_response(500, &format!("quota db error: {e}")))?;
         if token_count >= i64::from(limit) {
             return Err(error_response(429, "api key tpm quota exceeded"));
         }
     }
 
-    if let Some(limit) = tpd.filter(|v| *v > 0) {
-        let token_count = sqlx::query_scalar::<_, i64>(
-            "SELECT COALESCE(SUM(input_tokens + output_tokens), 0) FROM request_logs WHERE api_key_id = ? AND created_at >= datetime('now', '-1 day')",
-        )
-        .bind(&api_key_id)
-        .fetch_one(&gw.db)
-        .await
-        .map_err(|e| error_response(500, &format!("quota db error: {e}")))?;
+    if let Some(limit) = key_row.tpd.filter(|v| *v > 0) {
+        let token_count = access_store
+            .token_count_since(&key_row.id, UsageWindow::Day)
+            .await
+            .map_err(|e| error_response(500, &format!("quota db error: {e}")))?;
         if token_count >= i64::from(limit) {
             return Err(error_response(429, "api key tpd quota exceeded"));
         }
     }
 
     Ok(AuthenticatedKey {
-        id: Some(api_key_id),
+        id: Some(key_row.id),
     })
+}
+
+fn is_key_expired(expires_at: &str) -> bool {
+    if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(expires_at) {
+        return parsed.with_timezone(&Utc) <= Utc::now();
+    }
+
+    NaiveDateTime::parse_from_str(expires_at, "%Y-%m-%d %H:%M:%S")
+        .map(|parsed| parsed.and_utc() <= Utc::now())
+        .unwrap_or(false)
 }
 
 fn extract_api_key(headers: &HeaderMap) -> Option<String> {
@@ -641,15 +688,11 @@ fn extract_api_key(headers: &HeaderMap) -> Option<String> {
         .map(ToString::to_string)
 }
 
-async fn get_provider(gw: &Gateway, id: &str) -> anyhow::Result<Provider> {
-    sqlx::query_as::<_, Provider>(
-        "SELECT id, name, vendor, protocol, base_url, preset_key, COALESCE(channel, region) AS channel, models_endpoint, COALESCE(models_source, models_endpoint) AS models_source, capabilities_source, static_models, api_key, last_test_success, last_test_at, is_active, created_at, updated_at \
-         FROM providers WHERE id = ? AND is_active = 1",
-    )
-    .bind(id)
-    .fetch_optional(&gw.db)
-    .await?
-    .ok_or_else(|| anyhow::anyhow!("provider not found or inactive: {id}"))
+async fn get_provider<S: ProxyAccessStore + ?Sized>(access_store: &S, id: &str) -> anyhow::Result<Provider> {
+    access_store
+        .get_active_provider(id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("provider not found or inactive: {id}"))
 }
 
 fn override_model(mut body: Value, model: &str, protocol: Protocol) -> Value {

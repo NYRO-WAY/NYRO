@@ -1,32 +1,18 @@
-use sqlx::SqlitePool;
-
 use crate::db::models::Route;
+use crate::storage::RouteSnapshotStore;
 
 pub struct RouteCache {
     pub routes: Vec<Route>,
 }
 
 impl RouteCache {
-    pub async fn load(pool: &SqlitePool) -> anyhow::Result<Self> {
-        let routes: Vec<Route> = sqlx::query_as::<_, Route>(
-            r#"SELECT
-                id, name, COALESCE(ingress_protocol, 'openai') AS ingress_protocol,
-                COALESCE(NULLIF(virtual_model, ''), match_pattern) AS virtual_model,
-                target_provider, target_model,
-                COALESCE(access_control, 0) AS access_control,
-                is_active,
-                created_at
-            FROM routes
-            WHERE is_active = 1"#,
-        )
-        .fetch_all(pool)
-        .await?;
-
+    pub async fn load(store: &dyn RouteSnapshotStore) -> anyhow::Result<Self> {
+        let routes = store.load_active_snapshot().await?;
         Ok(Self { routes })
     }
 
-    pub async fn reload(&mut self, pool: &SqlitePool) -> anyhow::Result<()> {
-        *self = Self::load(pool).await?;
+    pub async fn reload(&mut self, store: &dyn RouteSnapshotStore) -> anyhow::Result<()> {
+        *self = Self::load(store).await?;
         Ok(())
     }
 }

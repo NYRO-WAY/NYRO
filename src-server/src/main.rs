@@ -84,7 +84,7 @@ async fn main() -> anyhow::Result<()> {
     let (gateway, log_rx) = Gateway::new(config).await?;
 
     let gw_proxy = gateway.clone();
-    let db_for_logs = gateway.db.clone();
+    let storage_for_logs = gateway.storage.clone();
 
     tokio::spawn(async move {
         if let Err(e) = gw_proxy.start_proxy().await {
@@ -93,7 +93,7 @@ async fn main() -> anyhow::Result<()> {
     });
 
     tokio::spawn(async move {
-        logging::run_collector(log_rx, db_for_logs).await;
+        logging::run_collector(log_rx, storage_for_logs).await;
     });
 
     let admin_router = admin_routes::create_router(gateway, admin_key.clone());

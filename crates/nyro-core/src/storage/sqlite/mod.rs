@@ -1,0 +1,884 @@
+use std::sync::Arc;
+
+use anyhow::Context;
+use async_trait::async_trait;
+use sqlx::SqlitePool;
+
+use crate::config::GatewayConfig;
+use crate::db;
+use crate::db::models::{
+    ApiKey, ApiKeyWithBindings, CreateApiKey, CreateProvider, CreateRoute, LogPage, LogQuery,
+    ModelStats, Provider, ProviderStats, RequestLog, Route, StatsHourly, StatsOverview,
+    UpdateApiKey, UpdateProvider, UpdateRoute,
+};
+use crate::logging::LogEntry;
+use crate::storage::traits::{
+    ApiKeyAccessRecord, ApiKeyStore, AuthAccessStore, LogStore, ProviderStore, ProviderTestResult,
+    RouteSnapshotStore, RouteStore, SettingsStore, Storage, StorageBackend, StorageBootstrap,
+    StorageCapabilities, StorageHealth, UsageWindow,
+};
+
+#[derive(Clone)]
+pub struct SqliteStorage {
+    pool: SqlitePool,
+    provider_store: Arc<SqliteProviderStore>,
+    route_store: Arc<SqliteRouteStore>,
+    settings_store: Arc<SqliteSettingsStore>,
+    api_key_store: Arc<SqliteApiKeyStore>,
+    auth_store: Arc<SqliteAuthAccessStore>,
+    log_store: Arc<SqliteLogStore>,
+    bootstrap: Arc<SqliteBootstrap>,
+}
+
+impl SqliteStorage {
+    pub async fn from_config(config: &GatewayConfig) -> anyhow::Result<Self> {
+        let pool = db::init_pool(&config.data_dir).await?;
+        let storage = Self::from_pool(pool);
+        storage.bootstrap().migrate().await?;
+        Ok(storage)
+    }
+
+    pub fn from_pool(pool: SqlitePool) -> Self {
+        let provider_store = Arc::new(SqliteProviderStore { pool: pool.clone() });
+        let route_store = Arc::new(SqliteRouteStore { pool: pool.clone() });
+        let settings_store = Arc::new(SqliteSettingsStore { pool: pool.clone() });
+        let api_key_store = Arc::new(SqliteApiKeyStore { pool: pool.clone() });
+        let auth_store = Arc::new(SqliteAuthAccessStore { pool: pool.clone() });
+        let log_store = Arc::new(SqliteLogStore { pool: pool.clone() });
+        let bootstrap = Arc::new(SqliteBootstrap { pool: pool.clone() });
+        Self {
+            pool,
+            provider_store,
+            route_store,
+            settings_store,
+            api_key_store,
+            auth_store,
+            log_store,
+            bootstrap,
+        }
+    }
+
+    pub fn pool(&self) -> &SqlitePool {
+        &self.pool
+    }
+}
+
+impl Storage for SqliteStorage {
+    fn providers(&self) -> &dyn ProviderStore {
+        self.provider_store.as_ref()
+    }
+
+    fn routes(&self) -> &dyn RouteStore {
+        self.route_store.as_ref()
+    }
+
+    fn snapshots(&self) -> &dyn RouteSnapshotStore {
+        self.route_store.as_ref()
+    }
+
+    fn settings(&self) -> &dyn SettingsStore {
+        self.settings_store.as_ref()
+    }
+
+    fn api_keys(&self) -> Option<&dyn ApiKeyStore> {
+        Some(self.api_key_store.as_ref())
+    }
+
+    fn auth(&self) -> Option<&dyn AuthAccessStore> {
+        Some(self.auth_store.as_ref())
+    }
+
+    fn logs(&self) -> &dyn LogStore {
+        self.log_store.as_ref()
+    }
+
+    fn bootstrap(&self) -> &dyn StorageBootstrap {
+        self.bootstrap.as_ref()
+    }
+}
+
+#[derive(Clone)]
+struct SqliteProviderStore {
+    pool: SqlitePool,
+}
+
+#[async_trait]
+impl ProviderStore for SqliteProviderStore {
+    async fn list(&self) -> anyhow::Result<Vec<Provider>> {
+        Ok(sqlx::query_as::<_, Provider>(
+            "SELECT id, name, vendor, protocol, base_url, preset_key, COALESCE(channel, region) AS channel, models_endpoint, COALESCE(models_source, models_endpoint) AS models_source, capabilities_source, static_models, api_key, last_test_success, last_test_at, is_active, created_at, updated_at FROM providers ORDER BY created_at DESC",
+        )
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
+    async fn get(&self, id: &str) -> anyhow::Result<Option<Provider>> {
+        Ok(sqlx::query_as::<_, Provider>(
+            "SELECT id, name, vendor, protocol, base_url, preset_key, COALESCE(channel, region) AS channel, models_endpoint, COALESCE(models_source, models_endpoint) AS models_source, capabilities_source, static_models, api_key, last_test_success, last_test_at, is_active, created_at, updated_at FROM providers WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?)
+    }
+
+    async fn create(&self, input: CreateProvider) -> anyhow::Result<Provider> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let vendor = normalize_provider_vendor(input.vendor.as_deref());
+        let models_source = input.effective_models_source().map(ToString::to_string);
+        sqlx::query(
+            "INSERT INTO providers (id, name, vendor, protocol, base_url, preset_key, channel, models_endpoint, models_source, capabilities_source, static_models, api_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&id)
+        .bind(&input.name)
+        .bind(&vendor)
+        .bind(&input.protocol)
+        .bind(&input.base_url)
+        .bind(&input.preset_key)
+        .bind(&input.channel)
+        .bind(&models_source)
+        .bind(&models_source)
+        .bind(&input.capabilities_source)
+        .bind(&input.static_models)
+        .bind(&input.api_key)
+        .execute(&self.pool)
+        .await?;
+        self.get(&id).await?.context("provider missing after create")
+    }
+
+    async fn update(&self, id: &str, input: UpdateProvider) -> anyhow::Result<Provider> {
+        let current = self.get(id).await?.context("provider not found for update")?;
+        let models_source_input = input
+            .effective_models_source()
+            .map(ToString::to_string);
+        let name = input.name.unwrap_or(current.name);
+        let vendor = if input.vendor.is_some() {
+            normalize_provider_vendor(input.vendor.as_deref())
+        } else {
+            normalize_provider_vendor(current.vendor.as_deref())
+        };
+        let models_source = models_source_input
+            .or_else(|| current.models_source.clone().or(current.models_endpoint.clone()));
+        let protocol = input.protocol.unwrap_or(current.protocol);
+        let base_url = input.base_url.unwrap_or(current.base_url);
+        let preset_key = input.preset_key.or(current.preset_key);
+        let channel = input.channel.or(current.channel);
+        let capabilities_source = input.capabilities_source.or(current.capabilities_source);
+        let static_models = input.static_models.or(current.static_models);
+        let api_key = input.api_key.unwrap_or(current.api_key);
+        let is_active = input.is_active.unwrap_or(current.is_active);
+
+        sqlx::query(
+            "UPDATE providers SET name=?, vendor=?, protocol=?, base_url=?, preset_key=?, channel=?, models_endpoint=?, models_source=?, capabilities_source=?, static_models=?, api_key=?, is_active=?, updated_at=datetime('now') WHERE id=?",
+        )
+        .bind(name)
+        .bind(vendor)
+        .bind(protocol)
+        .bind(base_url)
+        .bind(preset_key)
+        .bind(channel)
+        .bind(&models_source)
+        .bind(&models_source)
+        .bind(capabilities_source)
+        .bind(static_models)
+        .bind(api_key)
+        .bind(is_active)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        self.get(id).await?.context("provider missing after update")
+    }
+
+    async fn delete(&self, id: &str) -> anyhow::Result<()> {
+        sqlx::query("DELETE FROM providers WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    async fn exists_by_name(&self, name: &str, exclude_id: Option<&str>) -> anyhow::Result<bool> {
+        let sql = if exclude_id.is_some() {
+            "SELECT id FROM providers WHERE lower(trim(name)) = lower(trim(?)) AND id != ? LIMIT 1"
+        } else {
+            "SELECT id FROM providers WHERE lower(trim(name)) = lower(trim(?)) LIMIT 1"
+        };
+        let row = if let Some(exclude_id) = exclude_id {
+            sqlx::query_scalar::<_, String>(sql)
+                .bind(name)
+                .bind(exclude_id)
+                .fetch_optional(&self.pool)
+                .await?
+        } else {
+            sqlx::query_scalar::<_, String>(sql)
+                .bind(name)
+                .fetch_optional(&self.pool)
+                .await?
+        };
+        Ok(row.is_some())
+    }
+
+    async fn record_test_result(&self, provider_id: &str, result: ProviderTestResult) -> anyhow::Result<()> {
+        sqlx::query(
+            "UPDATE providers SET last_test_success = ?, last_test_at = datetime('now') WHERE id = ?",
+        )
+        .bind(result.success)
+        .bind(provider_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+}
+
+fn normalize_provider_vendor(vendor: Option<&str>) -> Option<String> {
+    vendor
+        .map(str::trim)
+        .filter(|v| !v.is_empty() && *v != "custom")
+        .map(|v| v.to_lowercase())
+}
+
+#[derive(Clone)]
+struct SqliteRouteStore {
+    pool: SqlitePool,
+}
+
+#[async_trait]
+impl RouteStore for SqliteRouteStore {
+    async fn list(&self) -> anyhow::Result<Vec<Route>> {
+        Ok(sqlx::query_as::<_, Route>(
+            "SELECT id, name, COALESCE(ingress_protocol, 'openai') AS ingress_protocol, COALESCE(NULLIF(virtual_model, ''), match_pattern) AS virtual_model, target_provider, target_model, COALESCE(access_control, 0) AS access_control, is_active, created_at FROM routes ORDER BY created_at DESC",
+        )
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
+    async fn get(&self, id: &str) -> anyhow::Result<Option<Route>> {
+        Ok(sqlx::query_as::<_, Route>(
+            "SELECT id, name, COALESCE(ingress_protocol, 'openai') AS ingress_protocol, COALESCE(NULLIF(virtual_model, ''), match_pattern) AS virtual_model, target_provider, target_model, COALESCE(access_control, 0) AS access_control, is_active, created_at FROM routes WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?)
+    }
+
+    async fn create(&self, input: CreateRoute) -> anyhow::Result<Route> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let ingress_protocol = input.ingress_protocol.trim().to_lowercase();
+        let virtual_model = input.virtual_model.trim().to_string();
+        sqlx::query(
+            "INSERT INTO routes (id, name, ingress_protocol, virtual_model, match_pattern, target_provider, target_model, access_control) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&id)
+        .bind(input.name.trim())
+        .bind(ingress_protocol)
+        .bind(&virtual_model)
+        .bind(&virtual_model)
+        .bind(input.target_provider.trim())
+        .bind(input.target_model.trim())
+        .bind(input.access_control.unwrap_or(false))
+        .execute(&self.pool)
+        .await?;
+        self.get(&id).await?.context("route missing after create")
+    }
+
+    async fn update(&self, id: &str, input: UpdateRoute) -> anyhow::Result<Route> {
+        let current = self.get(id).await?.context("route not found for update")?;
+        let name = input.name.unwrap_or(current.name);
+        let ingress_protocol = input
+            .ingress_protocol
+            .unwrap_or(current.ingress_protocol)
+            .trim()
+            .to_lowercase();
+        let virtual_model = input
+            .virtual_model
+            .unwrap_or(current.virtual_model)
+            .trim()
+            .to_string();
+        let target_provider = input.target_provider.unwrap_or(current.target_provider);
+        let target_model = input.target_model.unwrap_or(current.target_model);
+        let access_control = input.access_control.unwrap_or(current.access_control);
+        let is_active = input.is_active.unwrap_or(current.is_active);
+
+        sqlx::query(
+            "UPDATE routes SET name=?, ingress_protocol=?, virtual_model=?, match_pattern=?, target_provider=?, target_model=?, access_control=?, is_active=? WHERE id=?",
+        )
+        .bind(name.trim())
+        .bind(ingress_protocol)
+        .bind(&virtual_model)
+        .bind(&virtual_model)
+        .bind(target_provider.trim())
+        .bind(target_model.trim())
+        .bind(access_control)
+        .bind(is_active)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+        self.get(id).await?.context("route missing after update")
+    }
+
+    async fn delete(&self, id: &str) -> anyhow::Result<()> {
+        sqlx::query("DELETE FROM routes WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    async fn exists_by_name(&self, name: &str, exclude_id: Option<&str>) -> anyhow::Result<bool> {
+        let sql = if exclude_id.is_some() {
+            "SELECT id FROM routes WHERE lower(trim(name)) = lower(trim(?)) AND id != ? LIMIT 1"
+        } else {
+            "SELECT id FROM routes WHERE lower(trim(name)) = lower(trim(?)) LIMIT 1"
+        };
+        let row = if let Some(exclude_id) = exclude_id {
+            sqlx::query_scalar::<_, String>(sql)
+                .bind(name)
+                .bind(exclude_id)
+                .fetch_optional(&self.pool)
+                .await?
+        } else {
+            sqlx::query_scalar::<_, String>(sql)
+                .bind(name)
+                .fetch_optional(&self.pool)
+                .await?
+        };
+        Ok(row.is_some())
+    }
+
+    async fn exists_by_protocol_model(
+        &self,
+        ingress_protocol: &str,
+        virtual_model: &str,
+        exclude_id: Option<&str>,
+    ) -> anyhow::Result<bool> {
+        let sql = if exclude_id.is_some() {
+            "SELECT id FROM routes WHERE COALESCE(ingress_protocol, 'openai') = ? AND COALESCE(NULLIF(virtual_model, ''), match_pattern) = ? AND id != ? LIMIT 1"
+        } else {
+            "SELECT id FROM routes WHERE COALESCE(ingress_protocol, 'openai') = ? AND COALESCE(NULLIF(virtual_model, ''), match_pattern) = ? LIMIT 1"
+        };
+        let normalized_protocol = ingress_protocol.trim().to_lowercase();
+        let normalized_model = virtual_model.trim();
+        let row = if let Some(exclude_id) = exclude_id {
+            sqlx::query_scalar::<_, String>(sql)
+                .bind(&normalized_protocol)
+                .bind(normalized_model)
+                .bind(exclude_id)
+                .fetch_optional(&self.pool)
+                .await?
+        } else {
+            sqlx::query_scalar::<_, String>(sql)
+                .bind(&normalized_protocol)
+                .bind(normalized_model)
+                .fetch_optional(&self.pool)
+                .await?
+        };
+        Ok(row.is_some())
+    }
+
+    async fn list_active(&self) -> anyhow::Result<Vec<Route>> {
+        self.load_active_snapshot().await
+    }
+}
+
+#[async_trait]
+impl RouteSnapshotStore for SqliteRouteStore {
+    async fn load_active_snapshot(&self) -> anyhow::Result<Vec<Route>> {
+        Ok(sqlx::query_as::<_, Route>(
+            r#"SELECT
+                id, name, COALESCE(ingress_protocol, 'openai') AS ingress_protocol,
+                COALESCE(NULLIF(virtual_model, ''), match_pattern) AS virtual_model,
+                target_provider, target_model,
+                COALESCE(access_control, 0) AS access_control,
+                is_active,
+                created_at
+            FROM routes
+            WHERE is_active = 1"#,
+        )
+        .fetch_all(&self.pool)
+        .await?)
+    }
+}
+
+#[derive(Clone)]
+struct SqliteSettingsStore {
+    pool: SqlitePool,
+}
+
+#[async_trait]
+impl SettingsStore for SqliteSettingsStore {
+    async fn get(&self, key: &str) -> anyhow::Result<Option<String>> {
+        let row: Option<(String,)> = sqlx::query_as("SELECT value FROM settings WHERE key = ?")
+            .bind(key)
+            .fetch_optional(&self.pool)
+            .await?;
+        Ok(row.map(|r| r.0))
+    }
+
+    async fn set(&self, key: &str, value: &str) -> anyhow::Result<()> {
+        sqlx::query(
+            "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now')) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+        )
+        .bind(key)
+        .bind(value)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn list_all(&self) -> anyhow::Result<Vec<(String, String)>> {
+        Ok(sqlx::query_as::<_, (String, String)>("SELECT key, value FROM settings")
+            .fetch_all(&self.pool)
+            .await?)
+    }
+}
+
+#[derive(Clone)]
+struct SqliteApiKeyStore {
+    pool: SqlitePool,
+}
+
+#[async_trait]
+impl ApiKeyStore for SqliteApiKeyStore {
+    async fn list(&self) -> anyhow::Result<Vec<ApiKeyWithBindings>> {
+        let rows = sqlx::query_as::<_, ApiKey>(
+            "SELECT id, key, name, rpm, rpd, tpm, tpd, status, expires_at, created_at, updated_at FROM api_keys ORDER BY created_at DESC",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        let mut items = Vec::with_capacity(rows.len());
+        for row in rows {
+            let route_ids = list_api_key_route_ids(&self.pool, &row.id).await?;
+            items.push(ApiKeyWithBindings {
+                id: row.id,
+                key: row.key,
+                name: row.name,
+                rpm: row.rpm,
+                rpd: row.rpd,
+                tpm: row.tpm,
+                tpd: row.tpd,
+                status: row.status,
+                expires_at: row.expires_at,
+                created_at: row.created_at,
+                updated_at: row.updated_at,
+                route_ids,
+            });
+        }
+        Ok(items)
+    }
+
+    async fn get(&self, id: &str) -> anyhow::Result<Option<ApiKeyWithBindings>> {
+        let row = sqlx::query_as::<_, ApiKey>(
+            "SELECT id, key, name, rpm, rpd, tpm, tpd, status, expires_at, created_at, updated_at FROM api_keys WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let route_ids = list_api_key_route_ids(&self.pool, id).await?;
+        Ok(Some(ApiKeyWithBindings {
+            id: row.id,
+            key: row.key,
+            name: row.name,
+            rpm: row.rpm,
+            rpd: row.rpd,
+            tpm: row.tpm,
+            tpd: row.tpd,
+            status: row.status,
+            expires_at: row.expires_at,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+            route_ids,
+        }))
+    }
+
+    async fn create(&self, input: CreateApiKey) -> anyhow::Result<ApiKeyWithBindings> {
+        let id = uuid::Uuid::new_v4().to_string();
+        let key = format!("sk-{}", uuid::Uuid::new_v4().simple());
+        sqlx::query(
+            "INSERT INTO api_keys (id, key, name, rpm, rpd, tpm, tpd, status, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?)",
+        )
+        .bind(&id)
+        .bind(&key)
+        .bind(input.name.trim())
+        .bind(input.rpm)
+        .bind(input.rpd)
+        .bind(input.tpm)
+        .bind(input.tpd)
+        .bind(input.expires_at.as_ref().map(|v| v.trim()).filter(|v| !v.is_empty()))
+        .execute(&self.pool)
+        .await?;
+
+        replace_api_key_routes(&self.pool, &id, &input.route_ids).await?;
+        self.get(&id)
+            .await?
+            .context("api key missing after create")
+    }
+
+    async fn update(&self, id: &str, input: UpdateApiKey) -> anyhow::Result<ApiKeyWithBindings> {
+        let current = sqlx::query_as::<_, ApiKey>(
+            "SELECT id, key, name, rpm, rpd, tpm, tpd, status, expires_at, created_at, updated_at FROM api_keys WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?
+        .context("api key not found for update")?;
+
+        let name = input.name.unwrap_or(current.name);
+        let rpm = input.rpm.or(current.rpm);
+        let rpd = input.rpd.or(current.rpd);
+        let tpm = input.tpm.or(current.tpm);
+        let tpd = input.tpd.or(current.tpd);
+        let status = input.status.unwrap_or(current.status);
+        let expires_at = input.expires_at.or(current.expires_at);
+
+        sqlx::query(
+            "UPDATE api_keys SET name=?, rpm=?, rpd=?, tpm=?, tpd=?, status=?, expires_at=?, updated_at=datetime('now') WHERE id=?",
+        )
+        .bind(name.trim())
+        .bind(rpm)
+        .bind(rpd)
+        .bind(tpm)
+        .bind(tpd)
+        .bind(status)
+        .bind(expires_at.as_ref().map(|v| v.trim()).filter(|v| !v.is_empty()))
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+
+        if let Some(route_ids) = input.route_ids {
+            replace_api_key_routes(&self.pool, id, &route_ids).await?;
+        }
+
+        self.get(id)
+            .await?
+            .context("api key missing after update")
+    }
+
+    async fn delete(&self, id: &str) -> anyhow::Result<()> {
+        sqlx::query("DELETE FROM api_keys WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    async fn exists_by_name(&self, name: &str, exclude_id: Option<&str>) -> anyhow::Result<bool> {
+        let sql = if exclude_id.is_some() {
+            "SELECT id FROM api_keys WHERE lower(trim(name)) = lower(trim(?)) AND id != ? LIMIT 1"
+        } else {
+            "SELECT id FROM api_keys WHERE lower(trim(name)) = lower(trim(?)) LIMIT 1"
+        };
+
+        let row = if let Some(exclude_id) = exclude_id {
+            sqlx::query_scalar::<_, String>(sql)
+                .bind(name)
+                .bind(exclude_id)
+                .fetch_optional(&self.pool)
+                .await?
+        } else {
+            sqlx::query_scalar::<_, String>(sql)
+                .bind(name)
+                .fetch_optional(&self.pool)
+                .await?
+        };
+        Ok(row.is_some())
+    }
+}
+
+#[derive(Clone)]
+struct SqliteAuthAccessStore {
+    pool: SqlitePool,
+}
+
+#[async_trait]
+impl AuthAccessStore for SqliteAuthAccessStore {
+    async fn find_api_key(&self, raw_key: &str) -> anyhow::Result<Option<ApiKeyAccessRecord>> {
+        let row = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                Option<String>,
+                Option<i32>,
+                Option<i32>,
+                Option<i32>,
+                Option<i32>,
+            ),
+        >("SELECT id, status, expires_at, rpm, rpd, tpm, tpd FROM api_keys WHERE key = ?")
+        .bind(raw_key)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(row.map(
+            |(id, status, expires_at, rpm, rpd, tpm, tpd)| ApiKeyAccessRecord {
+                id,
+                status,
+                expires_at,
+                rpm,
+                rpd,
+                tpm,
+                tpd,
+            },
+        ))
+    }
+
+    async fn route_binding_exists(&self, api_key_id: &str, route_id: &str) -> anyhow::Result<bool> {
+        let count = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM api_key_routes WHERE api_key_id = ? AND route_id = ?",
+        )
+        .bind(api_key_id)
+        .bind(route_id)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(count > 0)
+    }
+
+    async fn request_count_since(&self, api_key_id: &str, window: UsageWindow) -> anyhow::Result<i64> {
+        let expr = match window {
+            UsageWindow::Minute => "-1 minute",
+            UsageWindow::Day => "-1 day",
+        };
+        Ok(sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM request_logs WHERE api_key_id = ? AND created_at >= datetime('now', ?)",
+        )
+        .bind(api_key_id)
+        .bind(expr)
+        .fetch_one(&self.pool)
+        .await?)
+    }
+
+    async fn token_count_since(&self, api_key_id: &str, window: UsageWindow) -> anyhow::Result<i64> {
+        let expr = match window {
+            UsageWindow::Minute => "-1 minute",
+            UsageWindow::Day => "-1 day",
+        };
+        Ok(sqlx::query_scalar::<_, i64>(
+            "SELECT COALESCE(SUM(input_tokens + output_tokens), 0) FROM request_logs WHERE api_key_id = ? AND created_at >= datetime('now', ?)",
+        )
+        .bind(api_key_id)
+        .bind(expr)
+        .fetch_one(&self.pool)
+        .await?)
+    }
+}
+
+async fn list_api_key_route_ids(pool: &SqlitePool, api_key_id: &str) -> anyhow::Result<Vec<String>> {
+    Ok(sqlx::query_scalar::<_, String>(
+        "SELECT route_id FROM api_key_routes WHERE api_key_id = ? ORDER BY route_id ASC",
+    )
+    .bind(api_key_id)
+    .fetch_all(pool)
+    .await?)
+}
+
+async fn replace_api_key_routes(
+    pool: &SqlitePool,
+    api_key_id: &str,
+    route_ids: &[String],
+) -> anyhow::Result<()> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("DELETE FROM api_key_routes WHERE api_key_id = ?")
+        .bind(api_key_id)
+        .execute(&mut *tx)
+        .await?;
+
+    for route_id in route_ids.iter().filter(|id| !id.trim().is_empty()) {
+        sqlx::query("INSERT OR IGNORE INTO api_key_routes (api_key_id, route_id) VALUES (?, ?)")
+            .bind(api_key_id)
+            .bind(route_id.trim())
+            .execute(&mut *tx)
+            .await?;
+    }
+
+    tx.commit().await?;
+    Ok(())
+}
+
+#[derive(Clone)]
+struct SqliteLogStore {
+    pool: SqlitePool,
+}
+
+#[async_trait]
+impl LogStore for SqliteLogStore {
+    async fn append_batch(&self, entries: Vec<LogEntry>) -> anyhow::Result<()> {
+        for entry in entries {
+            let id = uuid::Uuid::new_v4().to_string();
+            sqlx::query(
+                r#"INSERT INTO request_logs
+                    (id, api_key_id, ingress_protocol, egress_protocol, request_model, actual_model,
+                     provider_name, status_code, duration_ms, input_tokens, output_tokens,
+                     is_stream, is_tool_call, error_message, request_preview, response_preview)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+            )
+            .bind(&id)
+            .bind(&entry.api_key_id)
+            .bind(&entry.ingress_protocol)
+            .bind(&entry.egress_protocol)
+            .bind(&entry.request_model)
+            .bind(&entry.actual_model)
+            .bind(&entry.provider_name)
+            .bind(entry.status_code)
+            .bind(entry.duration_ms)
+            .bind(entry.usage.input_tokens as i32)
+            .bind(entry.usage.output_tokens as i32)
+            .bind(entry.is_stream as i32)
+            .bind(entry.is_tool_call as i32)
+            .bind(&entry.error_message)
+            .bind(&entry.request_preview)
+            .bind(&entry.response_preview)
+            .execute(&self.pool)
+            .await?;
+        }
+        Ok(())
+    }
+
+    async fn query(&self, query: LogQuery) -> anyhow::Result<LogPage> {
+        let mut count_sql = String::from("SELECT COUNT(*) AS total FROM request_logs WHERE 1=1");
+        let mut data_sql = String::from(
+            "SELECT id, created_at, api_key_id, ingress_protocol, egress_protocol, request_model, actual_model, provider_name, status_code, duration_ms, input_tokens, output_tokens, is_stream, is_tool_call, error_message, request_preview, response_preview FROM request_logs WHERE 1=1",
+        );
+        let mut bind_values: Vec<String> = Vec::new();
+        if let Some(provider) = query.provider.filter(|v| !v.is_empty()) {
+            count_sql.push_str(" AND provider_name = ?");
+            data_sql.push_str(" AND provider_name = ?");
+            bind_values.push(provider);
+        }
+        if let Some(model) = query.model.filter(|v| !v.is_empty()) {
+            count_sql.push_str(" AND actual_model = ?");
+            data_sql.push_str(" AND actual_model = ?");
+            bind_values.push(model);
+        }
+        if let Some(status_min) = query.status_min {
+            count_sql.push_str(" AND status_code >= ?");
+            data_sql.push_str(" AND status_code >= ?");
+            bind_values.push(status_min.to_string());
+        }
+        if let Some(status_max) = query.status_max {
+            count_sql.push_str(" AND status_code <= ?");
+            data_sql.push_str(" AND status_code <= ?");
+            bind_values.push(status_max.to_string());
+        }
+
+        data_sql.push_str(" ORDER BY created_at DESC LIMIT ? OFFSET ?");
+        let mut count_query = sqlx::query_scalar::<_, i64>(&count_sql);
+        let mut data_query = sqlx::query_as::<_, RequestLog>(&data_sql);
+        for value in &bind_values {
+            count_query = count_query.bind(value);
+            data_query = data_query.bind(value);
+        }
+        let total = count_query.fetch_one(&self.pool).await?;
+        let items = data_query
+            .bind(query.limit.unwrap_or(50))
+            .bind(query.offset.unwrap_or(0))
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(LogPage { items, total })
+    }
+
+    async fn cleanup_before(&self, cutoff_expression: &str) -> anyhow::Result<u64> {
+        let result = sqlx::query("DELETE FROM request_logs WHERE created_at < datetime('now', ?)")
+            .bind(cutoff_expression)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
+    }
+
+    async fn stats_overview(&self, hours: Option<i64>) -> anyhow::Result<StatsOverview> {
+        if let Some(hours) = hours {
+            Ok(sqlx::query_as::<_, StatsOverview>(
+                "SELECT COUNT(*) AS total_requests, COALESCE(SUM(input_tokens), 0) AS total_input_tokens, COALESCE(SUM(output_tokens), 0) AS total_output_tokens, COALESCE(AVG(duration_ms), 0.0) AS avg_duration_ms, COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0) AS error_count FROM request_logs WHERE created_at >= datetime('now', ?)",
+            )
+            .bind(format!("-{hours} hours"))
+            .fetch_one(&self.pool)
+            .await?)
+        } else {
+            Ok(sqlx::query_as::<_, StatsOverview>(
+                "SELECT COUNT(*) AS total_requests, COALESCE(SUM(input_tokens), 0) AS total_input_tokens, COALESCE(SUM(output_tokens), 0) AS total_output_tokens, COALESCE(AVG(duration_ms), 0.0) AS avg_duration_ms, COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0) AS error_count FROM request_logs",
+            )
+            .fetch_one(&self.pool)
+            .await?)
+        }
+    }
+
+    async fn stats_hourly(&self, hours: i64) -> anyhow::Result<Vec<StatsHourly>> {
+        Ok(sqlx::query_as::<_, StatsHourly>(
+            "SELECT strftime('%Y-%m-%d %H:00:00', created_at) AS hour, COUNT(*) AS request_count, COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0) AS error_count, COALESCE(SUM(input_tokens), 0) AS total_input_tokens, COALESCE(SUM(output_tokens), 0) AS total_output_tokens, COALESCE(AVG(duration_ms), 0.0) AS avg_duration_ms FROM request_logs WHERE created_at >= datetime('now', ?) GROUP BY hour ORDER BY hour ASC",
+        )
+        .bind(format!("-{hours} hours"))
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
+    async fn stats_by_model(&self, hours: Option<i64>) -> anyhow::Result<Vec<ModelStats>> {
+        if let Some(hours) = hours {
+            Ok(sqlx::query_as::<_, ModelStats>(
+                "SELECT actual_model AS model, COUNT(*) AS request_count, COALESCE(SUM(input_tokens), 0) AS total_input_tokens, COALESCE(SUM(output_tokens), 0) AS total_output_tokens, COALESCE(AVG(duration_ms), 0.0) AS avg_duration_ms FROM request_logs WHERE created_at >= datetime('now', ?) GROUP BY actual_model ORDER BY request_count DESC",
+            )
+            .bind(format!("-{hours} hours"))
+            .fetch_all(&self.pool)
+            .await?)
+        } else {
+            Ok(sqlx::query_as::<_, ModelStats>(
+                "SELECT actual_model AS model, COUNT(*) AS request_count, COALESCE(SUM(input_tokens), 0) AS total_input_tokens, COALESCE(SUM(output_tokens), 0) AS total_output_tokens, COALESCE(AVG(duration_ms), 0.0) AS avg_duration_ms FROM request_logs GROUP BY actual_model ORDER BY request_count DESC",
+            )
+            .fetch_all(&self.pool)
+            .await?)
+        }
+    }
+
+    async fn stats_by_provider(&self, hours: Option<i64>) -> anyhow::Result<Vec<ProviderStats>> {
+        if let Some(hours) = hours {
+            Ok(sqlx::query_as::<_, ProviderStats>(
+                "SELECT provider_name AS provider, COUNT(*) AS request_count, COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0) AS error_count, COALESCE(AVG(duration_ms), 0.0) AS avg_duration_ms FROM request_logs WHERE created_at >= datetime('now', ?) GROUP BY provider_name ORDER BY request_count DESC",
+            )
+            .bind(format!("-{hours} hours"))
+            .fetch_all(&self.pool)
+            .await?)
+        } else {
+            Ok(sqlx::query_as::<_, ProviderStats>(
+                "SELECT provider_name AS provider, COUNT(*) AS request_count, COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0) AS error_count, COALESCE(AVG(duration_ms), 0.0) AS avg_duration_ms FROM request_logs GROUP BY provider_name ORDER BY request_count DESC",
+            )
+            .fetch_all(&self.pool)
+            .await?)
+        }
+    }
+}
+
+#[derive(Clone)]
+struct SqliteBootstrap {
+    pool: SqlitePool,
+}
+
+#[async_trait]
+impl StorageBootstrap for SqliteBootstrap {
+    async fn init(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn migrate(&self) -> anyhow::Result<()> {
+        db::migrate(&self.pool).await
+    }
+
+    async fn health(&self) -> anyhow::Result<StorageHealth> {
+        sqlx::query("SELECT 1").execute(&self.pool).await?;
+        Ok(StorageHealth {
+            backend: StorageBackend::Sqlite,
+            can_connect: true,
+            schema_compatible: true,
+            writable: true,
+        })
+    }
+
+    fn capabilities(&self) -> StorageCapabilities {
+        StorageCapabilities {
+            transactions: true,
+            batch_writes: true,
+            aggregations: true,
+            managed_migrations: true,
+        }
+    }
+}

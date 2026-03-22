@@ -39,7 +39,7 @@ pub fn run() {
 
             let proxy_port = gateway.config.proxy_port;
             let gw_proxy = gateway.clone();
-            let db_for_logs = gateway.db.clone();
+            let storage_for_logs = gateway.storage.clone();
 
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = gw_proxy.start_proxy().await {
@@ -48,7 +48,7 @@ pub fn run() {
             });
 
             tauri::async_runtime::spawn(async move {
-                logging::run_collector(log_rx, db_for_logs).await;
+                logging::run_collector(log_rx, storage_for_logs).await;
             });
 
             app.manage(gateway);
