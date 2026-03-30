@@ -264,7 +264,7 @@ Go to **Connect**, select a route, and click **Sync** next to Claude Code, Codex
 ## License
 
 ```
-Copyright 2026 Jinchao Shuai
+Copyright 2026 The Nyro Authors
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
