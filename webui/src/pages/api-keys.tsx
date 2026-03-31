@@ -27,7 +27,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-const PAGE_SIZE = 6;
+const PAGE_SIZE = 7;
 
 type ExpirePreset = "never" | "1d" | "7d" | "30d" | "90d" | "180d" | "1y";
 
@@ -45,9 +45,14 @@ function FieldLabel({ children }: { children: string }) {
   return <label className="ml-1 text-xs leading-none font-normal text-slate-900">{children}</label>;
 }
 
-function maskApiKey(key: string) {
-  if (key.length <= 12) return key;
-  return `${key.slice(0, 10)}••••••`;
+function shortApiKeyTag(key: string) {
+  const trimmed = key.trim();
+  if (!trimmed) return "sk-";
+  return `${trimmed.slice(0, 8)}…`;
+}
+
+function quotaText(value: number | null | undefined) {
+  return value && value > 0 ? String(value) : "∞";
 }
 
 function formatExpiresText(value: string | null | undefined, isZh: boolean) {
@@ -184,7 +189,6 @@ export default function ApiKeysPage() {
     if (page > totalPages - 1) setPage(0);
   }, [page, totalPages]);
 
-  const routeMap = useMemo(() => new Map(routes.map((route) => [route.id, route])), [routes]);
   const routeOptions = useMemo(
     () =>
       routes.map((route) => ({
@@ -217,7 +221,7 @@ export default function ApiKeysPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">{isZh ? "API Key" : "API Keys"}</h1>
@@ -393,7 +397,7 @@ export default function ApiKeysPage() {
           <p className="mt-3 text-sm text-slate-500">{isZh ? "还没有 API Key" : "No API keys yet"}</p>
         </div>
       ) : (
-        <div className="grid gap-4">
+        <div className="grid gap-3">
           {pagedApiKeys.map((item) => {
             const isEditing = editingId === item.id && editForm;
             if (isEditing && editForm) {
@@ -539,10 +543,10 @@ export default function ApiKeysPage() {
                           id: editForm.id,
                           input: {
                             name: editForm.name.trim(),
-                            rpm: editForm.rpm ? Number.parseInt(editForm.rpm, 10) : undefined,
-                            rpd: editForm.rpd ? Number.parseInt(editForm.rpd, 10) : undefined,
-                            tpm: editForm.tpm ? Number.parseInt(editForm.tpm, 10) : undefined,
-                            tpd: editForm.tpd ? Number.parseInt(editForm.tpd, 10) : undefined,
+                            rpm: editForm.rpm ? Number.parseInt(editForm.rpm, 10) : 0,
+                            rpd: editForm.rpd ? Number.parseInt(editForm.rpd, 10) : 0,
+                            tpm: editForm.tpm ? Number.parseInt(editForm.tpm, 10) : 0,
+                            tpd: editForm.tpd ? Number.parseInt(editForm.tpd, 10) : 0,
                             route_ids: editForm.route_ids,
                           },
                         })
@@ -567,27 +571,41 @@ export default function ApiKeysPage() {
             }
 
             return (
-              <div key={item.id} className="glass flex items-center justify-between rounded-2xl p-5">
-                <div className="space-y-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-slate-900">{item.name}</span>
-                    <Badge variant={item.status === "active" ? "success" : "danger"}>
-                      {item.status}
-                    </Badge>
+              <div key={item.id} className="glass flex items-center justify-between rounded-2xl p-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100">
+                    <span className="inline-flex h-[30px] w-[30px] items-center justify-center rounded-xl border border-slate-300/70 bg-transparent">
+                      <KeyRound className="h-3.5 w-3.5 text-slate-500" />
+                    </span>
                   </div>
-                  <p className="text-xs text-slate-500">
-                    {maskApiKey(item.key)}
-                    {" · "}
-                    RPM {item.rpm ?? "∞"} / RPD {item.rpd ?? "∞"} / TPM {item.tpm ?? "∞"} / TPD {item.tpd ?? "∞"}
-                  </p>
-                  <p className="text-xs text-slate-500">
-                    {isZh ? "绑定路由" : "Bound routes"}:{" "}
-                    {item.route_ids.length
-                      ? item.route_ids
-                          .map((id) => routeMap.get(id)?.name ?? id.slice(0, 8))
-                          .join(", ")
-                      : (isZh ? "未绑定（默认拒绝）" : "Unbound (deny by default)")}
-                  </p>
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="inline-flex h-5 items-center font-semibold text-slate-900">{item.name}</span>
+                      <code className="inline-flex h-5 items-center rounded bg-slate-100 px-2 py-0.5 text-[10px] leading-none font-medium text-slate-600">
+                        {shortApiKeyTag(item.key)}
+                      </code>
+                      <Badge variant={item.status === "active" ? "success" : "danger"}>
+                        {item.status}
+                      </Badge>
+                      {item.route_ids.length > 0 && (
+                        <Badge variant="warning" className="bg-cyan-50 text-cyan-700">
+                          {isZh ? `共 ${item.route_ids.length} 条路由` : `${item.route_ids.length} Routes`}
+                        </Badge>
+                      )}
+                      <Badge variant="warning" className="bg-indigo-50 text-indigo-700">
+                        RPM {quotaText(item.rpm)}
+                      </Badge>
+                      <Badge variant="warning" className="bg-rose-50 text-rose-700">
+                        RPD {quotaText(item.rpd)}
+                      </Badge>
+                      <Badge variant="warning" className="bg-teal-50 text-teal-700">
+                        TPM {quotaText(item.tpm)}
+                      </Badge>
+                      <Badge variant="warning" className="bg-amber-50 text-amber-700">
+                        TPD {quotaText(item.tpd)}
+                      </Badge>
+                    </div>
+                  </div>
                 </div>
                 <div className="flex items-center gap-0.5">
                   <button

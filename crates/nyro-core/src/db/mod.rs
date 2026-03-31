@@ -37,6 +37,9 @@ pub async fn migrate(pool: &SqlitePool) -> anyhow::Result<()> {
     ensure_provider_column(pool, "last_test_success", "INTEGER").await?;
     ensure_provider_column(pool, "last_test_at", "TEXT").await?;
     ensure_provider_column(pool, "use_proxy", "INTEGER DEFAULT 0").await?;
+    ensure_provider_column(pool, "default_protocol", "TEXT NOT NULL DEFAULT ''").await?;
+    ensure_provider_column(pool, "protocol_endpoints", "TEXT NOT NULL DEFAULT '{}'").await?;
+    backfill_provider_protocol_endpoints(pool).await?;
     ensure_route_column(pool, "ingress_protocol", "TEXT").await?;
     ensure_route_column(pool, "virtual_model", "TEXT").await?;
     ensure_route_column(pool, "strategy", "TEXT DEFAULT 'weighted'").await?;
@@ -89,6 +92,33 @@ async fn backfill_provider_models_source(pool: &SqlitePool) -> anyhow::Result<()
              WHERE (models_source IS NULL OR trim(models_source) = '') \
                AND models_endpoint IS NOT NULL \
                AND trim(models_endpoint) != ''",
+        )
+        .execute(pool)
+        .await?;
+    }
+    Ok(())
+}
+
+async fn backfill_provider_protocol_endpoints(pool: &SqlitePool) -> anyhow::Result<()> {
+    if column_exists(pool, "providers", "default_protocol").await?
+        && column_exists(pool, "providers", "protocol_endpoints").await?
+        && column_exists(pool, "providers", "protocol").await?
+    {
+        sqlx::query(
+            "UPDATE providers \
+             SET default_protocol = protocol \
+             WHERE (default_protocol IS NULL OR trim(default_protocol) = '') \
+               AND protocol IS NOT NULL AND trim(protocol) != ''",
+        )
+        .execute(pool)
+        .await?;
+
+        sqlx::query(
+            "UPDATE providers \
+             SET protocol_endpoints = json_object(trim(protocol), json_object('base_url', trim(base_url))) \
+             WHERE (protocol_endpoints IS NULL OR trim(protocol_endpoints) = '' OR trim(protocol_endpoints) = '{}') \
+               AND protocol IS NOT NULL AND trim(protocol) != '' \
+               AND base_url IS NOT NULL AND trim(base_url) != ''",
         )
         .execute(pool)
         .await?;

@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use clap::Parser;
@@ -10,10 +11,12 @@ use nyro_core::{
         StorageBackendKind,
     },
     logging,
+    storage::MemoryStorage,
 };
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
 mod admin_routes;
+mod yaml_config;
 
 #[derive(Parser)]
 #[command(name = "nyro-server", about = "Nyro AI Gateway — Server Mode")]
@@ -86,6 +89,12 @@ struct Args {
     #[arg(long, help = "Max lifetime in seconds for SQL backends")]
     storage_max_lifetime_secs: Option<u64>,
 
+    #[arg(
+        long = "config",
+        short = 'c',
+        help = "Path to YAML config file for standalone mode (no DB, no admin API, no WebUI)"
+    )]
+    config_file: Option<String>,
 }
 
 #[tokio::main]
@@ -96,6 +105,73 @@ async fn main() -> anyhow::Result<()> {
 
     let args = Args::parse();
 
+    if let Some(ref config_path) = args.config_file {
+        return run_standalone(config_path, &args).await;
+    }
+
+    run_full(&args).await
+}
+
+async fn run_standalone(config_path: &str, args: &Args) -> anyhow::Result<()> {
+    tracing::info!("standalone mode: loading {config_path}");
+    let yaml = yaml_config::YamlConfig::load(config_path)?;
+
+    let proxy_host = if args.proxy_host != "127.0.0.1" {
+        args.proxy_host.clone()
+    } else {
+        yaml.server.proxy_host.clone()
+    };
+    let proxy_port = if args.proxy_port != 19530 {
+        args.proxy_port
+    } else {
+        yaml.server.proxy_port
+    };
+
+    let providers = yaml_config::build_providers(&yaml);
+    let routes = yaml_config::build_routes(&yaml, &providers);
+    let settings: Vec<(String, String)> = yaml.settings.into_iter().collect();
+
+    tracing::info!(
+        "loaded {} providers, {} routes from YAML",
+        providers.len(),
+        routes.len()
+    );
+
+    let storage: nyro_core::storage::DynStorage =
+        Arc::new(MemoryStorage::new(providers, routes, settings));
+
+    let data_dir = shellexpand::tilde(&args.data_dir).to_string();
+    let proxy_cors_origins = if args.proxy_cors_origins.is_empty() {
+        default_local_origins(&[proxy_port])
+    } else {
+        args.proxy_cors_origins.clone()
+    };
+
+    let config = GatewayConfig {
+        proxy_host: proxy_host.clone(),
+        proxy_port,
+        proxy_cors_origins,
+        data_dir: PathBuf::from(data_dir),
+        storage: GatewayStorageConfig::default(),
+        ..Default::default()
+    };
+
+    let (gateway, log_rx) = Gateway::from_storage(config, storage).await?;
+    let storage_for_logs = gateway.storage.clone();
+
+    tokio::spawn(async move {
+        logging::run_collector(log_rx, storage_for_logs).await;
+    });
+
+    let proxy_addr = format!("{proxy_host}:{proxy_port}");
+    tracing::info!("proxy  → http://{proxy_addr}");
+    tracing::info!("standalone mode: admin API and WebUI are disabled");
+
+    gateway.start_proxy().await?;
+    Ok(())
+}
+
+async fn run_full(args: &Args) -> anyhow::Result<()> {
     let data_dir = shellexpand::tilde(&args.data_dir).to_string();
     let admin_key = args.admin_key.clone().filter(|k| !k.trim().is_empty());
 
@@ -120,7 +196,7 @@ async fn main() -> anyhow::Result<()> {
         proxy_port: args.proxy_port,
         proxy_cors_origins,
         data_dir: PathBuf::from(data_dir),
-        storage: build_storage_config(&args)?,
+        storage: build_storage_config(args)?,
         ..Default::default()
     };
 

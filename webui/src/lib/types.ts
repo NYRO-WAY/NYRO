@@ -4,6 +4,8 @@ export interface Provider {
   vendor?: string | null;
   protocol: string;
   base_url: string;
+  default_protocol: string;
+  protocol_endpoints: string;
   api_key?: string;
   use_proxy: boolean;
   preset_key?: string | null;
@@ -22,7 +24,7 @@ export interface Provider {
 export interface Route {
   id: string;
   name: string;
-  ingress_protocol: "openai" | "anthropic" | "gemini";
+  ingress_protocol?: "openai" | "anthropic" | "gemini";
   virtual_model: string;
   strategy: RouteStrategy;
   target_provider: string;
@@ -171,6 +173,8 @@ export interface CreateProvider {
   vendor?: string;
   protocol: string;
   base_url: string;
+  default_protocol?: string;
+  protocol_endpoints?: string;
   use_proxy?: boolean;
   preset_key?: string;
   channel?: string;
@@ -186,6 +190,8 @@ export interface UpdateProvider {
   vendor?: string;
   protocol?: string;
   base_url?: string;
+  default_protocol?: string;
+  protocol_endpoints?: string;
   use_proxy?: boolean;
   preset_key?: string;
   channel?: string;
@@ -199,7 +205,7 @@ export interface UpdateProvider {
 
 export interface CreateRoute {
   name: string;
-  ingress_protocol: "openai" | "anthropic" | "gemini";
+  ingress_protocol?: "openai" | "anthropic" | "gemini";
   virtual_model: string;
   strategy?: RouteStrategy;
   target_provider: string;
@@ -210,7 +216,6 @@ export interface CreateRoute {
 
 export interface UpdateRoute {
   name?: string;
-  ingress_protocol?: "openai" | "anthropic" | "gemini";
   virtual_model?: string;
   strategy?: RouteStrategy;
   target_provider?: string;
@@ -277,6 +282,8 @@ export interface ExportProvider {
   vendor?: string | null;
   protocol: string;
   base_url: string;
+  default_protocol?: string;
+  protocol_endpoints?: string;
   use_proxy: boolean;
   preset_key?: string | null;
   channel?: string | null;
@@ -290,7 +297,7 @@ export interface ExportProvider {
 
 export interface ExportRoute {
   name: string;
-  ingress_protocol: "openai" | "anthropic" | "gemini";
+  ingress_protocol?: "openai" | "anthropic" | "gemini";
   virtual_model: string;
   target_provider_name: string;
   target_model: string;

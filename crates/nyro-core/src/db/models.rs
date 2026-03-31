@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
@@ -8,6 +10,12 @@ pub struct Provider {
     pub vendor: Option<String>,
     pub protocol: String,
     pub base_url: String,
+    #[serde(default)]
+    pub default_protocol: String,
+    /// JSON map of protocol -> endpoint config.
+    /// e.g. `{"openai":{"base_url":"https://..."},"anthropic":{"base_url":"https://..."}}`
+    #[serde(default)]
+    pub protocol_endpoints: String,
     pub preset_key: Option<String>,
     #[serde(alias = "region")]
     pub channel: Option<String>,
@@ -148,6 +156,9 @@ pub struct CreateProvider {
     pub vendor: Option<String>,
     pub protocol: String,
     pub base_url: String,
+    pub default_protocol: Option<String>,
+    /// JSON map: `{"openai":{"base_url":"..."}}`
+    pub protocol_endpoints: Option<String>,
     pub preset_key: Option<String>,
     #[serde(alias = "region")]
     pub channel: Option<String>,
@@ -169,6 +180,8 @@ pub struct UpdateProvider {
     pub vendor: Option<String>,
     pub protocol: Option<String>,
     pub base_url: Option<String>,
+    pub default_protocol: Option<String>,
+    pub protocol_endpoints: Option<String>,
     pub preset_key: Option<String>,
     #[serde(alias = "region")]
     pub channel: Option<String>,
@@ -340,6 +353,10 @@ pub struct ExportProvider {
     pub vendor: Option<String>,
     pub protocol: String,
     pub base_url: String,
+    #[serde(default)]
+    pub default_protocol: String,
+    #[serde(default)]
+    pub protocol_endpoints: String,
     pub preset_key: Option<String>,
     #[serde(alias = "region")]
     pub channel: Option<String>,
@@ -388,6 +405,43 @@ impl Provider {
             .filter(|v| !v.trim().is_empty())
             .or_else(|| self.models_endpoint.as_deref().filter(|v| !v.trim().is_empty()))
     }
+
+    /// Resolve effective default_protocol: new field > legacy `protocol`.
+    pub fn effective_default_protocol(&self) -> &str {
+        let dp = self.default_protocol.trim();
+        if dp.is_empty() {
+            self.protocol.trim()
+        } else {
+            dp
+        }
+    }
+
+    /// Parse `protocol_endpoints` JSON into a map.
+    /// Falls back to building a single-entry map from legacy `protocol`/`base_url`.
+    pub fn parsed_protocol_endpoints(&self) -> HashMap<String, ProtocolEndpointEntry> {
+        if !self.protocol_endpoints.trim().is_empty() && self.protocol_endpoints.trim() != "{}" {
+            if let Ok(map) = serde_json::from_str::<HashMap<String, ProtocolEndpointEntry>>(&self.protocol_endpoints) {
+                if !map.is_empty() {
+                    return map;
+                }
+            }
+        }
+        let mut map = HashMap::new();
+        if !self.protocol.trim().is_empty() && !self.base_url.trim().is_empty() {
+            map.insert(
+                self.protocol.trim().to_string(),
+                ProtocolEndpointEntry {
+                    base_url: self.base_url.trim().to_string(),
+                },
+            );
+        }
+        map
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProtocolEndpointEntry {
+    pub base_url: String,
 }
 
 impl CreateProvider {

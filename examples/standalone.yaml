@@ -1,0 +1,56 @@
+server:
+  proxy_host: "127.0.0.1"
+  proxy_port: 19530
+
+providers:
+  - name: openai
+    default_protocol: openai
+    endpoints:
+      openai:
+        base_url: https://api.openai.com/v1
+    api_key: ${OPENAI_API_KEY}
+    models_source: https://api.openai.com/v1/models
+
+  - name: anthropic
+    default_protocol: anthropic
+    endpoints:
+      anthropic:
+        base_url: https://api.anthropic.com
+    api_key: ${ANTHROPIC_API_KEY}
+    models_source: https://api.anthropic.com/v1/models
+
+  - name: deepseek
+    default_protocol: openai
+    endpoints:
+      openai:
+        base_url: https://api.deepseek.com/v1
+      anthropic:
+        base_url: https://api.deepseek.com/anthropic
+    api_key: ${DEEPSEEK_API_KEY}
+
+routes:
+  - name: gpt-4o
+    virtual_model: gpt-4o
+    targets:
+      - provider: openai
+        model: gpt-4o
+
+  - name: claude-sonnet
+    virtual_model: claude-sonnet-4-20250514
+    targets:
+      - provider: anthropic
+        model: claude-sonnet-4-20250514
+
+  - name: deepseek-chat
+    virtual_model: deepseek-chat
+    strategy: priority
+    targets:
+      - provider: deepseek
+        model: deepseek-chat
+        priority: 1
+      - provider: openai
+        model: gpt-4o-mini
+        priority: 2
+
+settings:
+  proxy_enabled: "false"

@@ -176,14 +176,21 @@ impl ProviderStore for PostgresProviderStore {
         let id = uuid::Uuid::new_v4().to_string();
         let vendor = normalize_provider_vendor(input.vendor.as_deref());
         let models_source = input.effective_models_source().map(ToString::to_string);
+        let default_protocol = input
+            .default_protocol
+            .as_deref()
+            .unwrap_or(input.protocol.as_str());
+        let protocol_endpoints = input.protocol_endpoints.as_deref().unwrap_or("{}");
         sqlx::query(
-            "INSERT INTO providers (id, name, vendor, protocol, base_url, preset_key, channel, models_endpoint, models_source, capabilities_source, static_models, api_key, use_proxy) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)",
+            "INSERT INTO providers (id, name, vendor, protocol, base_url, default_protocol, protocol_endpoints, preset_key, channel, models_endpoint, models_source, capabilities_source, static_models, api_key, use_proxy) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
         )
         .bind(&id)
         .bind(input.name.trim())
         .bind(vendor)
         .bind(input.protocol.trim())
         .bind(input.base_url.trim())
+        .bind(default_protocol)
+        .bind(protocol_endpoints)
         .bind(input.preset_key)
         .bind(input.channel)
         .bind(models_source.clone())
@@ -208,8 +215,14 @@ impl ProviderStore for PostgresProviderStore {
         };
         let models_source = models_source_input
             .or_else(|| current.models_source.clone().or(current.models_endpoint.clone()));
-        let protocol = input.protocol.unwrap_or(current.protocol);
+        let protocol = input.protocol.unwrap_or(current.protocol.clone());
         let base_url = input.base_url.unwrap_or(current.base_url);
+        let default_protocol = input
+            .default_protocol
+            .unwrap_or(current.default_protocol);
+        let protocol_endpoints = input
+            .protocol_endpoints
+            .unwrap_or(current.protocol_endpoints);
         let preset_key = input.preset_key.or(current.preset_key);
         let channel = input.channel.or(current.channel);
         let capabilities_source = input.capabilities_source.or(current.capabilities_source);
@@ -219,12 +232,14 @@ impl ProviderStore for PostgresProviderStore {
         let is_active = input.is_active.unwrap_or(current.is_active);
 
         sqlx::query(
-            "UPDATE providers SET name=$1, vendor=$2, protocol=$3, base_url=$4, preset_key=$5, channel=$6, models_endpoint=$7, models_source=$8, capabilities_source=$9, static_models=$10, api_key=$11, use_proxy=$12, is_active=$13, updated_at=CURRENT_TIMESTAMP WHERE id=$14",
+            "UPDATE providers SET name=$1, vendor=$2, protocol=$3, base_url=$4, default_protocol=$5, protocol_endpoints=$6, preset_key=$7, channel=$8, models_endpoint=$9, models_source=$10, capabilities_source=$11, static_models=$12, api_key=$13, use_proxy=$14, is_active=$15, updated_at=CURRENT_TIMESTAMP WHERE id=$16",
         )
         .bind(name.trim())
         .bind(vendor)
         .bind(protocol.trim())
         .bind(base_url.trim())
+        .bind(default_protocol)
+        .bind(protocol_endpoints)
         .bind(preset_key)
         .bind(channel)
         .bind(models_source.clone())
@@ -410,6 +425,31 @@ impl RouteStore for PostgresRouteStore {
                 "SELECT id FROM routes WHERE COALESCE(ingress_protocol, 'openai') = $1 AND COALESCE(NULLIF(virtual_model, ''), match_pattern) = $2 LIMIT 1",
             )
             .bind(&normalized_protocol)
+            .bind(normalized_model)
+            .fetch_optional(&self.pool)
+            .await?
+        };
+        Ok(row.is_some())
+    }
+
+    async fn exists_by_virtual_model(
+        &self,
+        virtual_model: &str,
+        exclude_id: Option<&str>,
+    ) -> anyhow::Result<bool> {
+        let normalized_model = virtual_model.trim();
+        let row = if let Some(exclude_id) = exclude_id {
+            sqlx::query_scalar::<_, String>(
+                "SELECT id FROM routes WHERE COALESCE(NULLIF(virtual_model, ''), match_pattern) = $1 AND id != $2 LIMIT 1",
+            )
+            .bind(normalized_model)
+            .bind(exclude_id)
+            .fetch_optional(&self.pool)
+            .await?
+        } else {
+            sqlx::query_scalar::<_, String>(
+                "SELECT id FROM routes WHERE COALESCE(NULLIF(virtual_model, ''), match_pattern) = $1 LIMIT 1",
+            )
             .bind(normalized_model)
             .fetch_optional(&self.pool)
             .await?
@@ -867,6 +907,22 @@ impl StorageBootstrap for PostgresBootstrap {
         sqlx::query("ALTER TABLE providers ADD COLUMN IF NOT EXISTS use_proxy BOOLEAN NOT NULL DEFAULT FALSE")
             .execute(self.adapter.pool())
             .await?;
+        sqlx::query("ALTER TABLE providers ADD COLUMN IF NOT EXISTS default_protocol TEXT NOT NULL DEFAULT ''")
+            .execute(self.adapter.pool())
+            .await?;
+        sqlx::query("ALTER TABLE providers ADD COLUMN IF NOT EXISTS protocol_endpoints TEXT NOT NULL DEFAULT '{}'")
+            .execute(self.adapter.pool())
+            .await?;
+        sqlx::query(
+            "UPDATE providers SET default_protocol = protocol WHERE (default_protocol IS NULL OR btrim(default_protocol) = '') AND protocol IS NOT NULL AND btrim(protocol) != ''",
+        )
+        .execute(self.adapter.pool())
+        .await?;
+        sqlx::query(
+            "UPDATE providers SET protocol_endpoints = json_build_object(btrim(protocol), json_build_object('base_url', btrim(base_url)))::text WHERE (protocol_endpoints IS NULL OR btrim(protocol_endpoints) = '' OR btrim(protocol_endpoints) = '{}') AND protocol IS NOT NULL AND btrim(protocol) != '' AND base_url IS NOT NULL AND btrim(base_url) != ''",
+        )
+        .execute(self.adapter.pool())
+        .await?;
         sqlx::query(
             r#"
             INSERT INTO route_targets (id, route_id, provider_id, model, weight, priority)
@@ -923,7 +979,7 @@ impl StorageBootstrap for PostgresBootstrap {
 
 fn provider_select(suffix: Option<&str>) -> String {
     let mut sql = String::from(
-        "SELECT id, name, vendor, protocol, base_url, preset_key, COALESCE(channel, region) AS channel, models_endpoint, COALESCE(models_source, models_endpoint) AS models_source, capabilities_source, static_models, api_key, COALESCE(use_proxy, FALSE) AS use_proxy, last_test_success, to_char(last_test_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS last_test_at, is_active, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS updated_at FROM providers",
+        "SELECT id, name, vendor, protocol, base_url, COALESCE(default_protocol, protocol) AS default_protocol, COALESCE(protocol_endpoints, '{}') AS protocol_endpoints, preset_key, COALESCE(channel, region) AS channel, models_endpoint, COALESCE(models_source, models_endpoint) AS models_source, capabilities_source, static_models, api_key, COALESCE(use_proxy, FALSE) AS use_proxy, last_test_success, to_char(last_test_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS last_test_at, is_active, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS updated_at FROM providers",
     );
     if let Some(suffix) = suffix {
         sql.push(' ');

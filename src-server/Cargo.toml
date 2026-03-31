@@ -17,3 +17,5 @@ tracing = { workspace = true }
 clap = { version = "4", features = ["derive"] }
 shellexpand = "3"
 anyhow = { workspace = true }
+serde_yaml = "0.9"
+chrono = { workspace = true }

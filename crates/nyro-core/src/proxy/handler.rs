@@ -16,7 +16,7 @@ use crate::db::models::{Provider, Route, RouteTarget};
 use crate::logging::LogEntry;
 use crate::protocol::gemini::decoder::GeminiDecoder;
 use crate::protocol::types::*;
-use crate::protocol::Protocol;
+use crate::protocol::{Protocol, ProviderProtocols};
 use crate::proxy::adapter::{self, ProviderAdapter};
 use crate::proxy::client::ProxyClient;
 use crate::router::TargetSelector;
@@ -99,10 +99,9 @@ async fn proxy_pipeline(
     let is_stream = internal.stream;
 
     let ingress_str = ingress.to_string();
-    let route_protocol = ingress.route_protocol();
     let route = {
         let cache = gw.route_cache.read().await;
-        cache.match_route(route_protocol, &request_model).cloned()
+        cache.match_route(&request_model).cloned()
     };
     let route = match route {
         Some(r) => r,
@@ -147,7 +146,15 @@ async fn proxy_pipeline(
             &mut internal_for_target,
         );
 
-        let egress: Protocol = provider.protocol.parse().unwrap_or(Protocol::OpenAI);
+        let provider_protocols = ProviderProtocols::from_provider(&provider);
+        let resolved = provider_protocols.resolve_egress(ingress);
+        let egress = resolved.protocol;
+        let egress_base_url = if resolved.base_url.is_empty() {
+            provider.base_url.clone()
+        } else {
+            resolved.base_url
+        };
+
         let adapter = adapter::get_adapter(&provider, egress);
         adapter
             .pre_request(&mut internal_for_target, &actual_model, &gw, &provider)
@@ -189,6 +196,7 @@ async fn proxy_pipeline(
                 client,
                 adapter.as_ref(),
                 &provider,
+                &egress_base_url,
                 egress,
                 ingress,
                 &egress_path,
@@ -209,6 +217,7 @@ async fn proxy_pipeline(
                 client,
                 adapter.as_ref(),
                 &provider,
+                &egress_base_url,
                 egress,
                 ingress,
                 &egress_path,
@@ -248,6 +257,7 @@ async fn handle_non_stream(
     client: ProxyClient,
     adapter: &dyn ProviderAdapter,
     provider: &Provider,
+    egress_base_url: &str,
     egress: Protocol,
     ingress: Protocol,
     path: &str,
@@ -265,7 +275,7 @@ async fn handle_non_stream(
     let call_result = match client
         .call_non_stream(
             adapter,
-            &provider.base_url,
+            egress_base_url,
             path,
             &credential_to_use,
             body.clone(),
@@ -342,6 +352,7 @@ async fn handle_stream(
     client: ProxyClient,
     adapter: &dyn ProviderAdapter,
     provider: &Provider,
+    egress_base_url: &str,
     egress: Protocol,
     ingress: Protocol,
     path: &str,
@@ -359,7 +370,7 @@ async fn handle_stream(
     let call_result = match client
         .call_stream(
             adapter,
-            &provider.base_url,
+            egress_base_url,
             path,
             &credential_to_use,
             body.clone(),

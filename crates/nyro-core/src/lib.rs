@@ -13,7 +13,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use sqlx::SqlitePool;
 use tokio::sync::mpsc;
 
 use config::{
@@ -33,7 +32,6 @@ pub struct CapabilityCacheEntry {
 #[derive(Clone)]
 pub struct Gateway {
     pub config: GatewayConfig,
-    pub db: SqlitePool,
     pub storage: DynStorage,
     pub http_client: reqwest::Client,
     proxy_client_cache: Arc<tokio::sync::RwLock<Option<ProxyClientCache>>>,
@@ -58,7 +56,6 @@ impl Gateway {
             SqliteStorage::from_pool(pool)
         };
 
-        let db = sqlite_storage.pool().clone();
         let sqlite_fallback: DynStorage = Arc::new(sqlite_storage.clone());
 
         let storage: DynStorage = match config.storage.backend {
@@ -82,6 +79,13 @@ impl Gateway {
             anyhow::bail!("selected storage backend is not reachable");
         }
 
+        Self::from_storage(config, storage).await
+    }
+
+    pub async fn from_storage(
+        config: GatewayConfig,
+        storage: DynStorage,
+    ) -> anyhow::Result<(Self, mpsc::Receiver<LogEntry>)> {
         let http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(300))
             .build()?;
@@ -96,7 +100,6 @@ impl Gateway {
 
         let gw = Self {
             config,
-            db,
             storage,
             http_client,
             proxy_client_cache: Arc::new(tokio::sync::RwLock::new(None)),

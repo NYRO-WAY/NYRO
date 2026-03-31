@@ -4,7 +4,11 @@ pub mod anthropic;
 pub mod gemini;
 pub mod semantic;
 
+use std::collections::HashMap;
+
 use reqwest::header::HeaderMap;
+
+use crate::db::models::{Provider, ProtocolEndpointEntry};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -183,6 +187,79 @@ pub fn get_stream_formatter(protocol: Protocol) -> Box<dyn StreamFormatter> {
         Protocol::Gemini => Box::new(gemini::stream::GeminiStreamFormatter::new()),
         Protocol::ResponsesAPI => {
             Box::new(openai::responses::stream::ResponsesStreamFormatter::new())
+        }
+    }
+}
+
+// ── Provider multi-protocol negotiation ──
+
+#[derive(Debug, Clone)]
+pub struct ProviderProtocols {
+    pub default: Protocol,
+    pub endpoints: HashMap<Protocol, ProtocolEndpointEntry>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ResolvedEgress {
+    pub protocol: Protocol,
+    pub base_url: String,
+    pub needs_conversion: bool,
+}
+
+impl ProviderProtocols {
+    pub fn from_provider(provider: &Provider) -> Self {
+        let raw_map = provider.parsed_protocol_endpoints();
+        let mut endpoints = HashMap::new();
+        for (key, entry) in &raw_map {
+            if let Ok(p) = key.parse::<Protocol>() {
+                endpoints.insert(p, entry.clone());
+            }
+        }
+
+        let default = provider
+            .effective_default_protocol()
+            .parse::<Protocol>()
+            .unwrap_or_else(|_| {
+                endpoints
+                    .keys()
+                    .next()
+                    .copied()
+                    .unwrap_or(Protocol::OpenAI)
+            });
+
+        Self { default, endpoints }
+    }
+
+    pub fn supports(&self, protocol: Protocol) -> bool {
+        self.endpoints.contains_key(&protocol)
+    }
+
+    /// Resolve egress protocol and base_url for an incoming ingress protocol.
+    /// ResponsesAPI maps to OpenAI for endpoint resolution.
+    pub fn resolve_egress(&self, ingress: Protocol) -> ResolvedEgress {
+        let lookup = match ingress {
+            Protocol::ResponsesAPI => Protocol::OpenAI,
+            other => other,
+        };
+
+        if let Some(ep) = self.endpoints.get(&lookup) {
+            ResolvedEgress {
+                protocol: lookup,
+                base_url: ep.base_url.clone(),
+                needs_conversion: false,
+            }
+        } else if let Some(ep) = self.endpoints.get(&self.default) {
+            ResolvedEgress {
+                protocol: self.default,
+                base_url: ep.base_url.clone(),
+                needs_conversion: true,
+            }
+        } else {
+            ResolvedEgress {
+                protocol: self.default,
+                base_url: String::new(),
+                needs_conversion: true,
+            }
         }
     }
 }

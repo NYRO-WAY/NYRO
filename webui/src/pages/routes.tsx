@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Pencil, Plus, Route as RouteIcon, Trash2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, GitBranch, Pencil, Plus, Route as RouteIcon, Trash2, X } from "lucide-react";
 
 import { backend } from "@/lib/backend";
 import { localizeBackendErrorMessage } from "@/lib/backend-error";
@@ -30,11 +30,10 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 
-const PAGE_SIZE = 6;
+const PAGE_SIZE = 7;
 
 type RouteForm = {
   name: string;
-  ingress_protocol: "openai" | "anthropic" | "gemini";
   virtual_model: string;
   strategy: RouteStrategy;
   targets: RouteTargetForm[];
@@ -51,7 +50,6 @@ type RouteTargetForm = {
 
 const emptyCreate: RouteForm = {
   name: "",
-  ingress_protocol: "openai",
   virtual_model: "",
   strategy: "weighted",
   targets: [{ provider_id: "", model: "", weight: 100, priority: 1 }],
@@ -60,12 +58,6 @@ const emptyCreate: RouteForm = {
 
 function FieldLabel({ children }: { children: string }) {
   return <label className="ml-1 text-xs leading-none font-normal text-slate-900">{children}</label>;
-}
-
-function protocolLabel(value: "openai" | "anthropic" | "gemini") {
-  if (value === "anthropic") return "Anthropic";
-  if (value === "gemini") return "Gemini";
-  return "OpenAI";
 }
 
 function strategyLabel(value: RouteStrategy, isZh: boolean) {
@@ -353,7 +345,6 @@ export default function RoutesPage() {
     setEditForm({
       id: route.id,
       name: route.name,
-      ingress_protocol: route.ingress_protocol,
       virtual_model: route.virtual_model,
       strategy: route.strategy ?? "weighted",
       targets,
@@ -405,17 +396,13 @@ export default function RoutesPage() {
     });
   }
 
-  function providerName(id: string) {
-    return providers.find((p) => p.id === id)?.name ?? id.slice(0, 8);
-  }
-
   return (
-    <div className="space-y-6">
+    <div className="space-y-5">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">{isZh ? "路由" : "Routes"}</h1>
           <p className="mt-1 text-sm text-slate-500">
-            {isZh ? "按接入协议 + 虚拟模型精确匹配" : "Exact match by ingress protocol and virtual model"}
+            {isZh ? "按虚拟模型精确匹配，自动开放所有接入协议" : "Exact match by virtual model, all ingress protocols enabled"}
           </p>
         </div>
         <Button
@@ -442,24 +429,6 @@ export default function RoutesPage() {
                 onChange={(e) => setCreateForm((prev) => ({ ...prev, name: e.target.value }))}
                 placeholder={isZh ? "输入路由名称" : "Enter route name"}
               />
-            </div>
-            <div className="space-y-2">
-              <FieldLabel>{isZh ? "接入协议" : "Ingress Protocol"}</FieldLabel>
-              <Select
-                value={createForm.ingress_protocol}
-                onValueChange={(value: "openai" | "anthropic" | "gemini") =>
-                  setCreateForm((prev) => ({ ...prev, ingress_protocol: value }))
-                }
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="openai">OpenAI</SelectItem>
-                  <SelectItem value="anthropic">Anthropic</SelectItem>
-                  <SelectItem value="gemini">Gemini</SelectItem>
-                </SelectContent>
-              </Select>
             </div>
             <div className="space-y-2">
               <FieldLabel>{isZh ? "虚拟模型 ID" : "Virtual Model ID"}</FieldLabel>
@@ -566,10 +535,9 @@ export default function RoutesPage() {
           <p className="mt-3 text-sm text-slate-500">{isZh ? "还没有配置路由" : "No routes configured"}</p>
         </div>
       ) : (
-        <div className="grid gap-4">
+        <div className="grid gap-3">
           {pagedRoutes.map((route) => {
             const isEditing = editingId === route.id && editForm;
-            const targetProvider = providerMap.get(route.target_provider);
 
             if (isEditing && editForm) {
               return (
@@ -594,24 +562,6 @@ export default function RoutesPage() {
                         value={editForm.name}
                         onChange={(e) => setEditForm((prev) => (prev ? { ...prev, name: e.target.value } : prev))}
                       />
-                    </div>
-                    <div className="space-y-2">
-                      <FieldLabel>{isZh ? "接入协议" : "Ingress Protocol"}</FieldLabel>
-                      <Select
-                        value={editForm.ingress_protocol}
-                        onValueChange={(value: "openai" | "anthropic" | "gemini") =>
-                          setEditForm((prev) => (prev ? { ...prev, ingress_protocol: value } : prev))
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="openai">OpenAI</SelectItem>
-                          <SelectItem value="anthropic">Anthropic</SelectItem>
-                          <SelectItem value="gemini">Gemini</SelectItem>
-                        </SelectContent>
-                      </Select>
                     </div>
                     <div className="space-y-2">
                       <FieldLabel>{isZh ? "虚拟模型 ID" : "Virtual Model ID"}</FieldLabel>
@@ -714,16 +664,32 @@ export default function RoutesPage() {
             }
 
             return (
-              <div key={route.id} className="glass flex items-center justify-between rounded-2xl p-5">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-slate-900">{route.name}</span>
-                    <code className="rounded bg-slate-100 px-2 py-0.5 text-[11px] text-slate-600">
-                      {protocolLabel(route.ingress_protocol)} / {route.virtual_model}
+              <div key={route.id} className="glass flex items-center justify-between rounded-2xl p-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-slate-100">
+                    <span className="inline-flex h-[30px] w-[30px] items-center justify-center rounded-xl border border-slate-300/70 bg-transparent">
+                      <GitBranch className="h-3.5 w-3.5 text-slate-500" />
+                    </span>
+                  </div>
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="inline-flex h-5 items-center font-semibold text-slate-900">{route.name}</span>
+                    <code className="inline-flex h-5 items-center rounded bg-slate-100 px-2 py-0.5 text-[11px] leading-none text-slate-600">
+                      {route.virtual_model}
                     </code>
-                    <Badge variant="warning">{strategyLabel(route.strategy ?? "weighted", isZh)}</Badge>
+                    {route.targets && route.targets.length > 1 && (
+                      <Badge variant="success">
+                        {isZh ? `共 ${route.targets.length} 个目标` : `${route.targets.length} Targets`}
+                      </Badge>
+                    )}
+                    <Badge
+                      variant="secondary"
+                      className="bg-sky-50 text-sky-700"
+                    >
+                      {strategyLabel(route.strategy ?? "weighted", isZh)}
+                    </Badge>
                     {route.access_control && (
-                      <Badge variant="warning">
+                      <Badge variant="success">
                         {isZh ? "鉴权" : "Auth"}
                       </Badge>
                     )}
@@ -733,24 +699,6 @@ export default function RoutesPage() {
                       </Badge>
                     )}
                   </div>
-                  <div className="mt-1.5 flex items-center gap-2 text-xs">
-                    <span className="route-flow-pill inline-flex items-center gap-1.5 rounded-full px-2.5 py-1">
-                      <ProviderIcon
-                        name={targetProvider?.name}
-                        protocol={targetProvider?.protocol}
-                        baseUrl={targetProvider?.base_url}
-                        size={14}
-                        className="rounded-sm border-0 bg-transparent"
-                      />
-                      <span className="font-medium text-slate-600">{providerName(route.target_provider)}</span>
-                      <span className="text-slate-400">→</span>
-                      <span className="font-medium text-slate-700">{route.target_model}</span>
-                    </span>
-                    {route.targets && route.targets.length > 1 && (
-                      <Badge variant="success">
-                        {isZh ? `共 ${route.targets.length} 个目标` : `${route.targets.length} targets`}
-                      </Badge>
-                    )}
                   </div>
                 </div>
                 <div className="flex items-center gap-0.5">
@@ -845,7 +793,7 @@ function buildCreatePayload(form: RouteForm): CreateRoute {
   const primary = targets[0] ?? { provider_id: "", model: "" };
   return {
     name: form.name.trim(),
-    ingress_protocol: form.ingress_protocol,
+    ingress_protocol: "openai",
     virtual_model: form.virtual_model.trim(),
     strategy: form.strategy,
     targets,
@@ -866,7 +814,6 @@ function buildUpdatePayload(form: RouteForm & { id: string }): UpdateRoute {
   const primary = targets[0] ?? { provider_id: "", model: "" };
   return {
     name: form.name.trim(),
-    ingress_protocol: form.ingress_protocol,
     virtual_model: form.virtual_model.trim(),
     strategy: form.strategy,
     targets,

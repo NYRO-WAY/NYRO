@@ -17,8 +17,8 @@ impl RouteCache {
     }
 }
 
-pub fn match_route<'a>(routes: &'a [Route], ingress_protocol: &str, model: &str) -> Option<&'a Route> {
+pub fn match_route<'a>(routes: &'a [Route], model: &str) -> Option<&'a Route> {
     routes
         .iter()
-        .find(|route| route.ingress_protocol == ingress_protocol && route.virtual_model == model)
+        .find(|route| route.virtual_model == model)
 }

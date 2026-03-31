@@ -57,6 +57,8 @@ impl AdminService {
                 vendor,
                 protocol: input.protocol,
                 base_url: input.base_url,
+                default_protocol: input.default_protocol,
+                protocol_endpoints: input.protocol_endpoints,
                 preset_key: input.preset_key,
                 channel: input.channel,
                 models_endpoint: input.models_endpoint,
@@ -119,6 +121,8 @@ impl AdminService {
                     vendor,
                     protocol: Some(protocol),
                     base_url: Some(base_url),
+                    default_protocol: input.default_protocol,
+                    protocol_endpoints: input.protocol_endpoints,
                     preset_key,
                     channel,
                     models_endpoint: models_source.clone(),
@@ -446,9 +450,8 @@ impl AdminService {
     pub async fn create_route(&self, input: CreateRoute) -> anyhow::Result<Route> {
         let name = normalize_name(&input.name, "route name")?;
         self.ensure_route_name_unique(None, &name).await?;
-        ensure_protocol(&input.ingress_protocol)?;
         ensure_virtual_model(&input.virtual_model)?;
-        self.ensure_route_unique(None, &input.ingress_protocol, &input.virtual_model)
+        self.ensure_route_unique(None, &input.virtual_model)
             .await?;
         let strategy = normalize_route_strategy(input.strategy.as_deref())?;
         let targets = normalize_create_route_targets(&input)?;
@@ -503,9 +506,8 @@ impl AdminService {
             .ok_or_else(|| anyhow::anyhow!("at least one route target is required"))?;
         let access_control = input.access_control.unwrap_or(current.access_control);
         let is_active = input.is_active.unwrap_or(current.is_active);
-        ensure_protocol(&ingress_protocol)?;
         ensure_virtual_model(&virtual_model)?;
-        self.ensure_route_unique(Some(id), &ingress_protocol, &virtual_model)
+        self.ensure_route_unique(Some(id), &virtual_model)
             .await?;
 
         self.gw
@@ -689,6 +691,8 @@ impl AdminService {
                     vendor: p.vendor,
                     protocol: p.protocol,
                     base_url: p.base_url,
+                    default_protocol: p.default_protocol,
+                    protocol_endpoints: p.protocol_endpoints,
                     preset_key: p.preset_key,
                     channel: p.channel,
                     models_endpoint: p.models_endpoint,
@@ -737,6 +741,16 @@ impl AdminService {
                         vendor: p.vendor.clone(),
                         protocol: p.protocol.clone(),
                         base_url: p.base_url.clone(),
+                        default_protocol: if p.default_protocol.is_empty() {
+                            None
+                        } else {
+                            Some(p.default_protocol.clone())
+                        },
+                        protocol_endpoints: if p.protocol_endpoints.is_empty() || p.protocol_endpoints == "{}" {
+                            None
+                        } else {
+                            Some(p.protocol_endpoints.clone())
+                        },
                         preset_key: p.preset_key.clone(),
                         channel: p.channel.clone(),
                         models_endpoint: p.models_endpoint.clone(),
@@ -807,19 +821,17 @@ impl AdminService {
     async fn ensure_route_unique(
         &self,
         exclude_id: Option<&str>,
-        ingress_protocol: &str,
         virtual_model: &str,
     ) -> anyhow::Result<()> {
         if self
             .gw
             .storage
             .routes()
-            .exists_by_protocol_model(ingress_protocol, virtual_model, exclude_id)
+            .exists_by_virtual_model(virtual_model, exclude_id)
             .await?
         {
-            let normalized_protocol = ingress_protocol.trim().to_lowercase();
             let normalized_model = virtual_model.trim();
-            anyhow::bail!("route already exists for protocol={normalized_protocol}, model={normalized_model}");
+            anyhow::bail!("route already exists for model={normalized_model}");
         }
         Ok(())
     }
@@ -931,13 +943,6 @@ fn coded_error(code: &str, message: &str, params: Value) -> anyhow::Error {
             "params": params,
         })
     )
-}
-
-fn ensure_protocol(protocol: &str) -> anyhow::Result<()> {
-    match protocol.trim().to_lowercase().as_str() {
-        "openai" | "anthropic" | "gemini" => Ok(()),
-        _ => anyhow::bail!("unsupported ingress protocol: {protocol}"),
-    }
 }
 
 fn ensure_virtual_model(model: &str) -> anyhow::Result<()> {

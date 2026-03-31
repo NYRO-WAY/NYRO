@@ -80,6 +80,11 @@ pub trait RouteStore: Send + Sync {
         virtual_model: &str,
         exclude_id: Option<&str>,
     ) -> anyhow::Result<bool>;
+    async fn exists_by_virtual_model(
+        &self,
+        virtual_model: &str,
+        exclude_id: Option<&str>,
+    ) -> anyhow::Result<bool>;
     async fn list_active(&self) -> anyhow::Result<Vec<Route>>;
 }
 
