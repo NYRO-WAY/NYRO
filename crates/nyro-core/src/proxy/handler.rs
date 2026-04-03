@@ -1,3 +1,4 @@
+use std::collections::{BTreeSet, HashSet};
 use std::convert::Infallible;
 use std::time::Instant;
 
@@ -74,6 +75,58 @@ pub async fn gemini_proxy(
     };
 
     proxy_pipeline(gw, headers, internal, Protocol::Gemini).await
+}
+
+// ── OpenAI models list ingress: GET /v1/models ──
+pub async fn models_list(State(gw): State<Gateway>, headers: HeaderMap) -> Response {
+    let mut accessible_route_ids = HashSet::new();
+
+    if let Some(raw_key) = extract_api_key(&headers) {
+        if let Some(store) = gw.storage.auth() {
+            if let Ok(Some(key_row)) = store.find_api_key(&raw_key).await {
+                let key_active = key_row.status == "active"
+                    && key_row
+                        .expires_at
+                        .as_ref()
+                        .map(|expires| !is_key_expired(expires))
+                        .unwrap_or(true);
+
+                if key_active {
+                    if let Ok(bound_route_ids) = store.list_bound_route_ids(&key_row.id).await {
+                        accessible_route_ids.extend(bound_route_ids);
+                    }
+                }
+            }
+        }
+    }
+
+    let cache = gw.route_cache.read().await;
+    let models = cache
+        .routes
+        .iter()
+        .filter(|route| !route.access_control || accessible_route_ids.contains(&route.id))
+        .map(|route| route.virtual_model.trim())
+        .filter(|model| !model.is_empty())
+        .map(ToString::to_string)
+        .collect::<BTreeSet<_>>();
+
+    let data = models
+        .into_iter()
+        .map(|model| {
+            serde_json::json!({
+                "id": model,
+                "object": "model",
+                "created": 0,
+                "owned_by": "Nyro"
+            })
+        })
+        .collect::<Vec<_>>();
+
+    Json(serde_json::json!({
+        "object": "list",
+        "data": data
+    }))
+    .into_response()
 }
 
 // ── Universal proxy pipeline ──

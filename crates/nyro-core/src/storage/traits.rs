@@ -110,6 +110,7 @@ pub trait ApiKeyStore: Send + Sync {
 pub trait AuthAccessStore: Send + Sync {
     async fn find_api_key(&self, raw_key: &str) -> anyhow::Result<Option<ApiKeyAccessRecord>>;
     async fn route_binding_exists(&self, api_key_id: &str, route_id: &str) -> anyhow::Result<bool>;
+    async fn list_bound_route_ids(&self, api_key_id: &str) -> anyhow::Result<Vec<String>>;
     async fn request_count_since(&self, api_key_id: &str, window: UsageWindow) -> anyhow::Result<i64>;
     async fn token_count_since(&self, api_key_id: &str, window: UsageWindow) -> anyhow::Result<i64>;
 }

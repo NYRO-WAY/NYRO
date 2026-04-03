@@ -19,6 +19,8 @@ pub fn create_router(gateway: Gateway) -> Router {
             "/v1beta/models/:model_action",
             post(handler::gemini_proxy),
         )
+        .route("/v1/models", get(handler::models_list))
+        .route("/models", get(handler::models_list))
         .route("/models/:model_action", post(handler::gemini_proxy))
         .route("/health", get(health));
 

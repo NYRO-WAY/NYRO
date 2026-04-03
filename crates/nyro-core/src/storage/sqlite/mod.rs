@@ -754,6 +754,10 @@ impl AuthAccessStore for SqliteAuthAccessStore {
         Ok(count > 0)
     }
 
+    async fn list_bound_route_ids(&self, api_key_id: &str) -> anyhow::Result<Vec<String>> {
+        list_api_key_route_ids(&self.pool, api_key_id).await
+    }
+
     async fn request_count_since(&self, api_key_id: &str, window: UsageWindow) -> anyhow::Result<i64> {
         let expr = match window {
             UsageWindow::Minute => "-1 minute",
