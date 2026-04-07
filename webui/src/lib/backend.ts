@@ -119,6 +119,15 @@ function resolveHTTP(cmd: string, args?: Record<string, unknown>): HTTPMapping {
     case "set_setting":
       return { method: "PUT", url: `${base}/settings/${args?.key}`, body: { value: args?.value } };
 
+    case "get_cache_settings":
+      return { method: "GET", url: `${base}/cache/settings` };
+    case "flush_cache":
+      return { method: "POST", url: `${base}/cache/flush` };
+    case "delete_cache_key":
+      return { method: "DELETE", url: `${base}/cache/${encodeURIComponent(String(args?.key ?? ""))}` };
+    case "get_cache_stats":
+      return { method: "GET", url: `${base}/cache/stats` };
+
     case "get_gateway_status":
       return { method: "GET", url: `${base}/status` };
 

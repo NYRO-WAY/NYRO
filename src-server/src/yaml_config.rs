@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::time::Duration;
+use nyro_core::cache::{CacheBackendKind, CacheConfig, CacheMode, CacheType};
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -11,6 +13,26 @@ pub struct YamlConfig {
     pub routes: Vec<YamlRoute>,
     #[serde(default)]
     pub settings: HashMap<String, String>,
+    #[serde(default)]
+    pub cache: YamlCacheConfig,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct YamlCacheConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub cache_type: Option<String>,
+    #[serde(default)]
+    pub backend: Option<String>,
+    #[serde(default)]
+    pub default_ttl_secs: Option<u64>,
+    #[serde(default)]
+    pub max_entries: Option<usize>,
+    #[serde(default)]
+    pub namespace: Option<String>,
+    #[serde(default)]
+    pub mode: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -139,6 +161,55 @@ impl YamlConfig {
     }
 }
 
+impl YamlCacheConfig {
+    pub fn to_cache_config(&self) -> CacheConfig {
+        let cache_type = match self
+            .cache_type
+            .as_deref()
+            .unwrap_or("response")
+            .trim()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "semantic" => CacheType::Semantic,
+            _ => CacheType::Response,
+        };
+        let backend = match self
+            .backend
+            .as_deref()
+            .unwrap_or("in_memory")
+            .trim()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "database" => CacheBackendKind::Database,
+            _ => CacheBackendKind::InMemory,
+        };
+        let mode = match self
+            .mode
+            .as_deref()
+            .unwrap_or("default_on")
+            .trim()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "default_off" => CacheMode::DefaultOff,
+            _ => CacheMode::DefaultOn,
+        };
+        CacheConfig {
+            enabled: self.enabled,
+            cache_type,
+            backend,
+            default_ttl: Duration::from_secs(self.default_ttl_secs.unwrap_or(3600)),
+            max_entries: self.max_entries.unwrap_or(1000),
+            namespace: self.namespace.clone(),
+            mode,
+            cache_streaming: true,
+            semantic: None,
+        }
+    }
+}
+
 use nyro_core::db::models::{Provider, Route, RouteTarget};
 
 pub fn build_providers(yaml: &YamlConfig) -> Vec<Provider> {
@@ -228,6 +299,9 @@ pub fn build_routes(yaml: &YamlConfig, providers: &[Provider]) -> Vec<Route> {
                 target_provider: primary.map(|t| t.provider_id.clone()).unwrap_or_default(),
                 target_model: primary.map(|t| t.model.clone()).unwrap_or_default(),
                 access_control: yr.access_control,
+                route_type: "chat".to_string(),
+                cache_enabled: None,
+                cache_ttl: None,
                 is_active: true,
                 created_at: now,
                 targets,

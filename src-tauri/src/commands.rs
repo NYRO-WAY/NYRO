@@ -217,6 +217,26 @@ pub async fn set_setting(
     gw.admin().set_setting(&key, &value).await.map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub async fn get_cache_settings(gw: State<'_, Gateway>) -> Result<serde_json::Value, String> {
+    gw.admin().get_cache_settings().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn flush_cache(gw: State<'_, Gateway>) -> Result<(), String> {
+    gw.admin().flush_cache().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_cache_key(gw: State<'_, Gateway>, key: String) -> Result<(), String> {
+    gw.admin().delete_cache_key(&key).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_cache_stats(gw: State<'_, Gateway>) -> Result<serde_json::Value, String> {
+    gw.admin().get_cache_stats().await.map_err(|e| e.to_string())
+}
+
 // ── Status ──
 
 #[tauri::command]

@@ -1,4 +1,5 @@
 pub mod admin;
+pub mod cache;
 pub mod config;
 pub mod crypto;
 pub mod db;
@@ -13,7 +14,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
+use dashmap::DashMap;
 use tokio::sync::mpsc;
+use tokio::sync::broadcast;
 
 use config::{
     GatewayConfig, SqlStorageConfig, StorageBackendKind,
@@ -22,6 +25,7 @@ use logging::LogEntry;
 use storage::sql::config::SqlBackendConfig;
 use storage::{DynStorage, MySqlStorage, PostgresStorage, SqliteStorage};
 use crate::router::health::HealthRegistry;
+use crate::cache::{CacheBackend, CacheBackendKind, DatabaseCacheBackend, InMemoryCacheBackend};
 
 #[derive(Clone, Debug)]
 pub struct CapabilityCacheEntry {
@@ -39,6 +43,8 @@ pub struct Gateway {
     pub health_registry: Arc<HealthRegistry>,
     pub ollama_capability_cache: Arc<tokio::sync::RwLock<HashMap<String, CapabilityCacheEntry>>>,
     pub log_tx: mpsc::Sender<LogEntry>,
+    pub cache_backend: Option<Arc<dyn CacheBackend>>,
+    pub cache_in_flight: Arc<DashMap<String, broadcast::Sender<Vec<u8>>>>,
 }
 
 #[derive(Clone)]
@@ -107,7 +113,20 @@ impl Gateway {
             health_registry,
             ollama_capability_cache,
             log_tx,
+            cache_backend: None,
+            cache_in_flight: Arc::new(DashMap::new()),
         };
+
+        let cache_backend: Option<Arc<dyn CacheBackend>> = if gw.config.cache.enabled {
+            match gw.config.cache.backend {
+                CacheBackendKind::InMemory => Some(Arc::new(InMemoryCacheBackend::new(gw.config.cache.max_entries))),
+                CacheBackendKind::Database => Some(Arc::new(DatabaseCacheBackend::new(gw.storage.clone()))),
+            }
+        } else {
+            None
+        };
+        let mut gw = gw;
+        gw.cache_backend = cache_backend;
 
         {
             let data_dir = gw.config.data_dir.clone();

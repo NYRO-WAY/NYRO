@@ -3,6 +3,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use async_trait::async_trait;
 use sqlx::{Pool, Postgres};
+use std::time::Duration;
 
 use crate::db::models::{
     ApiKey, ApiKeyWithBindings, CreateApiKey, CreateProvider, CreateRoute, CreateRouteTarget,
@@ -13,9 +14,9 @@ use crate::logging::LogEntry;
 use crate::storage::sql::config::SqlBackendConfig;
 use crate::storage::sql::pool::RelationalPool;
 use crate::storage::traits::{
-    ApiKeyAccessRecord, ApiKeyStore, AuthAccessStore, DynStorage, LogStore, ProviderStore,
-    ProviderTestResult, RouteSnapshotStore, RouteStore, RouteTargetStore, SettingsStore, Storage,
-    StorageBackend, StorageBootstrap, StorageHealth, UsageWindow,
+    ApiKeyAccessRecord, ApiKeyStore, AuthAccessStore, CacheStore, DynStorage, LogStore,
+    ProviderStore, ProviderTestResult, RouteSnapshotStore, RouteStore, RouteTargetStore,
+    SettingsStore, Storage, StorageBackend, StorageBootstrap, StorageHealth, UsageWindow,
 };
 
 #[derive(Clone)]
@@ -145,6 +146,10 @@ impl Storage for PostgresStorage {
 
     fn logs(&self) -> &dyn LogStore {
         self.log_store.as_ref()
+    }
+
+    fn cache(&self) -> Option<&dyn CacheStore> {
+        Some(self.log_store.as_ref())
     }
 
     fn bootstrap(&self) -> &dyn StorageBootstrap {
@@ -842,6 +847,55 @@ impl LogStore for PostgresLogStore {
     }
 }
 
+#[async_trait]
+impl CacheStore for PostgresLogStore {
+    async fn get(&self, key: &str) -> anyhow::Result<Option<Vec<u8>>> {
+        let row = sqlx::query_as::<_, (Vec<u8>,)>(
+            "SELECT data FROM cache_entries WHERE key = $1 AND expires_at > CURRENT_TIMESTAMP",
+        )
+        .bind(key)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|v| v.0))
+    }
+
+    async fn set(&self, key: &str, data: &[u8], ttl: Option<Duration>) -> anyhow::Result<()> {
+        let ttl_secs = ttl.unwrap_or_else(|| Duration::from_secs(3600)).as_secs() as i64;
+        sqlx::query(
+            "INSERT INTO cache_entries (key, data, expires_at, created_at) VALUES ($1, $2, CURRENT_TIMESTAMP + ($3 * INTERVAL '1 second'), CURRENT_TIMESTAMP) \
+             ON CONFLICT(key) DO UPDATE SET data = EXCLUDED.data, expires_at = EXCLUDED.expires_at",
+        )
+        .bind(key)
+        .bind(data)
+        .bind(ttl_secs)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn delete(&self, key: &str) -> anyhow::Result<()> {
+        sqlx::query("DELETE FROM cache_entries WHERE key = $1")
+            .bind(key)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    async fn flush(&self) -> anyhow::Result<()> {
+        sqlx::query("DELETE FROM cache_entries")
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    async fn cleanup_expired(&self) -> anyhow::Result<u64> {
+        let result = sqlx::query("DELETE FROM cache_entries WHERE expires_at <= CURRENT_TIMESTAMP")
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
+    }
+}
+
 #[derive(Clone)]
 struct PostgresBootstrap {
     adapter: PostgresAdapter,
@@ -1087,6 +1141,15 @@ CREATE TABLE IF NOT EXISTS settings (
     value TEXT NOT NULL,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
+
+CREATE TABLE IF NOT EXISTS cache_entries (
+    key TEXT PRIMARY KEY,
+    data BYTEA NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_cache_entries_expires_at ON cache_entries(expires_at);
 
 CREATE TABLE IF NOT EXISTS api_keys (
     id TEXT PRIMARY KEY,

@@ -6,6 +6,7 @@ use clap::Parser;
 use axum::http::{HeaderValue, Method, header};
 use nyro_core::{
     Gateway,
+    cache::{CacheBackendKind, CacheConfig, CacheMode, CacheType},
     config::{
         GatewayConfig, GatewayStorageConfig, SqlStorageConfig, SqliteStorageConfig,
         StorageBackendKind,
@@ -95,6 +96,21 @@ struct Args {
         help = "Path to YAML config file for standalone mode (no DB, no admin API, no WebUI)"
     )]
     config_file: Option<String>,
+
+    #[arg(long, default_value_t = false)]
+    cache_enabled: bool,
+    #[arg(long, default_value = "response")]
+    cache_type: String,
+    #[arg(long, default_value = "in_memory")]
+    cache_backend: String,
+    #[arg(long, default_value_t = 3600)]
+    cache_ttl_secs: u64,
+    #[arg(long, default_value_t = 1000)]
+    cache_max_entries: usize,
+    #[arg(long)]
+    cache_namespace: Option<String>,
+    #[arg(long, default_value = "default_on")]
+    cache_mode: String,
 }
 
 #[tokio::main]
@@ -153,6 +169,11 @@ async fn run_standalone(config_path: &str, args: &Args) -> anyhow::Result<()> {
         proxy_cors_origins,
         data_dir: PathBuf::from(data_dir),
         storage: GatewayStorageConfig::default(),
+        cache: if args.cache_enabled {
+            build_cache_config_from_args(args)?
+        } else {
+            yaml.cache.to_cache_config()
+        },
         ..Default::default()
     };
 
@@ -197,6 +218,7 @@ async fn run_full(args: &Args) -> anyhow::Result<()> {
         proxy_cors_origins,
         data_dir: PathBuf::from(data_dir),
         storage: build_storage_config(args)?,
+        cache: build_cache_config_from_args(args)?,
         ..Default::default()
     };
 
@@ -237,6 +259,35 @@ async fn run_full(args: &Args) -> anyhow::Result<()> {
     }
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+fn build_cache_config_from_args(args: &Args) -> anyhow::Result<CacheConfig> {
+    let cache_type = match args.cache_type.trim().to_ascii_lowercase().as_str() {
+        "semantic" => CacheType::Semantic,
+        "response" => CacheType::Response,
+        other => anyhow::bail!("unsupported cache type: {other}"),
+    };
+    let backend = match args.cache_backend.trim().to_ascii_lowercase().as_str() {
+        "database" => CacheBackendKind::Database,
+        "in_memory" | "inmemory" => CacheBackendKind::InMemory,
+        other => anyhow::bail!("unsupported cache backend: {other}"),
+    };
+    let mode = match args.cache_mode.trim().to_ascii_lowercase().as_str() {
+        "default_off" => CacheMode::DefaultOff,
+        "default_on" => CacheMode::DefaultOn,
+        other => anyhow::bail!("unsupported cache mode: {other}"),
+    };
+    Ok(CacheConfig {
+        enabled: args.cache_enabled,
+        cache_type,
+        backend,
+        default_ttl: Duration::from_secs(args.cache_ttl_secs.max(1)),
+        max_entries: args.cache_max_entries.max(1),
+        namespace: args.cache_namespace.clone(),
+        mode,
+        cache_streaming: true,
+        semantic: None,
+    })
 }
 
 fn is_loopback_host(host: &str) -> bool {

@@ -489,6 +489,9 @@ impl AdminService {
                 target_model: primary_target.model.clone(),
                 targets: vec![],
                 access_control: input.access_control,
+                route_type: input.route_type,
+                cache_enabled: input.cache_enabled,
+                cache_ttl: input.cache_ttl,
             })
             .await?;
         if let Some(store) = self.gw.storage.route_targets() {
@@ -535,6 +538,9 @@ impl AdminService {
                     target_model: Some(primary_target.model.clone()),
                     targets: None,
                     access_control: Some(access_control),
+                    route_type: input.route_type,
+                    cache_enabled: input.cache_enabled,
+                    cache_ttl: input.cache_ttl,
                     is_active: Some(is_active),
                 },
             )
@@ -686,6 +692,46 @@ impl AdminService {
         self.gw.storage.settings().set(key, value).await
     }
 
+    pub async fn get_cache_settings(&self) -> anyhow::Result<serde_json::Value> {
+        Ok(serde_json::json!({
+            "enabled": self.gw.config.cache.enabled,
+            "cache_type": format!("{:?}", self.gw.config.cache.cache_type).to_lowercase(),
+            "backend": self.gw.cache_backend.as_ref().map(|b| b.backend_name()).unwrap_or("disabled"),
+            "default_ttl_secs": self.gw.config.cache.default_ttl.as_secs(),
+            "max_entries": self.gw.config.cache.max_entries,
+            "namespace": self.gw.config.cache.namespace,
+            "mode": format!("{:?}", self.gw.config.cache.mode).to_lowercase(),
+        }))
+    }
+
+    pub async fn flush_cache(&self) -> anyhow::Result<()> {
+        if let Some(cache) = &self.gw.cache_backend {
+            cache.flush().await?;
+        }
+        Ok(())
+    }
+
+    pub async fn delete_cache_key(&self, key: &str) -> anyhow::Result<()> {
+        if let Some(cache) = &self.gw.cache_backend {
+            cache.delete(key).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn get_cache_stats(&self) -> anyhow::Result<serde_json::Value> {
+        let healthy = if let Some(cache) = &self.gw.cache_backend {
+            cache.ping().await.unwrap_or(false)
+        } else {
+            false
+        };
+        Ok(serde_json::json!({
+            "enabled": self.gw.config.cache.enabled,
+            "backend": self.gw.cache_backend.as_ref().map(|b| b.backend_name()).unwrap_or("disabled"),
+            "healthy": healthy,
+            "singleflight_in_flight": self.gw.cache_in_flight.len(),
+        }))
+    }
+
     // ── Config Import/Export ──
 
     pub async fn export_config(&self) -> anyhow::Result<ExportData> {
@@ -802,6 +848,9 @@ impl AdminService {
                             target_model: r.target_model.clone(),
                             targets: vec![],
                             access_control: Some(r.access_control),
+                            route_type: Some("chat".to_string()),
+                            cache_enabled: None,
+                            cache_ttl: None,
                         })
                         .await
                         .is_ok()

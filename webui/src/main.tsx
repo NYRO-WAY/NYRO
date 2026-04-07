@@ -17,6 +17,7 @@ const LogsPage = lazy(() => import("@/pages/logs"));
 const StatsPage = lazy(() => import("@/pages/stats"));
 const SettingsPage = lazy(() => import("@/pages/settings"));
 const ConnectPage = lazy(() => import("@/pages/connect"));
+const CachePage = lazy(() => import("@/pages/cache"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -44,6 +45,7 @@ createRoot(document.getElementById("root")!).render(
                   <Route path="logs" element={<LogsPage />} />
                   <Route path="stats" element={<StatsPage />} />
                   <Route path="connect" element={<ConnectPage />} />
+                  <Route path="cache" element={<CachePage />} />
                   <Route path="settings" element={<SettingsPage />} />
                 </Route>
               </Routes>

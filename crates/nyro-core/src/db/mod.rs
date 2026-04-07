@@ -45,6 +45,7 @@ pub async fn migrate(pool: &SqlitePool) -> anyhow::Result<()> {
     ensure_api_key_tables(pool).await?;
     ensure_api_key_column(pool, "rpd", "INTEGER").await?;
     ensure_route_targets_table(pool).await?;
+    ensure_cache_entries_table(pool).await?;
     backfill_provider_vendor(pool).await?;
     backfill_route_fields(pool).await?;
     backfill_route_targets(pool).await?;
@@ -207,6 +208,25 @@ async fn ensure_route_targets_table(pool: &SqlitePool) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn ensure_cache_entries_table(pool: &SqlitePool) -> anyhow::Result<()> {
+    sqlx::query(
+        r#"CREATE TABLE IF NOT EXISTS cache_entries (
+            key         TEXT PRIMARY KEY,
+            data        BLOB NOT NULL,
+            expires_at  TEXT NOT NULL,
+            created_at  TEXT DEFAULT (datetime('now'))
+        )"#,
+    )
+    .execute(pool)
+    .await?;
+
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_cache_entries_expires_at ON cache_entries(expires_at)")
+        .execute(pool)
+        .await?;
+
+    Ok(())
+}
+
 async fn backfill_route_fields(pool: &SqlitePool) -> anyhow::Result<()> {
     if column_exists(pool, "routes", "strategy").await? {
         sqlx::query(
@@ -322,4 +342,13 @@ CREATE TABLE IF NOT EXISTS settings (
     value      TEXT NOT NULL,
     updated_at TEXT DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS cache_entries (
+    key         TEXT PRIMARY KEY,
+    data        BLOB NOT NULL,
+    expires_at  TEXT NOT NULL,
+    created_at  TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_cache_entries_expires_at ON cache_entries(expires_at);
 "#;

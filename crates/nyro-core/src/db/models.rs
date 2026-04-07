@@ -42,6 +42,15 @@ pub struct Route {
     pub target_provider: String,
     pub target_model: String,
     pub access_control: bool,
+    #[serde(default)]
+    #[sqlx(default)]
+    pub route_type: String,
+    #[serde(default)]
+    #[sqlx(default)]
+    pub cache_enabled: Option<bool>,
+    #[serde(default)]
+    #[sqlx(default)]
+    pub cache_ttl: Option<i64>,
     pub is_active: bool,
     pub created_at: String,
     #[serde(default)]
@@ -196,6 +205,9 @@ pub struct UpdateRoute {
     #[serde(default)]
     pub targets: Option<Vec<UpsertRouteTarget>>,
     pub access_control: Option<bool>,
+    pub route_type: Option<String>,
+    pub cache_enabled: Option<bool>,
+    pub cache_ttl: Option<i64>,
     pub is_active: Option<bool>,
 }
 
@@ -209,6 +221,9 @@ pub struct CreateRoute {
     #[serde(default)]
     pub targets: Vec<CreateRouteTarget>,
     pub access_control: Option<bool>,
+    pub route_type: Option<String>,
+    pub cache_enabled: Option<bool>,
+    pub cache_ttl: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

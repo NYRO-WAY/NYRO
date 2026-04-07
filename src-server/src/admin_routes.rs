@@ -2,7 +2,7 @@ use axum::extract::{Path, Query, Request, State};
 use axum::http::StatusCode;
 use axum::middleware::{self, Next};
 use axum::response::IntoResponse;
-use axum::routing::{get, put};
+use axum::routing::{delete, get, post, put};
 use axum::{Extension, Json, Router};
 use nyro_core::db::models::*;
 use nyro_core::Gateway;
@@ -69,6 +69,10 @@ pub fn create_router(gateway: Gateway, admin_key: Option<String>) -> Router {
         .route("/stats/models", get(stats_by_model))
         .route("/stats/providers", get(stats_by_provider))
         .route("/settings/:key", get(get_setting).put(set_setting))
+        .route("/cache/settings", get(get_cache_settings))
+        .route("/cache/flush", post(flush_cache))
+        .route("/cache/:key", delete(delete_cache_key))
+        .route("/cache/stats", get(get_cache_stats))
         .route("/status", get(get_status))
         .route("/config/export", get(export_config_handler))
         .route("/config/import", axum::routing::post(import_config_handler))
@@ -389,6 +393,37 @@ async fn set_setting(
 ) -> impl IntoResponse {
     match gw.admin().set_setting(&key, &body.value).await {
         Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+async fn get_cache_settings(State(gw): State<Gateway>) -> impl IntoResponse {
+    match gw.admin().get_cache_settings().await {
+        Ok(v) => Json(serde_json::json!({ "data": v })).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+async fn flush_cache(State(gw): State<Gateway>) -> impl IntoResponse {
+    match gw.admin().flush_cache().await {
+        Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+async fn delete_cache_key(
+    State(gw): State<Gateway>,
+    Path(key): Path<String>,
+) -> impl IntoResponse {
+    match gw.admin().delete_cache_key(&key).await {
+        Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+async fn get_cache_stats(State(gw): State<Gateway>) -> impl IntoResponse {
+    match gw.admin().get_cache_stats().await {
+        Ok(v) => Json(serde_json::json!({ "data": v })).into_response(),
         Err(e) => err(e),
     }
 }

@@ -15,13 +15,12 @@ pub fn create_router(gateway: Gateway) -> Router {
         .route("/responses", post(handler::responses_proxy))
         .route("/v1/messages", post(handler::anthropic_proxy))
         .route("/messages", post(handler::anthropic_proxy))
-        .route(
-            "/v1beta/models/:model_action",
-            post(handler::gemini_proxy),
-        )
+        .route("/v1/embeddings", post(handler::embeddings_proxy))
+        .route("/embeddings", post(handler::embeddings_proxy))
+        .route("/v1beta/models/:model_action",post(handler::gemini_proxy))
+        .route("/models/:model_action", post(handler::gemini_proxy))
         .route("/v1/models", get(handler::models_list))
         .route("/models", get(handler::models_list))
-        .route("/models/:model_action", post(handler::gemini_proxy))
         .route("/health", get(health));
 
     let cors = build_proxy_cors_layer(&gateway.config.proxy_cors_origins, gateway.config.proxy_port);
@@ -51,6 +50,8 @@ fn build_proxy_cors_layer(origins: &[String], proxy_port: u16) -> CorsLayer {
             header::CONTENT_TYPE,
             header::ACCEPT,
             header::HeaderName::from_static("x-api-key"),
+            header::HeaderName::from_static("x-nyro-cache"),
+            header::HeaderName::from_static("x-nyro-cache-ttl"),
             header::HeaderName::from_static("anthropic-version"),
         ])
 }
