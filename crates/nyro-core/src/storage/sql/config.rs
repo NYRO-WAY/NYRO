@@ -4,7 +4,6 @@ use std::time::Duration;
 pub enum SqlBackendKind {
     Sqlite,
     Postgres,
-    MySql,
 }
 
 #[derive(Debug, Clone)]

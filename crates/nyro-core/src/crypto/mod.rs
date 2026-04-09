@@ -1,22 +1,28 @@
 use aes_gcm::aead::{Aead, KeyInit, OsRng};
 use aes_gcm::{Aes256Gcm, Nonce};
 use base64::Engine;
+use std::sync::OnceLock;
 
 const KEYRING_SERVICE: &str = "nyro-gateway";
 const KEYRING_USER: &str = "master-key";
 const NONCE_LEN: usize = 12;
+static MASTER_KEY_CACHE: OnceLock<[u8; 32]> = OnceLock::new();
 
 fn get_or_create_master_key() -> anyhow::Result<[u8; 32]> {
+    if let Some(key) = MASTER_KEY_CACHE.get() {
+        return Ok(*key);
+    }
+
     let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)?;
 
-    match entry.get_password() {
+    let key = match entry.get_password() {
         Ok(b64) => {
             let bytes = base64::engine::general_purpose::STANDARD.decode(&b64)?;
             let mut key = [0u8; 32];
             if bytes.len() >= 32 {
                 key.copy_from_slice(&bytes[..32]);
             }
-            Ok(key)
+            key
         }
         Err(_) => {
             let key = Aes256Gcm::generate_key(OsRng);
@@ -26,9 +32,12 @@ fn get_or_create_master_key() -> anyhow::Result<[u8; 32]> {
                 .map_err(|e| anyhow::anyhow!("failed to persist master key to keyring: {e}"))?;
             let mut arr = [0u8; 32];
             arr.copy_from_slice(key.as_slice());
-            Ok(arr)
+            arr
         }
-    }
+    };
+
+    let _ = MASTER_KEY_CACHE.set(key);
+    Ok(key)
 }
 
 pub fn encrypt(plaintext: &str) -> String {

@@ -23,7 +23,7 @@ use config::{
 };
 use logging::LogEntry;
 use storage::sql::config::SqlBackendConfig;
-use storage::{DynStorage, MySqlStorage, PostgresStorage, SqliteStorage};
+use storage::{DynStorage, PostgresStorage, SqliteStorage};
 use crate::router::health::HealthRegistry;
 use crate::cache::{
     CacheBackend, CacheConfig, CacheStorageKind, DatabaseCacheBackend, InMemoryCacheBackend,
@@ -74,10 +74,6 @@ impl Gateway {
             StorageBackendKind::Postgres => {
                 let backend_config = to_sql_backend_config(&config.storage.postgres, "postgres")?;
                 Arc::new(PostgresStorage::connect(backend_config, sqlite_fallback.clone()).await?)
-            }
-            StorageBackendKind::MySql => {
-                let backend_config = to_sql_backend_config(&config.storage.mysql, "mysql")?;
-                Arc::new(MySqlStorage::connect(backend_config, sqlite_fallback.clone()).await?)
             }
         };
 

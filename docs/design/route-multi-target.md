@@ -236,30 +236,12 @@ CREATE TABLE IF NOT EXISTS route_targets (
 CREATE INDEX IF NOT EXISTS idx_route_targets_route_id ON route_targets(route_id);
 ```
 
-#### MySQL
-
-```sql
-CREATE TABLE IF NOT EXISTS route_targets (
-    id          VARCHAR(64) PRIMARY KEY,
-    route_id    VARCHAR(64) NOT NULL,
-    provider_id VARCHAR(64) NOT NULL,
-    model       VARCHAR(255) NOT NULL,
-    weight      INT DEFAULT 100,
-    priority    INT DEFAULT 1,
-    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT fk_rt_route FOREIGN KEY (route_id) REFERENCES routes(id) ON DELETE CASCADE,
-    CONSTRAINT fk_rt_provider FOREIGN KEY (provider_id) REFERENCES providers(id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE INDEX idx_route_targets_route_id ON route_targets(route_id);
-```
-
 ### 4.3 数据迁移
 
 现有路由自动迁移为 `route_targets` 记录，策略默认 `weighted`：
 
 ```sql
--- 主目标迁移（SQLite 语法，PG/MySQL UUID 生成方式不同）
+-- 主目标迁移（SQLite 语法，PG 需替换 UUID 生成方式）
 INSERT INTO route_targets (id, route_id, provider_id, model, weight, priority)
 SELECT
     lower(hex(randomblob(16))),
@@ -378,12 +360,12 @@ ORDER BY r.id, rt.priority, rt.weight DESC;
 
 ### 6.3 存储实现矩阵
 
-| Trait 方法 | SQLite | PostgreSQL | MySQL |
-|-----------|--------|------------|-------|
-| `list_targets_by_route` | ✓ | ✓ | ✓ |
-| `set_targets` | ✓ | ✓ | ✓ |
-| `delete_targets_by_route` | ✓ | ✓ | ✓ |
-| `load_active_snapshot` (改) | ✓ | ✓ | ✓ |
+| Trait 方法 | SQLite | PostgreSQL |
+|-----------|--------|------------|
+| `list_targets_by_route` | ✓ | ✓ |
+| `set_targets` | ✓ | ✓ |
+| `delete_targets_by_route` | ✓ | ✓ |
+| `load_active_snapshot` (改) | ✓ | ✓ |
 
 ---
 
@@ -1003,7 +985,6 @@ ALTER TABLE request_logs ADD COLUMN attempts INTEGER DEFAULT 1;
 | 存储 trait | `storage/traits.rs` 或 `storage/mod.rs` | 新增 RouteTargetStore，修改 RouteSnapshotStore |
 | SQLite | `db/mod.rs`, `storage/sqlite/mod.rs` | 建表、迁移、CRUD |
 | PostgreSQL | `storage/postgres/mod.rs` | 建表、迁移、CRUD |
-| MySQL | `storage/mysql/mod.rs` | 建表、迁移、CRUD |
 | 路由缓存 | `router/matcher.rs`, `router/mod.rs` | RouteCache 改用 RouteWithTargets |
 | 目标选择 | `router/selector.rs`（新增） | TargetSelector + weighted/priority 实现 |
 | 健康检查 | `router/health.rs`（新增） | HealthRegistry |

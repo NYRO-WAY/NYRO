@@ -59,7 +59,7 @@ struct Args {
     #[arg(long, default_value = "./webui/dist", help = "Path to webui static files")]
     webui_dir: String,
 
-    #[arg(long, value_parser = ["sqlite", "postgres", "mysql"], default_value = "sqlite")]
+    #[arg(long, value_parser = ["sqlite", "postgres"], default_value = "sqlite")]
     storage_backend: String,
 
     #[arg(
@@ -362,8 +362,7 @@ fn build_storage_config(args: &Args) -> anyhow::Result<GatewayStorageConfig> {
         sqlite: SqliteStorageConfig {
             migrate_on_start: args.sqlite_migrate_on_start,
         },
-        postgres: sql.clone(),
-        mysql: sql,
+        postgres: sql,
     })
 }
 
@@ -371,7 +370,6 @@ fn parse_storage_backend(value: &str) -> anyhow::Result<StorageBackendKind> {
     match value.trim().to_ascii_lowercase().as_str() {
         "sqlite" => Ok(StorageBackendKind::Sqlite),
         "postgres" => Ok(StorageBackendKind::Postgres),
-        "mysql" => Ok(StorageBackendKind::MySql),
         other => anyhow::bail!("unsupported storage backend: {other}"),
     }
 }

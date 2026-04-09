@@ -774,7 +774,7 @@ pub trait EgressEncoder {
 | **Rust 性能** | 协议转换零 GC，流式 SSE 内存可控 |
 | **语义层 (semantic/)** | `tool_correlation`、`reasoning` 归一化是 LiteLLM 没有的独立层 |
 | **Tauri 桌面端** | 本地化体验，LiteLLM 无此形态 |
-| **多存储后端** | SQLite/Postgres/MySQL/MongoDB，LiteLLM 仅 Prisma |
+| **多存储后端** | SQLite/Postgres/Memory，LiteLLM 仅 Prisma |
 | **轻量部署** | 单二进制，无 Python 运行时依赖 |
 | **InternalRequest/Response 中间表示** | 比 LiteLLM 的 per-provider transform 更清晰的双层架构 |
 

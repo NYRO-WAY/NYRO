@@ -2,14 +2,13 @@
 pub enum SqlDialect {
     Sqlite,
     Postgres,
-    MySql,
 }
 
 impl SqlDialect {
     pub fn placeholder(self, index: usize) -> String {
         match self {
             SqlDialect::Postgres => format!("${index}"),
-            SqlDialect::Sqlite | SqlDialect::MySql => "?".to_string(),
+            SqlDialect::Sqlite => "?".to_string(),
         }
     }
 
@@ -19,7 +18,6 @@ impl SqlDialect {
 
     pub fn upsert_keyword(self) -> &'static str {
         match self {
-            SqlDialect::MySql => "ON DUPLICATE KEY UPDATE",
             SqlDialect::Sqlite | SqlDialect::Postgres => "ON CONFLICT",
         }
     }

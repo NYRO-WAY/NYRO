@@ -11,7 +11,6 @@ Covers, per backend:
 Backends:
 - sqlite
 - postgres (requires DB_URL, falls back to /workspace/.env)
-- mysql (requires NYRO_SMOKE_MYSQL_BASE_URL / MYSQL_BASE_URL, or NYRO_SMOKE_MYSQL_URL / MYSQL_URL)
 """
 
 from __future__ import annotations
@@ -66,14 +65,6 @@ def build_env() -> dict[str, str]:
     for key, value in load_workspace_env().items():
         env.setdefault(key, value)
     return env
-
-
-def first_env_value(env: dict[str, str], keys: list[str]) -> str | None:
-    for key in keys:
-        value = env.get(key)
-        if value and value.strip():
-            return value.strip()
-    return None
 
 
 def make_isolated_name(prefix: str, fallback_prefix: str, *, max_len: int = 63) -> str:
@@ -154,9 +145,8 @@ def write_harness(project_dir: Path) -> None:
         nyro-core = {{ path = "{REPO_ROOT / 'crates/nyro-core'}" }}
         reqwest = {{ version = "0.12", features = ["json"] }}
         serde_json = "1"
-        sqlx = {{ version = "0.8", features = ["runtime-tokio", "postgres", "mysql"] }}
+        sqlx = {{ version = "0.8", features = ["runtime-tokio", "postgres"] }}
         tokio = {{ version = "1", features = ["macros", "rt-multi-thread", "time"] }}
-        url = "2"
         """
     ).strip() + "\n"
 
@@ -171,7 +161,6 @@ def write_harness(project_dir: Path) -> None:
         use nyro_core::db::models::{CreateApiKey, CreateProvider, CreateRoute, LogQuery};
         use nyro_core::{logging, Gateway};
         use reqwest::StatusCode;
-        use sqlx::mysql::MySqlPoolOptions;
         use sqlx::postgres::PgPoolOptions;
 
         #[tokio::main]
@@ -215,34 +204,6 @@ def write_harness(project_dir: Path) -> None:
                     config.storage.backend = StorageBackendKind::Postgres;
                     config.storage.postgres = SqlStorageConfig {
                         url: Some(with_search_path(&base_url, &schema)),
-                        ..Default::default()
-                    };
-                }
-                "mysql" => {
-                    let db_url = if let Ok(base_url) = env::var("NYRO_SMOKE_MYSQL_BASE_URL") {
-                        let database =
-                            env::var("NYRO_SMOKE_MYSQL_DATABASE").context("missing NYRO_SMOKE_MYSQL_DATABASE")?;
-                        ensure!(
-                            database
-                                .chars()
-                                .all(|c| c.is_ascii_alphanumeric() || c == '_'),
-                            "invalid mysql database name"
-                        );
-
-                        let pool = MySqlPoolOptions::new().max_connections(1).connect(&base_url).await?;
-                        let create_sql = format!(
-                            "CREATE DATABASE IF NOT EXISTS `{database}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
-                        );
-                        sqlx::query(&create_sql).execute(&pool).await?;
-                        pool.close().await;
-                        with_mysql_database(&base_url, &database)?
-                    } else {
-                        env::var("NYRO_SMOKE_MYSQL_URL").context("missing NYRO_SMOKE_MYSQL_URL")?
-                    };
-
-                    config.storage.backend = StorageBackendKind::MySql;
-                    config.storage.mysql = SqlStorageConfig {
-                        url: Some(db_url),
                         ..Default::default()
                     };
                 }
@@ -365,12 +326,6 @@ def write_harness(project_dir: Path) -> None:
                 format!("{base_url}?{opt}")
             }
         }
-
-        fn with_mysql_database(base_url: &str, database: &str) -> anyhow::Result<String> {
-            let mut parsed = url::Url::parse(base_url).context("invalid mysql base url")?;
-            parsed.set_path(&format!("/{database}"));
-            Ok(parsed.to_string())
-        }
         """
     ).strip() + "\n"
 
@@ -409,29 +364,6 @@ def run_backend(backend: str, *, env: dict[str, str], upstream_port: int, work_d
             raise RuntimeError("postgres smoke requires DB_URL or DATABASE_URL")
         backend_env["NYRO_SMOKE_PG_BASE_URL"] = db_url
         backend_env["NYRO_SMOKE_PG_SCHEMA"] = make_isolated_name("nyro_pg_smoke", "nyro_pg_smoke")
-    elif backend == "mysql":
-        mysql_base_url = first_env_value(
-            backend_env,
-            ["NYRO_SMOKE_MYSQL_BASE_URL", "MYSQL_BASE_URL"],
-        )
-        mysql_url = first_env_value(
-            backend_env,
-            ["NYRO_SMOKE_MYSQL_URL", "MYSQL_URL", "DATABASE_URL_MYSQL", "MYSQL_DATABASE_URL"],
-        )
-        if mysql_base_url:
-            db_prefix = (
-                first_env_value(backend_env, ["NYRO_SMOKE_MYSQL_DATABASE", "MYSQL_DATABASE"])
-                or "nyro_mysql_smoke"
-            )
-            backend_env["NYRO_SMOKE_MYSQL_BASE_URL"] = mysql_base_url
-            backend_env["NYRO_SMOKE_MYSQL_DATABASE"] = make_isolated_name(db_prefix, "nyro_mysql_smoke")
-        elif mysql_url:
-            backend_env["NYRO_SMOKE_MYSQL_URL"] = mysql_url
-        else:
-            raise RuntimeError(
-                "mysql smoke requires NYRO_SMOKE_MYSQL_BASE_URL / MYSQL_BASE_URL, "
-                "or NYRO_SMOKE_MYSQL_URL / MYSQL_URL / DATABASE_URL_MYSQL"
-            )
     return run_cmd(
         ["cargo", "run", "--quiet", "--manifest-path", str(work_dir / "Cargo.toml")],
         env=backend_env,
@@ -444,7 +376,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--backend",
         action="append",
-        choices=["sqlite", "postgres", "mysql"],
+        choices=["sqlite", "postgres"],
         help="Backend(s) to test. Defaults to sqlite + postgres.",
     )
     return parser.parse_args()

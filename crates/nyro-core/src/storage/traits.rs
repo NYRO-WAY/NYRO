@@ -37,7 +37,6 @@ pub struct ApiKeyAccessRecord {
 pub enum StorageBackend {
     Sqlite,
     Postgres,
-    MySql,
 }
 
 #[derive(Debug, Clone)]

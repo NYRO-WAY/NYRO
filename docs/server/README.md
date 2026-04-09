@@ -37,7 +37,7 @@ nyro-server --config config.yaml
 | `--admin-cors-origin` | 自动 | Admin API CORS 源（可重复） |
 | `--proxy-cors-origin` | 自动 | 代理 CORS 源（可重复） |
 | `--webui-dir` | `./webui/dist` | WebUI 静态文件目录 |
-| `--storage-backend` | `sqlite` | 存储后端：`sqlite` / `postgres` / `mysql` |
+| `--storage-backend` | `sqlite` | 存储后端：`sqlite` / `postgres` |
 | `--storage-dsn-env` | `NYRO_STORAGE_DSN` | 读取存储 DSN 的环境变量名 |
 | `--sqlite-migrate-on-start` | `true` | 启动时自动运行 SQLite 迁移 |
 | `--storage-max-connections` | `10` | 连接池最大连接数 |
@@ -63,13 +63,6 @@ nyro-server --data-dir ~/.nyro
 ```bash
 export NYRO_STORAGE_DSN="postgres://user:pass@localhost:5432/nyro"
 nyro-server --storage-backend postgres
-```
-
-#### MySQL
-
-```bash
-export NYRO_STORAGE_DSN="mysql://user:pass@localhost:3306/nyro"
-nyro-server --storage-backend mysql
 ```
 
 ### Admin API 安全
@@ -239,7 +232,7 @@ providers:
 | Admin API | 完整 | 不启动 |
 | WebUI | 完整 | 不启动 |
 | 请求日志 | DB 存储 + WebUI 查看 | 仅 stdout |
-| 数据持久化 | SQLite/Postgres/MySQL | 无（进程重启从 YAML 恢复） |
+| 数据持久化 | SQLite/Postgres | 无（进程重启从 YAML 恢复） |
 | 部署依赖 | 二进制 + 存储目录 | 二进制 + YAML 文件 |
 
 ## 使用示例

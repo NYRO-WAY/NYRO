@@ -8,7 +8,6 @@ pub enum StorageBackendKind {
     #[default]
     Sqlite,
     Postgres,
-    MySql,
 }
 
 #[derive(Debug, Clone)]
@@ -62,7 +61,6 @@ pub struct GatewayStorageConfig {
     pub backend: StorageBackendKind,
     pub sqlite: SqliteStorageConfig,
     pub postgres: SqlStorageConfig,
-    pub mysql: SqlStorageConfig,
 }
 
 impl Default for GatewayStorageConfig {
@@ -71,7 +69,6 @@ impl Default for GatewayStorageConfig {
             backend: StorageBackendKind::Sqlite,
             sqlite: SqliteStorageConfig::default(),
             postgres: SqlStorageConfig::default(),
-            mysql: SqlStorageConfig::default(),
         }
     }
 }
