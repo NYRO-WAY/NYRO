@@ -2,13 +2,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use clap::Parser;
 use axum::http::{HeaderValue, Method, header};
+use clap::Parser;
 use nyro_core::{
     Gateway,
-    cache::{
-        CacheConfig, CacheStorageKind, ExactCacheConfig, SemanticCacheConfig, VectorStorageKind,
-    },
+    cache::{CacheConfig, ExactCacheConfig, SemanticCacheConfig},
     config::{
         GatewayConfig, GatewayStorageConfig, SqlStorageConfig, SqliteStorageConfig,
         StorageBackendKind,
@@ -56,7 +54,11 @@ struct Args {
     )]
     proxy_cors_origins: Vec<String>,
 
-    #[arg(long, default_value = "./webui/dist", help = "Path to webui static files")]
+    #[arg(
+        long,
+        default_value = "./webui/dist",
+        help = "Path to webui static files"
+    )]
     webui_dir: String,
 
     #[arg(long, value_parser = ["sqlite", "postgres"], default_value = "sqlite")]
@@ -101,8 +103,6 @@ struct Args {
 
     #[arg(long, default_value_t = false)]
     cache_exact_enabled: bool,
-    #[arg(long, default_value = "memory")]
-    cache_exact_storage: String,
     #[arg(long, default_value_t = 3600)]
     cache_exact_ttl: u64,
     #[arg(long, default_value_t = 1000)]
@@ -110,8 +110,6 @@ struct Args {
 
     #[arg(long, default_value_t = false)]
     cache_semantic_enabled: bool,
-    #[arg(long, default_value = "memory")]
-    cache_semantic_storage: String,
     #[arg(long, default_value = "")]
     cache_semantic_route: String,
     #[arg(long, default_value_t = 0.92)]
@@ -269,30 +267,14 @@ async fn run_full(args: &Args) -> anyhow::Result<()> {
 }
 
 fn build_cache_config_from_args(args: &Args) -> anyhow::Result<CacheConfig> {
-    let exact_storage = match args.cache_exact_storage.trim().to_ascii_lowercase().as_str() {
-        "memory" | "in_memory" | "inmemory" => CacheStorageKind::Memory,
-        "database" => CacheStorageKind::Database,
-        other => anyhow::bail!("unsupported exact cache storage: {other}"),
-    };
-    let semantic_storage = match args
-        .cache_semantic_storage
-        .trim()
-        .to_ascii_lowercase()
-        .as_str()
-    {
-        "memory" => VectorStorageKind::Memory,
-        other => anyhow::bail!("unsupported semantic cache storage: {other}"),
-    };
     Ok(CacheConfig {
         exact: ExactCacheConfig {
             enabled: args.cache_exact_enabled,
-            storage: exact_storage,
             default_ttl: Duration::from_secs(args.cache_exact_ttl.max(1)),
             max_entries: args.cache_exact_max_entries.max(1),
         },
         semantic: SemanticCacheConfig {
             enabled: args.cache_semantic_enabled,
-            storage: semantic_storage,
             embedding_route: args.cache_semantic_route.trim().to_string(),
             similarity_threshold: args.cache_semantic_threshold,
             vector_dimensions: args.cache_semantic_dimensions.max(1),
@@ -307,7 +289,10 @@ fn is_loopback_host(host: &str) -> bool {
 }
 
 fn default_local_origins(ports: &[u16]) -> Vec<String> {
-    let mut origins = vec!["tauri://localhost".to_string(), "http://tauri.localhost".to_string()];
+    let mut origins = vec![
+        "tauri://localhost".to_string(),
+        "http://tauri.localhost".to_string(),
+    ];
     for port in ports {
         origins.push(format!("http://127.0.0.1:{port}"));
         origins.push(format!("http://localhost:{port}"));
@@ -335,7 +320,13 @@ fn parse_allow_origin(origins: &[String]) -> AllowOrigin {
 fn build_cors_layer(origins: &[String]) -> CorsLayer {
     CorsLayer::new()
         .allow_origin(parse_allow_origin(origins))
-        .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE, Method::OPTIONS])
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
         .allow_headers([
             header::AUTHORIZATION,
             header::CONTENT_TYPE,
@@ -374,10 +365,7 @@ fn parse_storage_backend(value: &str) -> anyhow::Result<StorageBackendKind> {
     }
 }
 
-fn resolve_storage_dsn(
-    args: &Args,
-    backend: StorageBackendKind,
-) -> anyhow::Result<Option<String>> {
+fn resolve_storage_dsn(args: &Args, backend: StorageBackendKind) -> anyhow::Result<Option<String>> {
     if matches!(backend, StorageBackendKind::Sqlite) {
         return Ok(None);
     }

@@ -1,12 +1,24 @@
 pub mod models;
 
 use std::path::Path;
+use std::sync::Once;
 
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use sqlite_vec::sqlite3_vec_init;
 use sqlx::Row;
 use sqlx::SqlitePool;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+
+static SQLITE_VEC_INIT: Once = Once::new();
+const VECTOR_DIMENSIONS_SETTING_KEY: &str = "vector_embedding_dimensions";
 
 pub async fn init_pool(data_dir: &Path) -> anyhow::Result<SqlitePool> {
+    SQLITE_VEC_INIT.call_once(|| unsafe {
+        // Register sqlite-vec once per process. All later SQLite connections can use vec0 tables.
+        libsqlite3_sys::sqlite3_auto_extension(Some(std::mem::transmute(
+            sqlite3_vec_init as *const (),
+        )));
+    });
+
     std::fs::create_dir_all(data_dir)?;
     let db_path = data_dir.join("gateway.db");
 
@@ -24,7 +36,7 @@ pub async fn init_pool(data_dir: &Path) -> anyhow::Result<SqlitePool> {
     Ok(pool)
 }
 
-pub async fn migrate(pool: &SqlitePool) -> anyhow::Result<()> {
+pub async fn migrate(pool: &SqlitePool, vector_dimensions: usize) -> anyhow::Result<()> {
     sqlx::raw_sql(INIT_SQL).execute(pool).await?;
     ensure_provider_column(pool, "vendor", "TEXT").await?;
     ensure_provider_column(pool, "preset_key", "TEXT").await?;
@@ -50,6 +62,7 @@ pub async fn migrate(pool: &SqlitePool) -> anyhow::Result<()> {
     ensure_api_key_column(pool, "rpd", "INTEGER").await?;
     ensure_route_targets_table(pool).await?;
     ensure_cache_entries_table(pool).await?;
+    ensure_semantic_cache_vectors_table(pool, vector_dimensions).await?;
     backfill_provider_vendor(pool).await?;
     backfill_route_fields(pool).await?;
     backfill_route_targets(pool).await?;
@@ -57,7 +70,9 @@ pub async fn migrate(pool: &SqlitePool) -> anyhow::Result<()> {
 }
 
 async fn backfill_provider_vendor(pool: &SqlitePool) -> anyhow::Result<()> {
-    if column_exists(pool, "providers", "vendor").await? && column_exists(pool, "providers", "preset_key").await? {
+    if column_exists(pool, "providers", "vendor").await?
+        && column_exists(pool, "providers", "preset_key").await?
+    {
         sqlx::query(
             "UPDATE providers \
              SET vendor = lower(trim(preset_key)) \
@@ -183,9 +198,11 @@ async fn ensure_api_key_tables(pool: &SqlitePool) -> anyhow::Result<()> {
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_api_keys_key ON api_keys(key)")
         .execute(pool)
         .await?;
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_api_key_routes_route_id ON api_key_routes(route_id)")
-        .execute(pool)
-        .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_api_key_routes_route_id ON api_key_routes(route_id)",
+    )
+    .execute(pool)
+    .await?;
 
     Ok(())
 }
@@ -224,11 +241,67 @@ async fn ensure_cache_entries_table(pool: &SqlitePool) -> anyhow::Result<()> {
     .execute(pool)
     .await?;
 
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_cache_entries_expires_at ON cache_entries(expires_at)")
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_cache_entries_expires_at ON cache_entries(expires_at)",
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+pub async fn recreate_vec0_table(pool: &SqlitePool, vector_dimensions: usize) -> anyhow::Result<()> {
+    let dimensions = vector_dimensions.max(1);
+    sqlx::query("DROP TABLE IF EXISTS semantic_cache_vectors")
         .execute(pool)
         .await?;
 
+    let ddl = format!(
+        r#"CREATE VIRTUAL TABLE semantic_cache_vectors USING vec0(
+            partition TEXT partition key,
+            cache_key TEXT,
+            dimensions INTEGER,
+            embedding float[{dimensions}],
+            +data BLOB,
+            created_at INTEGER
+        )"#
+    );
+    sqlx::query(&ddl).execute(pool).await?;
+    sqlx::query(
+        "INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now'))
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+    )
+    .bind(VECTOR_DIMENSIONS_SETTING_KEY)
+    .bind(dimensions.to_string())
+    .execute(pool)
+    .await?;
     Ok(())
+}
+
+async fn ensure_semantic_cache_vectors_table(
+    pool: &SqlitePool,
+    vector_dimensions: usize,
+) -> anyhow::Result<()> {
+    let dimensions = vector_dimensions.max(1);
+    let stored_dimension = sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = ?")
+        .bind(VECTOR_DIMENSIONS_SETTING_KEY)
+        .fetch_optional(pool)
+        .await?
+        .and_then(|raw| raw.trim().parse::<usize>().ok());
+    let table_exists = semantic_cache_vectors_table_exists(pool).await?;
+    if !table_exists || stored_dimension != Some(dimensions) {
+        recreate_vec0_table(pool, dimensions).await?;
+    }
+    Ok(())
+}
+
+async fn semantic_cache_vectors_table_exists(pool: &SqlitePool) -> anyhow::Result<bool> {
+    let count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'semantic_cache_vectors'",
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok(count > 0)
 }
 
 async fn backfill_route_fields(pool: &SqlitePool) -> anyhow::Result<()> {
@@ -286,12 +359,18 @@ async fn backfill_route_targets(pool: &SqlitePool) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn column_exists(pool: &SqlitePool, table_name: &str, column_name: &str) -> anyhow::Result<bool> {
+async fn column_exists(
+    pool: &SqlitePool,
+    table_name: &str,
+    column_name: &str,
+) -> anyhow::Result<bool> {
     let pragma = format!("PRAGMA table_info({table_name})");
     let rows = sqlx::query(&pragma).fetch_all(pool).await?;
-    Ok(rows
-        .iter()
-        .any(|row| row.try_get::<String, _>("name").map(|name| name == column_name).unwrap_or(false)))
+    Ok(rows.iter().any(|row| {
+        row.try_get::<String, _>("name")
+            .map(|name| name == column_name)
+            .unwrap_or(false)
+    }))
 }
 
 const INIT_SQL: &str = r#"

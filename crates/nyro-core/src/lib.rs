@@ -15,20 +15,20 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context;
 use dashmap::DashMap;
-use tokio::sync::mpsc;
+use sqlx::{Pool, Postgres, SqlitePool};
 use tokio::sync::broadcast;
+use tokio::sync::mpsc;
 
-use config::{
-    GatewayConfig, SqlStorageConfig, StorageBackendKind,
+use crate::cache::{
+    CacheBackend, CacheConfig, DatabaseCacheBackend, InMemoryCacheBackend, MemoryVectorStore,
+    PgVectorStore, SqliteVecVectorStore, VectorStore,
 };
+use crate::router::health::HealthRegistry;
+use config::{GatewayConfig, SqlStorageConfig, StorageBackendKind};
 use logging::LogEntry;
 use storage::sql::config::SqlBackendConfig;
+use storage::postgres::recreate_pg_vector_table;
 use storage::{DynStorage, PostgresStorage, SqliteStorage};
-use crate::router::health::HealthRegistry;
-use crate::cache::{
-    CacheBackend, CacheConfig, CacheStorageKind, DatabaseCacheBackend, InMemoryCacheBackend,
-    MemoryVectorStore, VectorStore, VectorStorageKind,
-};
 
 #[derive(Clone, Debug)]
 pub struct CapabilityCacheEntry {
@@ -36,10 +36,18 @@ pub struct CapabilityCacheEntry {
     pub cached_at: Instant,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RuntimeStorageKind {
+    Memory,
+    Sqlite,
+    Postgres,
+}
+
 #[derive(Clone)]
 pub struct Gateway {
     pub config: GatewayConfig,
     pub storage: DynStorage,
+    pub storage_kind: RuntimeStorageKind,
     pub http_client: reqwest::Client,
     proxy_client_cache: Arc<tokio::sync::RwLock<Option<ProxyClientCache>>>,
     pub route_cache: Arc<tokio::sync::RwLock<router::RouteCache>>,
@@ -50,6 +58,8 @@ pub struct Gateway {
     pub cache_backend: Arc<tokio::sync::RwLock<Option<Arc<dyn CacheBackend>>>>,
     pub vector_store: Arc<tokio::sync::RwLock<Option<Arc<dyn VectorStore>>>>,
     pub cache_in_flight: Arc<DashMap<String, broadcast::Sender<Vec<u8>>>>,
+    sqlite_pool: Option<SqlitePool>,
+    postgres_pool: Option<Pool<Postgres>>,
 }
 
 #[derive(Clone)]
@@ -60,20 +70,44 @@ struct ProxyClientCache {
 
 impl Gateway {
     pub async fn new(config: GatewayConfig) -> anyhow::Result<(Self, mpsc::Receiver<LogEntry>)> {
-        let sqlite_storage = if config.storage.sqlite.migrate_on_start {
-            SqliteStorage::from_config(&config).await?
-        } else {
-            let pool = db::init_pool(&config.data_dir).await?;
-            SqliteStorage::from_pool(pool)
-        };
-
-        let sqlite_fallback: DynStorage = Arc::new(sqlite_storage.clone());
-
-        let storage: DynStorage = match config.storage.backend {
-            StorageBackendKind::Sqlite => sqlite_fallback.clone(),
+        let (storage_kind, storage, sqlite_pool, postgres_pool): (
+            RuntimeStorageKind,
+            DynStorage,
+            Option<SqlitePool>,
+            Option<Pool<Postgres>>,
+        ) = match config.storage.backend {
+            StorageBackendKind::Sqlite => {
+                let sqlite_storage = if config.storage.sqlite.migrate_on_start {
+                    SqliteStorage::from_config(&config).await?
+                } else {
+                    let pool = db::init_pool(&config.data_dir).await?;
+                    SqliteStorage::from_pool_with_dimensions(
+                        pool,
+                        config.cache.semantic.vector_dimensions,
+                    )
+                };
+                let pool = sqlite_storage.pool().clone();
+                (
+                    RuntimeStorageKind::Sqlite,
+                    Arc::new(sqlite_storage),
+                    Some(pool),
+                    None,
+                )
+            }
             StorageBackendKind::Postgres => {
                 let backend_config = to_sql_backend_config(&config.storage.postgres, "postgres")?;
-                Arc::new(PostgresStorage::connect(backend_config, sqlite_fallback.clone()).await?)
+                let postgres_storage = PostgresStorage::connect_with_vector_dimensions(
+                    backend_config,
+                    config.cache.semantic.vector_dimensions,
+                )
+                .await?;
+                let pool = postgres_storage.pool().clone();
+                (
+                    RuntimeStorageKind::Postgres,
+                    Arc::new(postgres_storage),
+                    None,
+                    Some(pool),
+                )
             }
         };
 
@@ -86,12 +120,23 @@ impl Gateway {
             anyhow::bail!("selected storage backend is not reachable");
         }
 
-        Self::from_storage(config, storage).await
+        Self::from_storage_with_kind(config, storage, storage_kind, sqlite_pool, postgres_pool)
+            .await
     }
 
     pub async fn from_storage(
         config: GatewayConfig,
         storage: DynStorage,
+    ) -> anyhow::Result<(Self, mpsc::Receiver<LogEntry>)> {
+        Self::from_storage_with_kind(config, storage, RuntimeStorageKind::Memory, None, None).await
+    }
+
+    async fn from_storage_with_kind(
+        config: GatewayConfig,
+        storage: DynStorage,
+        storage_kind: RuntimeStorageKind,
+        sqlite_pool: Option<SqlitePool>,
+        postgres_pool: Option<Pool<Postgres>>,
     ) -> anyhow::Result<(Self, mpsc::Receiver<LogEntry>)> {
         let http_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(300))
@@ -109,6 +154,7 @@ impl Gateway {
         let gw = Self {
             config,
             storage,
+            storage_kind,
             http_client,
             proxy_client_cache: Arc::new(tokio::sync::RwLock::new(None)),
             route_cache,
@@ -119,6 +165,8 @@ impl Gateway {
             cache_backend: Arc::new(tokio::sync::RwLock::new(None)),
             vector_store: Arc::new(tokio::sync::RwLock::new(None)),
             cache_in_flight: Arc::new(DashMap::new()),
+            sqlite_pool,
+            postgres_pool,
         };
 
         let runtime_cache = gw
@@ -152,15 +200,14 @@ impl Gateway {
         let current = self.runtime_cache_config.read().await.clone();
 
         let exact_needs_rebuild = current.exact.enabled != next.exact.enabled
-            || current.exact.storage != next.exact.storage
             || current.exact.max_entries != next.exact.max_entries;
         let next_cache_backend: Option<Arc<dyn CacheBackend>> = if exact_needs_rebuild {
             if next.exact.enabled {
-                match next.exact.storage {
-                    CacheStorageKind::Memory => {
+                match self.storage_kind {
+                    RuntimeStorageKind::Memory => {
                         Some(Arc::new(InMemoryCacheBackend::new(next.exact.max_entries)))
                     }
-                    CacheStorageKind::Database => {
+                    RuntimeStorageKind::Sqlite | RuntimeStorageKind::Postgres => {
                         Some(Arc::new(DatabaseCacheBackend::new(self.storage.clone())))
                     }
                 }
@@ -172,10 +219,38 @@ impl Gateway {
         };
 
         let semantic_needs_rebuild = current.semantic.enabled != next.semantic.enabled
-            || current.semantic.storage != next.semantic.storage
             || current.semantic.max_entries != next.semantic.max_entries
             || current.semantic.embedding_route != next.semantic.embedding_route
             || current.semantic.vector_dimensions != next.semantic.vector_dimensions;
+
+        if current.semantic.vector_dimensions != next.semantic.vector_dimensions {
+            let previous_vector_store = self.vector_store.read().await.clone();
+            *self.vector_store.write().await = None;
+
+            let recreate_result = match self.storage_kind {
+                RuntimeStorageKind::Memory => Ok(()),
+                RuntimeStorageKind::Sqlite => {
+                    let pool = self
+                        .sqlite_pool
+                        .as_ref()
+                        .context("sqlite pool unavailable during vector table recreate")?;
+                    db::recreate_vec0_table(pool, next.semantic.vector_dimensions).await
+                }
+                RuntimeStorageKind::Postgres => {
+                    let pool = self
+                        .postgres_pool
+                        .as_ref()
+                        .context("postgres pool unavailable during vector table recreate")?;
+                    recreate_pg_vector_table(pool, next.semantic.vector_dimensions).await
+                }
+            };
+
+            if let Err(error) = recreate_result {
+                *self.vector_store.write().await = previous_vector_store;
+                return Err(error);
+            }
+        }
+
         let next_vector_store: Option<Arc<dyn VectorStore>> = if semantic_needs_rebuild {
             if next.semantic.enabled {
                 let embedding_route = next.semantic.embedding_route.trim();
@@ -201,9 +276,37 @@ impl Gateway {
                         next.semantic.enabled = false;
                         None
                     } else {
-                        match next.semantic.storage {
-                            VectorStorageKind::Memory => {
+                        match self.storage_kind {
+                            RuntimeStorageKind::Memory => {
                                 Some(Arc::new(MemoryVectorStore::new(next.semantic.max_entries)))
+                            }
+                            RuntimeStorageKind::Sqlite => {
+                                if let Some(pool) = self.sqlite_pool.clone() {
+                                    Some(Arc::new(SqliteVecVectorStore::new(
+                                        pool,
+                                        next.semantic.max_entries,
+                                    )))
+                                } else {
+                                    tracing::warn!(
+                                        "semantic cache selected sqlite storage but sqlite pool is unavailable; semantic cache disabled"
+                                    );
+                                    next.semantic.enabled = false;
+                                    None
+                                }
+                            }
+                            RuntimeStorageKind::Postgres => {
+                                if let Some(pool) = self.postgres_pool.clone() {
+                                    Some(Arc::new(PgVectorStore::new(
+                                        pool,
+                                        next.semantic.max_entries,
+                                    )))
+                                } else {
+                                    tracing::warn!(
+                                        "semantic cache selected postgres storage but postgres pool is unavailable; semantic cache disabled"
+                                    );
+                                    next.semantic.enabled = false;
+                                    None
+                                }
                             }
                         }
                     }
@@ -234,7 +337,10 @@ impl Gateway {
         admin::AdminService::new(self.clone())
     }
 
-    pub async fn http_client_for_provider(&self, use_proxy: bool) -> anyhow::Result<reqwest::Client> {
+    pub async fn http_client_for_provider(
+        &self,
+        use_proxy: bool,
+    ) -> anyhow::Result<reqwest::Client> {
         if !use_proxy {
             return Ok(self.http_client.clone());
         }
@@ -334,10 +440,16 @@ impl Gateway {
 }
 
 fn parse_bool_setting(value: &str) -> bool {
-    matches!(value.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on")
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "1" | "true" | "yes" | "on"
+    )
 }
 
-fn to_sql_backend_config(config: &SqlStorageConfig, backend: &str) -> anyhow::Result<SqlBackendConfig> {
+fn to_sql_backend_config(
+    config: &SqlStorageConfig,
+    backend: &str,
+) -> anyhow::Result<SqlBackendConfig> {
     let url = config
         .configured_url()
         .with_context(|| format!("{backend} backend selected but storage url is empty"))?;

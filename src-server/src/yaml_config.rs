@@ -1,9 +1,7 @@
+use nyro_core::cache::{CacheConfig, ExactCacheConfig, SemanticCacheConfig};
+use serde::Deserialize;
 use std::collections::HashMap;
 use std::time::Duration;
-use nyro_core::cache::{
-    CacheConfig, CacheStorageKind, ExactCacheConfig, SemanticCacheConfig, VectorStorageKind,
-};
-use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 pub struct YamlConfig {
@@ -32,8 +30,6 @@ pub struct YamlExactCacheConfig {
     #[serde(default)]
     pub enabled: bool,
     #[serde(default)]
-    pub storage: Option<String>,
-    #[serde(default)]
     pub default_ttl: Option<u64>,
     #[serde(default)]
     pub max_entries: Option<usize>,
@@ -43,8 +39,6 @@ pub struct YamlExactCacheConfig {
 pub struct YamlSemanticCacheConfig {
     #[serde(default)]
     pub enabled: bool,
-    #[serde(default)]
-    pub storage: Option<String>,
     #[serde(default)]
     pub embedding_route: Option<String>,
     #[serde(default)]
@@ -156,7 +150,10 @@ impl YamlConfig {
                 anyhow::bail!("providers[{i}]: name is required");
             }
             if p.endpoints.is_empty() {
-                anyhow::bail!("providers[{i}] ({}): at least one endpoint is required", p.name);
+                anyhow::bail!(
+                    "providers[{i}] ({}): at least one endpoint is required",
+                    p.name
+                );
             }
             if !p.endpoints.contains_key(&p.default_protocol) {
                 anyhow::bail!(
@@ -199,40 +196,14 @@ impl YamlConfig {
 
 impl YamlCacheConfig {
     pub fn to_cache_config(&self) -> CacheConfig {
-        let exact_storage = match self
-            .exact
-            .storage
-            .as_deref()
-            .unwrap_or("memory")
-            .trim()
-            .to_ascii_lowercase()
-            .as_str()
-        {
-            "database" => CacheStorageKind::Database,
-            "in_memory" | "inmemory" => CacheStorageKind::Memory,
-            _ => CacheStorageKind::Memory,
-        };
-        let semantic_storage = match self
-            .semantic
-            .storage
-            .as_deref()
-            .unwrap_or("memory")
-            .trim()
-            .to_ascii_lowercase()
-            .as_str()
-        {
-            _ => VectorStorageKind::Memory,
-        };
         CacheConfig {
             exact: ExactCacheConfig {
                 enabled: self.exact.enabled,
-                storage: exact_storage,
                 default_ttl: Duration::from_secs(self.exact.default_ttl.unwrap_or(3600)),
                 max_entries: self.exact.max_entries.unwrap_or(1000),
             },
             semantic: SemanticCacheConfig {
                 enabled: self.semantic.enabled,
-                storage: semantic_storage,
                 embedding_route: self.semantic.embedding_route.clone().unwrap_or_default(),
                 similarity_threshold: self.semantic.similarity_threshold.unwrap_or(0.92),
                 vector_dimensions: self.semantic.vector_dimensions.unwrap_or(1536),
@@ -332,7 +303,9 @@ pub fn build_routes(yaml: &YamlConfig, providers: &[Provider]) -> Vec<Route> {
                 target_provider: primary.map(|t| t.provider_id.clone()).unwrap_or_default(),
                 target_model: primary.map(|t| t.model.clone()).unwrap_or_default(),
                 access_control: yr.access_control,
-                route_type: parse_route_type(&yr.route_type).unwrap_or("chat").to_string(),
+                route_type: parse_route_type(&yr.route_type)
+                    .unwrap_or("chat")
+                    .to_string(),
                 cache_exact_ttl: None,
                 cache_semantic_ttl: None,
                 cache_semantic_threshold: None,

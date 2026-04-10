@@ -14,10 +14,12 @@ use crate::logging::LogEntry;
 use crate::storage::sql::config::SqlBackendConfig;
 use crate::storage::sql::pool::RelationalPool;
 use crate::storage::traits::{
-    ApiKeyAccessRecord, ApiKeyStore, AuthAccessStore, CacheStore, DynStorage, LogStore,
-    ProviderStore, ProviderTestResult, RouteSnapshotStore, RouteStore, RouteTargetStore,
-    SettingsStore, Storage, StorageBackend, StorageBootstrap, StorageHealth, UsageWindow,
+    ApiKeyAccessRecord, ApiKeyStore, AuthAccessStore, CacheStore, LogStore, ProviderStore,
+    ProviderTestResult, RouteSnapshotStore, RouteStore, RouteTargetStore, SettingsStore, Storage,
+    StorageBackend, StorageBootstrap, StorageHealth, UsageWindow,
 };
+
+const VECTOR_DIMENSIONS_SETTING_KEY: &str = "vector_embedding_dimensions";
 
 #[derive(Clone)]
 pub struct PostgresAdapter {
@@ -33,9 +35,12 @@ pub struct PostgresHealth {
 
 impl PostgresAdapter {
     pub async fn connect(config: SqlBackendConfig) -> anyhow::Result<Self> {
-        let pool = RelationalPool::connect(crate::storage::sql::config::SqlBackendKind::Postgres, &config)
-            .await
-            .context("connect postgres adapter")?;
+        let pool = RelationalPool::connect(
+            crate::storage::sql::config::SqlBackendKind::Postgres,
+            &config,
+        )
+        .await
+        .context("connect postgres adapter")?;
         let pool = pool
             .as_postgres()
             .cloned()
@@ -67,6 +72,7 @@ impl PostgresAdapter {
 
 #[derive(Clone)]
 pub struct PostgresStorage {
+    pool: Pool<Postgres>,
     provider_store: Arc<PostgresProviderStore>,
     route_store: Arc<PostgresRouteStore>,
     route_target_store: Arc<PostgresRouteTargetStore>,
@@ -78,31 +84,29 @@ pub struct PostgresStorage {
 }
 
 impl PostgresStorage {
-    pub async fn connect(config: SqlBackendConfig, _fallback: DynStorage) -> anyhow::Result<Self> {
+    pub async fn connect(config: SqlBackendConfig) -> anyhow::Result<Self> {
+        Self::connect_with_vector_dimensions(config, 1536).await
+    }
+
+    pub async fn connect_with_vector_dimensions(
+        config: SqlBackendConfig,
+        vector_dimensions: usize,
+    ) -> anyhow::Result<Self> {
         let adapter = PostgresAdapter::connect(config).await?;
-        let provider_store = Arc::new(PostgresProviderStore {
-            pool: adapter.pool().clone(),
+        let pool = adapter.pool().clone();
+        let provider_store = Arc::new(PostgresProviderStore { pool: pool.clone() });
+        let route_store = Arc::new(PostgresRouteStore { pool: pool.clone() });
+        let route_target_store = Arc::new(PostgresRouteTargetStore { pool: pool.clone() });
+        let settings_store = Arc::new(PostgresSettingsStore { pool: pool.clone() });
+        let api_key_store = Arc::new(PostgresApiKeyStore { pool: pool.clone() });
+        let auth_store = Arc::new(PostgresAuthAccessStore { pool: pool.clone() });
+        let log_store = Arc::new(PostgresLogStore { pool: pool.clone() });
+        let bootstrap = Arc::new(PostgresBootstrap {
+            adapter,
+            vector_dimensions: vector_dimensions.max(1),
         });
-        let route_store = Arc::new(PostgresRouteStore {
-            pool: adapter.pool().clone(),
-        });
-        let route_target_store = Arc::new(PostgresRouteTargetStore {
-            pool: adapter.pool().clone(),
-        });
-        let settings_store = Arc::new(PostgresSettingsStore {
-            pool: adapter.pool().clone(),
-        });
-        let api_key_store = Arc::new(PostgresApiKeyStore {
-            pool: adapter.pool().clone(),
-        });
-        let auth_store = Arc::new(PostgresAuthAccessStore {
-            pool: adapter.pool().clone(),
-        });
-        let log_store = Arc::new(PostgresLogStore {
-            pool: adapter.pool().clone(),
-        });
-        let bootstrap = Arc::new(PostgresBootstrap { adapter });
         Ok(Self {
+            pool,
             provider_store,
             route_store,
             route_target_store,
@@ -112,6 +116,73 @@ impl PostgresStorage {
             log_store,
             bootstrap,
         })
+    }
+
+    pub fn pool(&self) -> &Pool<Postgres> {
+        &self.pool
+    }
+}
+
+pub async fn recreate_pg_vector_table(
+    pool: &Pool<Postgres>,
+    vector_dimensions: usize,
+) -> anyhow::Result<()> {
+    let dimensions = vector_dimensions.max(1);
+    let mut tx = pool.begin().await?;
+    let result: anyhow::Result<()> = async {
+        sqlx::query("DROP TABLE IF EXISTS semantic_cache_vectors")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(&semantic_cache_vectors_table_ddl(dimensions))
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query(
+            "CREATE UNIQUE INDEX idx_semantic_cache_vectors_partition_key
+             ON semantic_cache_vectors(partition, cache_key)",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX idx_semantic_cache_vectors_partition_created_at
+             ON semantic_cache_vectors(partition, created_at)",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "CREATE INDEX idx_semantic_cache_vectors_hnsw
+             ON semantic_cache_vectors USING hnsw (embedding vector_cosine_ops)",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "INSERT INTO settings(key, value, updated_at)
+             VALUES($1, $2, CURRENT_TIMESTAMP)
+             ON CONFLICT(key) DO UPDATE
+             SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP",
+        )
+        .bind(VECTOR_DIMENSIONS_SETTING_KEY)
+        .bind(dimensions.to_string())
+        .execute(&mut *tx)
+        .await?;
+        Ok(())
+    }
+    .await;
+
+    match result {
+        Ok(()) => {
+            tx.commit().await?;
+            Ok(())
+        }
+        Err(error) => {
+            let _ = tx.rollback().await;
+            if is_pg_permission_error(&error) {
+                anyhow::bail!(
+                    "insufficient database privileges to rebuild semantic_cache_vectors automatically. ask your DBA to run:\n\n{}",
+                    rebuild_guidance_sql(dimensions)
+                );
+            }
+            Err(error)
+        }
     }
 }
 
@@ -171,10 +242,12 @@ impl ProviderStore for PostgresProviderStore {
     }
 
     async fn get(&self, id: &str) -> anyhow::Result<Option<Provider>> {
-        Ok(sqlx::query_as::<_, Provider>(&provider_select(Some("WHERE id = $1")))
-            .bind(id)
-            .fetch_optional(&self.pool)
-            .await?)
+        Ok(
+            sqlx::query_as::<_, Provider>(&provider_select(Some("WHERE id = $1")))
+                .bind(id)
+                .fetch_optional(&self.pool)
+                .await?,
+        )
     }
 
     async fn create(&self, input: CreateProvider) -> anyhow::Result<Provider> {
@@ -205,11 +278,16 @@ impl ProviderStore for PostgresProviderStore {
         .bind(input.use_proxy)
         .execute(&self.pool)
         .await?;
-        self.get(&id).await?.context("provider missing after create")
+        self.get(&id)
+            .await?
+            .context("provider missing after create")
     }
 
     async fn update(&self, id: &str, input: UpdateProvider) -> anyhow::Result<Provider> {
-        let current = self.get(id).await?.context("provider not found for update")?;
+        let current = self
+            .get(id)
+            .await?
+            .context("provider not found for update")?;
         let models_source_input = input.effective_models_source().map(ToString::to_string);
         let name = input.name.unwrap_or(current.name);
         let vendor = if input.vendor.is_some() {
@@ -217,13 +295,10 @@ impl ProviderStore for PostgresProviderStore {
         } else {
             normalize_provider_vendor(current.vendor.as_deref())
         };
-        let models_source = models_source_input
-            .or_else(|| current.models_source.clone());
+        let models_source = models_source_input.or_else(|| current.models_source.clone());
         let protocol = input.protocol.unwrap_or(current.protocol.clone());
         let base_url = input.base_url.unwrap_or(current.base_url);
-        let default_protocol = input
-            .default_protocol
-            .unwrap_or(current.default_protocol);
+        let default_protocol = input.default_protocol.unwrap_or(current.default_protocol);
         let protocol_endpoints = input
             .protocol_endpoints
             .unwrap_or(current.protocol_endpoints);
@@ -286,7 +361,11 @@ impl ProviderStore for PostgresProviderStore {
         Ok(row.is_some())
     }
 
-    async fn record_test_result(&self, provider_id: &str, result: ProviderTestResult) -> anyhow::Result<()> {
+    async fn record_test_result(
+        &self,
+        provider_id: &str,
+        result: ProviderTestResult,
+    ) -> anyhow::Result<()> {
         let _ = result.tested_at;
         sqlx::query(
             "UPDATE providers SET last_test_success = $1, last_test_at = CURRENT_TIMESTAMP WHERE id = $2",
@@ -307,9 +386,11 @@ struct PostgresRouteStore {
 #[async_trait]
 impl RouteStore for PostgresRouteStore {
     async fn list(&self) -> anyhow::Result<Vec<Route>> {
-        Ok(sqlx::query_as::<_, Route>(&route_select(Some("ORDER BY created_at DESC")))
-            .fetch_all(&self.pool)
-            .await?)
+        Ok(
+            sqlx::query_as::<_, Route>(&route_select(Some("ORDER BY created_at DESC")))
+                .fetch_all(&self.pool)
+                .await?,
+        )
     }
 
     async fn get(&self, id: &str) -> anyhow::Result<Option<Route>> {
@@ -441,7 +522,6 @@ impl RouteStore for PostgresRouteStore {
         };
         Ok(row.is_some())
     }
-
 }
 
 #[async_trait]
@@ -536,9 +616,11 @@ impl SettingsStore for PostgresSettingsStore {
     }
 
     async fn list_all(&self) -> anyhow::Result<Vec<(String, String)>> {
-        Ok(sqlx::query_as::<_, (String, String)>("SELECT key, value FROM settings")
-            .fetch_all(&self.pool)
-            .await?)
+        Ok(
+            sqlx::query_as::<_, (String, String)>("SELECT key, value FROM settings")
+                .fetch_all(&self.pool)
+                .await?,
+        )
     }
 }
 
@@ -682,15 +764,17 @@ impl AuthAccessStore for PostgresAuthAccessStore {
         .fetch_optional(&self.pool)
         .await?;
 
-        Ok(row.map(|(id, status, expires_at, rpm, rpd, tpm, tpd)| ApiKeyAccessRecord {
-            id,
-            status,
-            expires_at,
-            rpm,
-            rpd,
-            tpm,
-            tpd,
-        }))
+        Ok(row.map(
+            |(id, status, expires_at, rpm, rpd, tpm, tpd)| ApiKeyAccessRecord {
+                id,
+                status,
+                expires_at,
+                rpm,
+                rpd,
+                tpm,
+                tpd,
+            },
+        ))
     }
 
     async fn route_binding_exists(&self, api_key_id: &str, route_id: &str) -> anyhow::Result<bool> {
@@ -708,7 +792,11 @@ impl AuthAccessStore for PostgresAuthAccessStore {
         list_api_key_route_ids(&self.pool, api_key_id).await
     }
 
-    async fn request_count_since(&self, api_key_id: &str, window: UsageWindow) -> anyhow::Result<i64> {
+    async fn request_count_since(
+        &self,
+        api_key_id: &str,
+        window: UsageWindow,
+    ) -> anyhow::Result<i64> {
         let interval = interval_expr(window);
         let sql = format!(
             "SELECT COUNT(*) FROM request_logs WHERE api_key_id = $1 AND created_at >= CURRENT_TIMESTAMP - INTERVAL '{interval}'"
@@ -719,7 +807,11 @@ impl AuthAccessStore for PostgresAuthAccessStore {
             .await?)
     }
 
-    async fn token_count_since(&self, api_key_id: &str, window: UsageWindow) -> anyhow::Result<i64> {
+    async fn token_count_since(
+        &self,
+        api_key_id: &str,
+        window: UsageWindow,
+    ) -> anyhow::Result<i64> {
         let interval = interval_expr(window);
         let sql = format!(
             "SELECT COALESCE(SUM(input_tokens + output_tokens), 0) FROM request_logs WHERE api_key_id = $1 AND created_at >= CURRENT_TIMESTAMP - INTERVAL '{interval}'"
@@ -802,7 +894,10 @@ impl LogStore for PostgresLogStore {
             idx += 1;
         }
 
-        data_sql.push_str(&format!(" ORDER BY created_at DESC LIMIT ${idx} OFFSET ${}", idx + 1));
+        data_sql.push_str(&format!(
+            " ORDER BY created_at DESC LIMIT ${idx} OFFSET ${}",
+            idx + 1
+        ));
 
         let mut count_query = sqlx::query_scalar::<_, i64>(&count_sql);
         let mut data_query = sqlx::query_as::<_, RequestLog>(&data_sql);
@@ -822,14 +917,18 @@ impl LogStore for PostgresLogStore {
 
     async fn cleanup_before(&self, cutoff_expression: &str) -> anyhow::Result<u64> {
         let interval = cutoff_expression.trim().trim_start_matches('-').trim();
-        let sql = format!("DELETE FROM request_logs WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '{interval}'");
+        let sql = format!(
+            "DELETE FROM request_logs WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '{interval}'"
+        );
         let result = sqlx::query(&sql).execute(&self.pool).await?;
         Ok(result.rows_affected())
     }
 
     async fn stats_overview(&self, hours: Option<i64>) -> anyhow::Result<StatsOverview> {
         let sql = if let Some(hours) = hours {
-            format!("SELECT COUNT(*) AS total_requests, COALESCE(SUM(input_tokens), 0) AS total_input_tokens, COALESCE(SUM(output_tokens), 0) AS total_output_tokens, COALESCE(AVG(duration_ms), 0) AS avg_duration_ms, COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0) AS error_count FROM request_logs WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '{hours} hours'")
+            format!(
+                "SELECT COUNT(*) AS total_requests, COALESCE(SUM(input_tokens), 0) AS total_input_tokens, COALESCE(SUM(output_tokens), 0) AS total_output_tokens, COALESCE(AVG(duration_ms), 0) AS avg_duration_ms, COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0) AS error_count FROM request_logs WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '{hours} hours'"
+            )
         } else {
             "SELECT COUNT(*) AS total_requests, COALESCE(SUM(input_tokens), 0) AS total_input_tokens, COALESCE(SUM(output_tokens), 0) AS total_output_tokens, COALESCE(AVG(duration_ms), 0) AS avg_duration_ms, COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0) AS error_count FROM request_logs".to_string()
         };
@@ -839,7 +938,9 @@ impl LogStore for PostgresLogStore {
     }
 
     async fn stats_hourly(&self, hours: i64) -> anyhow::Result<Vec<StatsHourly>> {
-        let sql = format!("SELECT to_char(date_trunc('hour', created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD HH24:00:00') AS hour, COUNT(*) AS request_count, COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0) AS error_count, COALESCE(SUM(input_tokens), 0) AS total_input_tokens, COALESCE(SUM(output_tokens), 0) AS total_output_tokens, COALESCE(AVG(duration_ms), 0) AS avg_duration_ms FROM request_logs WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '{hours} hours' GROUP BY 1 ORDER BY 1 ASC");
+        let sql = format!(
+            "SELECT to_char(date_trunc('hour', created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD HH24:00:00') AS hour, COUNT(*) AS request_count, COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0) AS error_count, COALESCE(SUM(input_tokens), 0) AS total_input_tokens, COALESCE(SUM(output_tokens), 0) AS total_output_tokens, COALESCE(AVG(duration_ms), 0) AS avg_duration_ms FROM request_logs WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '{hours} hours' GROUP BY 1 ORDER BY 1 ASC"
+        );
         Ok(sqlx::query_as::<_, StatsHourly>(&sql)
             .fetch_all(&self.pool)
             .await?)
@@ -847,7 +948,9 @@ impl LogStore for PostgresLogStore {
 
     async fn stats_by_model(&self, hours: Option<i64>) -> anyhow::Result<Vec<ModelStats>> {
         let sql = if let Some(hours) = hours {
-            format!("SELECT actual_model AS model, COUNT(*) AS request_count, COALESCE(SUM(input_tokens), 0) AS total_input_tokens, COALESCE(SUM(output_tokens), 0) AS total_output_tokens, COALESCE(AVG(duration_ms), 0) AS avg_duration_ms FROM request_logs WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '{hours} hours' GROUP BY actual_model ORDER BY request_count DESC")
+            format!(
+                "SELECT actual_model AS model, COUNT(*) AS request_count, COALESCE(SUM(input_tokens), 0) AS total_input_tokens, COALESCE(SUM(output_tokens), 0) AS total_output_tokens, COALESCE(AVG(duration_ms), 0) AS avg_duration_ms FROM request_logs WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '{hours} hours' GROUP BY actual_model ORDER BY request_count DESC"
+            )
         } else {
             "SELECT actual_model AS model, COUNT(*) AS request_count, COALESCE(SUM(input_tokens), 0) AS total_input_tokens, COALESCE(SUM(output_tokens), 0) AS total_output_tokens, COALESCE(AVG(duration_ms), 0) AS avg_duration_ms FROM request_logs GROUP BY actual_model ORDER BY request_count DESC".to_string()
         };
@@ -858,7 +961,9 @@ impl LogStore for PostgresLogStore {
 
     async fn stats_by_provider(&self, hours: Option<i64>) -> anyhow::Result<Vec<ProviderStats>> {
         let sql = if let Some(hours) = hours {
-            format!("SELECT provider_name AS provider, COUNT(*) AS request_count, COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0) AS error_count, COALESCE(AVG(duration_ms), 0) AS avg_duration_ms FROM request_logs WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '{hours} hours' GROUP BY provider_name ORDER BY request_count DESC")
+            format!(
+                "SELECT provider_name AS provider, COUNT(*) AS request_count, COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0) AS error_count, COALESCE(AVG(duration_ms), 0) AS avg_duration_ms FROM request_logs WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '{hours} hours' GROUP BY provider_name ORDER BY request_count DESC"
+            )
         } else {
             "SELECT provider_name AS provider, COUNT(*) AS request_count, COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0) AS error_count, COALESCE(AVG(duration_ms), 0) AS avg_duration_ms FROM request_logs GROUP BY provider_name ORDER BY request_count DESC".to_string()
         };
@@ -920,6 +1025,7 @@ impl CacheStore for PostgresLogStore {
 #[derive(Clone)]
 struct PostgresBootstrap {
     adapter: PostgresAdapter,
+    vector_dimensions: usize,
 }
 
 #[async_trait]
@@ -944,9 +1050,11 @@ impl StorageBootstrap for PostgresBootstrap {
         sqlx::query("ALTER TABLE routes ADD COLUMN IF NOT EXISTS cache_semantic_ttl BIGINT")
             .execute(self.adapter.pool())
             .await?;
-        sqlx::query("ALTER TABLE routes ADD COLUMN IF NOT EXISTS cache_semantic_threshold DOUBLE PRECISION")
-            .execute(self.adapter.pool())
-            .await?;
+        sqlx::query(
+            "ALTER TABLE routes ADD COLUMN IF NOT EXISTS cache_semantic_threshold DOUBLE PRECISION",
+        )
+        .execute(self.adapter.pool())
+        .await?;
         sqlx::query("UPDATE routes SET strategy = 'weighted' WHERE strategy IS NULL OR btrim(strategy) = ''")
             .execute(self.adapter.pool())
             .await?;
@@ -1000,6 +1108,10 @@ impl StorageBootstrap for PostgresBootstrap {
         )
         .execute(self.adapter.pool())
         .await?;
+        sqlx::query("CREATE EXTENSION IF NOT EXISTS vector")
+            .execute(self.adapter.pool())
+            .await?;
+        ensure_semantic_cache_vectors_table(self.adapter.pool(), self.vector_dimensions).await?;
         Ok(())
     }
 
@@ -1012,7 +1124,84 @@ impl StorageBootstrap for PostgresBootstrap {
             writable: health.can_connect,
         })
     }
+}
 
+async fn ensure_semantic_cache_vectors_table(
+    pool: &Pool<Postgres>,
+    vector_dimensions: usize,
+) -> anyhow::Result<()> {
+    let dimensions = vector_dimensions.max(1);
+    let stored_dimension = sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = $1")
+        .bind(VECTOR_DIMENSIONS_SETTING_KEY)
+        .fetch_optional(pool)
+        .await?
+        .and_then(|raw| raw.trim().parse::<usize>().ok());
+    let table_exists = sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (
+            SELECT 1
+            FROM information_schema.tables
+            WHERE table_schema = current_schema()
+              AND table_name = 'semantic_cache_vectors'
+        )",
+    )
+    .fetch_one(pool)
+    .await?;
+    if !table_exists || stored_dimension != Some(dimensions) {
+        recreate_pg_vector_table(pool, dimensions).await?;
+    }
+    Ok(())
+}
+
+fn semantic_cache_vectors_table_ddl(vector_dimensions: usize) -> String {
+    let dimensions = vector_dimensions.max(1);
+    format!(
+        "CREATE TABLE semantic_cache_vectors (
+            id BIGSERIAL PRIMARY KEY,
+            partition TEXT NOT NULL,
+            cache_key TEXT NOT NULL,
+            dimensions INTEGER NOT NULL,
+            embedding vector({dimensions}) NOT NULL,
+            data BYTEA NOT NULL,
+            created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+        )"
+    )
+}
+
+fn rebuild_guidance_sql(vector_dimensions: usize) -> String {
+    let dimensions = vector_dimensions.max(1);
+    format!(
+        "BEGIN;
+DROP TABLE IF EXISTS semantic_cache_vectors;
+CREATE TABLE semantic_cache_vectors (
+    id BIGSERIAL PRIMARY KEY,
+    partition TEXT NOT NULL,
+    cache_key TEXT NOT NULL,
+    dimensions INTEGER NOT NULL,
+    embedding vector({dimensions}) NOT NULL,
+    data BYTEA NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX idx_semantic_cache_vectors_partition_key ON semantic_cache_vectors(partition, cache_key);
+CREATE INDEX idx_semantic_cache_vectors_partition_created_at ON semantic_cache_vectors(partition, created_at);
+CREATE INDEX idx_semantic_cache_vectors_hnsw ON semantic_cache_vectors USING hnsw (embedding vector_cosine_ops);
+INSERT INTO settings(key, value, updated_at)
+VALUES('{VECTOR_DIMENSIONS_SETTING_KEY}', '{dimensions}', CURRENT_TIMESTAMP)
+ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updated_at = CURRENT_TIMESTAMP;
+COMMIT;"
+    )
+}
+
+fn is_pg_permission_error(error: &anyhow::Error) -> bool {
+    for cause in error.chain() {
+        if let Some(sqlx_error) = cause.downcast_ref::<sqlx::Error>() {
+            if let sqlx::Error::Database(db_error) = sqlx_error {
+                if db_error.code().as_deref() == Some("42501") {
+                    return true;
+                }
+            }
+        }
+    }
+    false
 }
 
 fn provider_select(suffix: Option<&str>) -> String {
@@ -1083,7 +1272,10 @@ fn interval_expr(window: UsageWindow) -> &'static str {
     }
 }
 
-async fn list_api_key_route_ids(pool: &Pool<Postgres>, api_key_id: &str) -> anyhow::Result<Vec<String>> {
+async fn list_api_key_route_ids(
+    pool: &Pool<Postgres>,
+    api_key_id: &str,
+) -> anyhow::Result<Vec<String>> {
     Ok(sqlx::query_scalar::<_, String>(
         "SELECT route_id FROM api_key_routes WHERE api_key_id = $1 ORDER BY route_id ASC",
     )

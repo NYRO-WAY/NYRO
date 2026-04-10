@@ -80,13 +80,11 @@ export default function SettingsPage() {
   const [cacheForm, setCacheForm] = useState<CacheSettings>({
     exact: {
       enabled: false,
-      storage: "memory",
       default_ttl: 3600,
       max_entries: 1000,
     },
     semantic: {
       enabled: false,
-      storage: "memory",
       embedding_route: "",
       similarity_threshold: 0.92,
       vector_dimensions: 1536,
@@ -400,21 +398,6 @@ export default function SettingsPage() {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <label className="ml-1 text-xs text-slate-700">{isZh ? "存储" : "Storage"}</label>
-                <Select
-                  value={cacheForm.exact.storage}
-                  onValueChange={(value: "memory" | "database") =>
-                    setCacheForm((prev) => ({ ...prev, exact: { ...prev.exact, storage: value } }))
-                  }
-                >
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="memory">{isZh ? "内存" : "memory"}</SelectItem>
-                    <SelectItem value="database">{isZh ? "数据库" : "database"}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-1.5">
                 <label className="ml-1 text-xs text-slate-700">TTL (s)</label>
                 <Input
                   type="number"
@@ -454,21 +437,7 @@ export default function SettingsPage() {
                 onCheckedChange={handleSemanticEnabledToggle}
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <label className="ml-1 text-xs text-slate-700">{isZh ? "存储" : "Storage"}</label>
-                <Select
-                  value={cacheForm.semantic.storage}
-                  onValueChange={(value: "memory") =>
-                    setCacheForm((prev) => ({ ...prev, semantic: { ...prev.semantic, storage: value } }))
-                  }
-                >
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="memory">{isZh ? "内存" : "memory"}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+            <div className="space-y-3">
               <div className="space-y-1.5">
                 <label className="ml-1 text-xs text-slate-700">
                   {isZh ? "Embedding 路由（必选）" : "Embedding Route (Required)"}
@@ -508,6 +477,7 @@ export default function SettingsPage() {
                   </p>
                 )}
               </div>
+              <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <label className="ml-1 text-xs text-slate-700">{isZh ? "阈值" : "Threshold"}</label>
                 <Input
@@ -565,6 +535,7 @@ export default function SettingsPage() {
                     }))
                   }
                 />
+              </div>
               </div>
             </div>
           </div>

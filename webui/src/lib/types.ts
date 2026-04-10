@@ -239,13 +239,11 @@ export interface RouteSemanticCacheConfig {
 export interface CacheSettings {
   exact: {
     enabled: boolean;
-    storage: "memory" | "database";
     default_ttl: number;
     max_entries: number;
   };
   semantic: {
     enabled: boolean;
-    storage: "memory";
     embedding_route: string;
     similarity_threshold: number;
     vector_dimensions: number;

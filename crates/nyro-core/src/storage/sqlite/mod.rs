@@ -36,12 +36,16 @@ pub struct SqliteStorage {
 impl SqliteStorage {
     pub async fn from_config(config: &GatewayConfig) -> anyhow::Result<Self> {
         let pool = db::init_pool(&config.data_dir).await?;
-        let storage = Self::from_pool(pool);
+        let storage = Self::from_pool_with_dimensions(pool, config.cache.semantic.vector_dimensions);
         storage.bootstrap().migrate().await?;
         Ok(storage)
     }
 
     pub fn from_pool(pool: SqlitePool) -> Self {
+        Self::from_pool_with_dimensions(pool, 1536)
+    }
+
+    pub fn from_pool_with_dimensions(pool: SqlitePool, vector_dimensions: usize) -> Self {
         let provider_store = Arc::new(SqliteProviderStore { pool: pool.clone() });
         let route_store = Arc::new(SqliteRouteStore { pool: pool.clone() });
         let route_target_store = Arc::new(SqliteRouteTargetStore { pool: pool.clone() });
@@ -49,7 +53,10 @@ impl SqliteStorage {
         let api_key_store = Arc::new(SqliteApiKeyStore { pool: pool.clone() });
         let auth_store = Arc::new(SqliteAuthAccessStore { pool: pool.clone() });
         let log_store = Arc::new(SqliteLogStore { pool: pool.clone() });
-        let bootstrap = Arc::new(SqliteBootstrap { pool: pool.clone() });
+        let bootstrap = Arc::new(SqliteBootstrap {
+            pool: pool.clone(),
+            vector_dimensions: vector_dimensions.max(1),
+        });
         Self {
             pool,
             provider_store,
@@ -1059,6 +1066,7 @@ impl CacheStore for SqliteLogStore {
 #[derive(Clone)]
 struct SqliteBootstrap {
     pool: SqlitePool,
+    vector_dimensions: usize,
 }
 
 #[async_trait]
@@ -1068,7 +1076,7 @@ impl StorageBootstrap for SqliteBootstrap {
     }
 
     async fn migrate(&self) -> anyhow::Result<()> {
-        db::migrate(&self.pool).await
+        db::migrate(&self.pool, self.vector_dimensions).await
     }
 
     async fn health(&self) -> anyhow::Result<StorageHealth> {
