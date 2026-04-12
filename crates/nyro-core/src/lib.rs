@@ -354,7 +354,7 @@ impl Gateway {
             .map(parse_bool_setting)
             .unwrap_or(false);
         if !enabled {
-            anyhow::bail!("proxy is disabled in settings");
+            return Ok(self.http_client.clone());
         }
 
         let proxy_url = self

@@ -682,40 +682,39 @@ export default function RoutesPage() {
             />
             {createForm.route_type !== "embedding" && (
               <>
-                <RouteToggleControl
-                  title={isZh ? "精确匹配缓存" : "Exact Cache"}
-                  isZh={isZh}
-                  checked={createForm.cache_exact_enabled}
-                  disabled={!globalExactCacheEnabled}
-                  disabledMessage={isZh ? "请在系统设置中开启全局精确匹配缓存" : "Enable global exact cache in settings first"}
-                  onCheckedChange={(checked) => setCreateForm((prev) => ({ ...prev, cache_exact_enabled: checked }))}
-                />
-                <RouteToggleControl
-                  title={isZh ? "语义相似缓存" : "Semantic Cache"}
-                  isZh={isZh}
-                  checked={createForm.cache_semantic_enabled}
-                  disabled={!globalSemanticCacheEnabled}
-                  disabledMessage={isZh ? "请在系统设置中开启全局语义相似缓存" : "Enable global semantic cache in settings first"}
-                  onCheckedChange={(checked) => {
-                    if (!globalSemanticCacheEnabled) return;
-                    updateCreateSemanticEnabled(checked);
-                  }}
-                />
-                {globalSemanticCacheEnabled && createForm.cache_semantic_enabled && (
-                  <div className="space-y-2">
-                    <FieldLabel>{isZh ? "语义相似度" : "Semantic Threshold"}</FieldLabel>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      min={0}
-                      max={1}
-                      value={createForm.cache_semantic_threshold}
-                      onChange={(e) =>
-                        setCreateForm((prev) => ({ ...prev, cache_semantic_threshold: e.target.value }))
-                      }
-                      placeholder={defaultThresholdInput(globalSemanticThreshold)}
+                {globalExactCacheEnabled && (
+                  <RouteToggleControl
+                    title={isZh ? "精确匹配缓存" : "Exact Cache"}
+                    isZh={isZh}
+                    checked={createForm.cache_exact_enabled}
+                    onCheckedChange={(checked) => setCreateForm((prev) => ({ ...prev, cache_exact_enabled: checked }))}
+                  />
+                )}
+                {globalSemanticCacheEnabled && (
+                  <>
+                    <RouteToggleControl
+                      title={isZh ? "语义相似缓存" : "Semantic Cache"}
+                      isZh={isZh}
+                      checked={createForm.cache_semantic_enabled}
+                      onCheckedChange={(checked) => updateCreateSemanticEnabled(checked)}
                     />
-                  </div>
+                    {createForm.cache_semantic_enabled && (
+                      <div className="space-y-2">
+                        <FieldLabel>{isZh ? "语义相似度" : "Semantic Threshold"}</FieldLabel>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min={0}
+                          max={1}
+                          value={createForm.cache_semantic_threshold}
+                          onChange={(e) =>
+                            setCreateForm((prev) => ({ ...prev, cache_semantic_threshold: e.target.value }))
+                          }
+                          placeholder={defaultThresholdInput(globalSemanticThreshold)}
+                        />
+                      </div>
+                    )}
+                  </>
                 )}
               </>
             )}
@@ -886,44 +885,43 @@ export default function RoutesPage() {
                     />
                     {editForm.route_type !== "embedding" && (
                       <>
-                        <RouteToggleControl
-                          title={isZh ? "精确匹配缓存" : "Exact Cache"}
-                          isZh={isZh}
-                          checked={editForm.cache_exact_enabled}
-                          disabled={!globalExactCacheEnabled}
-                          disabledMessage={isZh ? "请在系统设置中开启全局精确匹配缓存" : "Enable global exact cache in settings first"}
-                          onCheckedChange={(checked) =>
-                            setEditForm((prev) => (prev ? { ...prev, cache_exact_enabled: checked } : prev))
-                          }
-                        />
-                        <RouteToggleControl
-                          title={isZh ? "语义相似缓存" : "Semantic Cache"}
-                          isZh={isZh}
-                          checked={editForm.cache_semantic_enabled}
-                          disabled={!globalSemanticCacheEnabled}
-                          disabledMessage={isZh ? "请在系统设置中开启全局语义相似缓存" : "Enable global semantic cache in settings first"}
-                          onCheckedChange={(checked) => {
-                            if (!globalSemanticCacheEnabled) return;
-                            updateEditSemanticEnabled(checked);
-                          }}
-                        />
-                        {globalSemanticCacheEnabled && editForm.cache_semantic_enabled && (
-                          <div className="space-y-2">
-                            <FieldLabel>{isZh ? "语义相似度" : "Semantic Threshold"}</FieldLabel>
-                            <Input
-                              type="number"
-                              step="0.01"
-                              min={0}
-                              max={1}
-                              value={editForm.cache_semantic_threshold}
-                              onChange={(e) =>
-                                setEditForm((prev) =>
-                                  prev ? { ...prev, cache_semantic_threshold: e.target.value } : prev
-                                )
-                              }
-                              placeholder={defaultThresholdInput(globalSemanticThreshold)}
+                        {globalExactCacheEnabled && (
+                          <RouteToggleControl
+                            title={isZh ? "精确匹配缓存" : "Exact Cache"}
+                            isZh={isZh}
+                            checked={editForm.cache_exact_enabled}
+                            onCheckedChange={(checked) =>
+                              setEditForm((prev) => (prev ? { ...prev, cache_exact_enabled: checked } : prev))
+                            }
+                          />
+                        )}
+                        {globalSemanticCacheEnabled && (
+                          <>
+                            <RouteToggleControl
+                              title={isZh ? "语义相似缓存" : "Semantic Cache"}
+                              isZh={isZh}
+                              checked={editForm.cache_semantic_enabled}
+                              onCheckedChange={(checked) => updateEditSemanticEnabled(checked)}
                             />
-                          </div>
+                            {editForm.cache_semantic_enabled && (
+                              <div className="space-y-2">
+                                <FieldLabel>{isZh ? "语义相似度" : "Semantic Threshold"}</FieldLabel>
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  min={0}
+                                  max={1}
+                                  value={editForm.cache_semantic_threshold}
+                                  onChange={(e) =>
+                                    setEditForm((prev) =>
+                                      prev ? { ...prev, cache_semantic_threshold: e.target.value } : prev
+                                    )
+                                  }
+                                  placeholder={defaultThresholdInput(globalSemanticThreshold)}
+                                />
+                              </div>
+                            )}
+                          </>
                         )}
                       </>
                     )}
@@ -996,12 +994,12 @@ export default function RoutesPage() {
                         {isZh ? "鉴权" : "Auth"}
                       </Badge>
                     )}
-                    {route.cache?.exact && (
+                    {globalExactCacheEnabled && route.cache?.exact && (
                       <Badge variant="success" className="connect-label-badge">
                         {isZh ? "精确匹配缓存" : "Exact Cache"}
                       </Badge>
                     )}
-                    {route.cache?.semantic && (
+                    {globalSemanticCacheEnabled && route.cache?.semantic && (
                       <Badge variant="success" className="connect-label-badge">
                         {isZh ? "语义相似缓存" : "Semantic Cache"}
                       </Badge>
@@ -1022,7 +1020,22 @@ export default function RoutesPage() {
                     <Pencil className="h-4 w-4" />
                   </button>
                   <button
-                    onClick={() => setRouteToDelete(route)}
+                    onClick={() => {
+                      if (
+                        route.route_type === "embedding" &&
+                        cacheSettings?.semantic?.enabled &&
+                        cacheSettings.semantic.embedding_route === route.virtual_model
+                      ) {
+                        setErrorDialog({
+                          title: isZh ? "无法删除该路由" : "Cannot delete this route",
+                          description: isZh
+                            ? `该 Embedding 路由「${route.name}」正被系统设置中的语义相似缓存引用，请先在系统设置中关闭语义相似缓存或更换 Embedding 路由后再删除。`
+                            : `The embedding route "${route.name}" is referenced by semantic cache in system settings. Please disable semantic cache or change the embedding route in settings before deleting.`,
+                        });
+                        return;
+                      }
+                      setRouteToDelete(route);
+                    }}
                     className="cursor-pointer rounded-lg p-2 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500"
                   >
                     <Trash2 className="h-4 w-4" />

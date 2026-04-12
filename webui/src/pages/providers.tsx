@@ -1059,26 +1059,20 @@ export default function ProvidersPage() {
                   </Button>
                 </div>
               </div>
-              <div className="space-y-2">
-                <FieldLabel>{isZh ? "使用本地代理" : "Use Local Proxy"}</FieldLabel>
-                <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2.5">
-                  <span className="text-xs text-slate-600">
-                    {isZh ? "开启后走设置页中的本地代理地址" : "Route requests via local proxy from settings"}
-                  </span>
-                  <Switch
-                    checked={Boolean(form.use_proxy)}
-                    disabled={!isGlobalProxyEnabled}
-                    onCheckedChange={(checked) => setForm({ ...form, use_proxy: checked })}
-                  />
+              {isGlobalProxyEnabled && (
+                <div className="space-y-2">
+                  <FieldLabel>{isZh ? "使用本地代理" : "Use Local Proxy"}</FieldLabel>
+                  <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2.5">
+                    <span className="text-xs text-slate-600">
+                      {isZh ? "开启后走设置页中的本地代理地址" : "Route requests via local proxy from settings"}
+                    </span>
+                    <Switch
+                      checked={Boolean(form.use_proxy)}
+                      onCheckedChange={(checked) => setForm({ ...form, use_proxy: checked })}
+                    />
+                  </div>
                 </div>
-                {!isGlobalProxyEnabled && (
-                  <p className="text-xs text-amber-600">
-                    {isZh
-                      ? "系统设置中的本地代理未启用，当前无法为 Provider 开启代理。"
-                      : "Local proxy is disabled in Settings, so provider proxy cannot be enabled."}
-                  </p>
-                )}
-              </div>
+              )}
               <div className="space-y-2">
                 <FieldLabel>API Key</FieldLabel>
                 <div className="relative">
@@ -1428,26 +1422,20 @@ export default function ProvidersPage() {
                         </Button>
                       </div>
                     </div>
-                    <div className="space-y-2">
-                      <FieldLabel>{isZh ? "使用本地代理" : "Use Local Proxy"}</FieldLabel>
-                      <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2.5">
-                        <span className="text-xs text-slate-600">
-                          {isZh ? "开启后走设置页中的本地代理地址" : "Route requests via local proxy from settings"}
-                        </span>
-                        <Switch
-                          checked={Boolean(editForm.use_proxy)}
-                          disabled={!isGlobalProxyEnabled}
-                          onCheckedChange={(checked) => setEditForm({ ...editForm, use_proxy: checked })}
-                        />
+                    {isGlobalProxyEnabled && (
+                      <div className="space-y-2">
+                        <FieldLabel>{isZh ? "使用本地代理" : "Use Local Proxy"}</FieldLabel>
+                        <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2.5">
+                          <span className="text-xs text-slate-600">
+                            {isZh ? "开启后走设置页中的本地代理地址" : "Route requests via local proxy from settings"}
+                          </span>
+                          <Switch
+                            checked={Boolean(editForm.use_proxy)}
+                            onCheckedChange={(checked) => setEditForm({ ...editForm, use_proxy: checked })}
+                          />
+                        </div>
                       </div>
-                      {!isGlobalProxyEnabled && (
-                        <p className="text-xs text-amber-600">
-                          {isZh
-                            ? "系统设置中的本地代理未启用，当前无法为 Provider 开启代理。"
-                            : "Local proxy is disabled in Settings, so provider proxy cannot be enabled."}
-                        </p>
-                      )}
-                    </div>
+                    )}
                     <div className="space-y-2">
                       <FieldLabel>{isZh ? "API Key" : "API Key"}</FieldLabel>
                       <div className="relative">
@@ -1590,6 +1578,11 @@ export default function ProvidersPage() {
                             {protocol}
                           </Badge>
                         ))}
+                        {isGlobalProxyEnabled && p.use_proxy && (
+                          <Badge variant="success" className="connect-label-badge">
+                            {isZh ? "本地代理" : "Proxy"}
+                          </Badge>
+                        )}
                         {status === "success" ? (
                           <CheckCircle
                             className="h-3.5 w-3.5 text-green-500"

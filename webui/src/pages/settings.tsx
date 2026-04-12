@@ -7,7 +7,6 @@ import type {
   ExportData,
   GatewayStatus,
   ImportResult,
-  Provider,
   Route as RouteType,
 } from "@/lib/types";
 import { useLocale } from "@/lib/i18n";
@@ -160,26 +159,11 @@ export default function SettingsPage() {
         backend("set_setting", { key: "proxy_url", value: input.url }),
         backend("set_setting", { key: "proxy_bypass", value: input.bypass }),
       ]);
-
-      // If global proxy is turned off, force all providers to disable provider-level proxy usage.
-      if (!input.enabled) {
-        const providers = await backend<Provider[]>("get_providers");
-        const providersUsingProxy = providers.filter((provider) => provider.use_proxy);
-        await Promise.all(
-          providersUsingProxy.map((provider) =>
-            backend("update_provider", {
-              id: provider.id,
-              input: { use_proxy: false },
-            }),
-          ),
-        );
-      }
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["setting", "proxy_enabled"] });
       qc.invalidateQueries({ queryKey: ["setting", "proxy_url"] });
       qc.invalidateQueries({ queryKey: ["setting", "proxy_bypass"] });
-      qc.invalidateQueries({ queryKey: ["providers"] });
     },
     onError: (error: unknown) => {
       showErrorDialog("保存代理设置失败", "Failed to save proxy settings", error);
@@ -453,7 +437,11 @@ export default function SettingsPage() {
                   onCheckedChange={(checked) =>
                     setCacheForm((prev) => ({
                       ...prev,
-                      semantic: { ...prev.semantic, enabled: checked },
+                      semantic: {
+                        ...prev.semantic,
+                        enabled: checked,
+                        embedding_route: checked ? prev.semantic.embedding_route : "",
+                      },
                     }))
                   }
                 />
@@ -476,7 +464,7 @@ export default function SettingsPage() {
                   <SelectContent>
                     {embeddingRoutes.map((route) => (
                       <SelectItem key={route.id} value={route.virtual_model}>
-                        {route.name} ({route.virtual_model})
+                        {route.name} · {route.virtual_model}
                       </SelectItem>
                     ))}
                     {!selectedEmbeddingRouteExists && cacheForm.semantic.embedding_route.trim() && (
