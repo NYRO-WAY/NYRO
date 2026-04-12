@@ -4,6 +4,39 @@ All notable changes to Nyro will be documented in this file.
 
 ---
 
+## v1.6.0
+
+> Released on 2026-04-12
+
+#### Features
+
+- **End-to-end cache system**: implement modular exact/semantic cache backends with SSE stream replay for streaming cache hits and singleflight request coalescing to prevent cache stampede under concurrent misses
+- **Ingress route aliases**: add non-versioned route aliases (`/chat/completions`, `/messages`, `/responses`, `/models/:model_action`) alongside versioned paths for broader client compatibility
+- **OpenAI-compatible models listing**: add `/v1/models` and `/models` endpoints returning route-aware model lists, with API-key-bound model filtering and graceful degradation
+- **Semantic vector dimension lifecycle**: auto-rebuild semantic vector tables when embedding dimensions change, persist active dimensions in settings, and support transactional pgvector rebuild with clear permission fallback guidance
+
+#### Improvements
+
+- **Cache system unification**: unify exact/semantic cache runtime configuration and hot-reload behavior; enforce chat/embedding route type isolation with OpenAI endpoint validation; update WebUI route/settings flows accordingly
+- **Settings save UX**: refactor settings modules to explicit save actions with unsaved-change feedback; split API key list status into management and validity badges; align SQLite semantic cache scoring with cosine distance expectations
+- **Global cache/proxy linkage**: route list badges and form controls now reflect global cache/proxy enabled state; route form hides cache toggles and provider form hides proxy toggle when respective global setting is off; saved config is preserved and auto-restores on re-enable
+- **Semantic cache config linkage**: clear `embedding_route` when semantic cache is toggled off; block deletion of an embedding route referenced by semantic cache config with an error dialog
+
+#### Fixes
+
+- Fix cache-hit log model names by persisting `actual_model` in cache entries so upstream models are reported consistently on cache hits
+- Fix global cache/proxy toggles lacking proper linkage with route badges and provider proxy badge in list views
+- Fix proxy backend returning 502 when global proxy is disabled but a route has `use_proxy=true`; fall back to direct HTTP client instead
+- Standardize cache wording in UI and docs without changing existing config keys
+
+#### Refactoring & Cleanup
+
+- **Remove MySQL backend**: drop MySQL storage implementation, config/CLI paths, and sqlx mysql feature; supported backends are now SQLite / PostgreSQL / Memory
+- **GitHub org rename**: update all references from `NYRO-WAY` to `nyroway` across configs, scripts, docs, install scripts, and frontend code
+- Update Zai provider default capabilities source
+
+---
+
 ## v1.5.0
 
 > Released on 2026-04-02
