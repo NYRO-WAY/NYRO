@@ -34,16 +34,16 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             pkg-config libssl-dev
 
+      - name: Build webui
+        run: |
+          pnpm -C webui install --frozen-lockfile
+          pnpm -C webui build
+
       - name: Cargo check
         run: cargo check --workspace --exclude nyro-desktop
 
       - name: Build nyro-server
         run: cargo build -p nyro-server
-
-      - name: Build webui
-        run: |
-          pnpm -C webui install --frozen-lockfile
-          pnpm -C webui build
 
       - name: Run smoke tests
         run: python3 scripts/smoke/server_smoke.py
