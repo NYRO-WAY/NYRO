@@ -201,6 +201,8 @@ impl YamlCacheConfig {
                 enabled: self.exact.enabled,
                 default_ttl: Duration::from_secs(self.exact.default_ttl.unwrap_or(3600)),
                 max_entries: self.exact.max_entries.unwrap_or(1000),
+                stream_replay_tps: 100,
+                expose_headers: true,
             },
             semantic: SemanticCacheConfig {
                 enabled: self.semantic.enabled,
@@ -209,6 +211,8 @@ impl YamlCacheConfig {
                 vector_dimensions: self.semantic.vector_dimensions.unwrap_or(1536),
                 default_ttl: Duration::from_secs(self.semantic.default_ttl.unwrap_or(600)),
                 max_entries: self.semantic.max_entries.unwrap_or(500),
+                stream_replay_tps: 100,
+                expose_headers: true,
             },
         }
     }

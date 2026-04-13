@@ -272,6 +272,8 @@ fn build_cache_config_from_args(args: &Args) -> anyhow::Result<CacheConfig> {
             enabled: args.cache_exact_enabled,
             default_ttl: Duration::from_secs(args.cache_exact_ttl.max(1)),
             max_entries: args.cache_exact_max_entries.max(1),
+            stream_replay_tps: 100,
+            expose_headers: true,
         },
         semantic: SemanticCacheConfig {
             enabled: args.cache_semantic_enabled,
@@ -280,6 +282,8 @@ fn build_cache_config_from_args(args: &Args) -> anyhow::Result<CacheConfig> {
             vector_dimensions: args.cache_semantic_dimensions.max(1),
             default_ttl: Duration::from_secs(args.cache_semantic_ttl.max(1)),
             max_entries: args.cache_semantic_max_entries.max(1),
+            stream_replay_tps: 100,
+            expose_headers: true,
         },
     })
 }
