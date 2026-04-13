@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AppLayout } from "@/components/layout/app-layout";
 import { AppErrorBoundary } from "@/components/error-boundary";
 import { LocaleProvider } from "@/lib/i18n";
+import { IS_TAURI } from "@/lib/backend";
 
 import "./index.css";
 
@@ -17,6 +18,7 @@ const LogsPage = lazy(() => import("@/pages/logs"));
 const StatsPage = lazy(() => import("@/pages/stats"));
 const SettingsPage = lazy(() => import("@/pages/settings"));
 const ConnectPage = lazy(() => import("@/pages/connect"));
+const LoginPage = lazy(() => import("@/pages/login"));
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -36,6 +38,9 @@ createRoot(document.getElementById("root")!).render(
           <BrowserRouter>
             <Suspense fallback={<div className="p-6 text-sm text-slate-500">Loading...</div>}>
               <Routes>
+                {!IS_TAURI && (
+                  <Route path="login" element={<LoginPage />} />
+                )}
                 <Route element={<AppLayout />}>
                   <Route index element={<DashboardPage />} />
                   <Route path="providers" element={<ProvidersPage />} />

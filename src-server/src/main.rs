@@ -2,11 +2,12 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::http::{HeaderValue, Method, header};
+use axum::body::Body;
+use axum::http::{HeaderValue, Method, StatusCode, header};
+use axum::response::Response;
 use clap::Parser;
 use nyro_core::{
     Gateway,
-    cache::{CacheConfig, ExactCacheConfig, SemanticCacheConfig},
     config::{
         GatewayConfig, GatewayStorageConfig, SqlStorageConfig, SqliteStorageConfig,
         StorageBackendKind,
@@ -14,121 +15,137 @@ use nyro_core::{
     logging,
     storage::MemoryStorage,
 };
+use rust_embed::RustEmbed;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
 mod admin_routes;
 mod yaml_config;
 
+#[derive(RustEmbed)]
+#[folder = "../webui/dist/"]
+struct WebUiAssets;
+
 #[derive(Parser)]
-#[command(name = "nyro-server", about = "Nyro AI Gateway — Server Mode")]
+#[command(name = "nyro-server", version, about = "Nyro AI Gateway — Server Mode")]
 struct Args {
-    #[arg(long, default_value = "127.0.0.1")]
+    // ── Server ────────────────────────────────────────────────────────────────
+    #[arg(long, default_value = "127.0.0.1", env = "NYRO_PROXY_HOST",
+          help_heading = "Server")]
     proxy_host: String,
 
-    #[arg(long, default_value = "19530")]
+    #[arg(long, default_value_t = 19530, env = "NYRO_PROXY_PORT",
+          help_heading = "Server")]
     proxy_port: u16,
 
-    #[arg(long, default_value = "127.0.0.1")]
+    #[arg(long, default_value = "127.0.0.1", env = "NYRO_ADMIN_HOST",
+          help_heading = "Server")]
     admin_host: String,
 
-    #[arg(long, default_value = "19531")]
+    #[arg(long, default_value_t = 19531, env = "NYRO_ADMIN_PORT",
+          help_heading = "Server")]
     admin_port: u16,
 
-    #[arg(long, default_value = "~/.nyro")]
-    data_dir: String,
+    #[arg(long, env = "NYRO_ADMIN_TOKEN",
+          help = "Bearer token for admin API authentication",
+          help_heading = "Server")]
+    admin_token: Option<String>,
 
-    #[arg(long, help = "Bearer token for admin API authentication")]
-    admin_key: Option<String>,
+    #[arg(
+        long,
+        default_value = "info",
+        env = "NYRO_LOG_LEVEL",
+        value_parser = ["error", "warn", "info", "debug", "trace"],
+        help_heading = "Server"
+    )]
+    log_level: String,
 
+    // ── Advanced (CORS) ───────────────────────────────────────────────────────
     #[arg(
         long = "admin-cors-origin",
         action = clap::ArgAction::Append,
-        help = "Allowed CORS origin for admin API (repeatable, use '*' for any)"
+        help = "Allowed CORS origin for admin API (repeatable, use '*' for any)",
+        help_heading = "Advanced"
     )]
     admin_cors_origins: Vec<String>,
 
     #[arg(
         long = "proxy-cors-origin",
         action = clap::ArgAction::Append,
-        help = "Allowed CORS origin for proxy API (repeatable, use '*' for any)"
+        help = "Allowed CORS origin for proxy API (repeatable, use '*' for any)",
+        help_heading = "Advanced"
     )]
     proxy_cors_origins: Vec<String>,
 
-    #[arg(
-        long,
-        default_value = "./webui/dist",
-        help = "Path to webui static files"
-    )]
-    webui_dir: String,
+    // ── Storage ───────────────────────────────────────────────────────────────
+    #[arg(long, default_value = "~/.nyro", env = "NYRO_DATA_DIR",
+          help_heading = "Storage")]
+    data_dir: String,
 
-    #[arg(long, value_parser = ["sqlite", "postgres"], default_value = "sqlite")]
+    #[arg(long, value_parser = ["sqlite", "postgres"], default_value = "sqlite",
+          env = "NYRO_STORAGE_BACKEND", help_heading = "Storage")]
     storage_backend: String,
-
-    #[arg(
-        long,
-        default_value = "NYRO_STORAGE_DSN",
-        help = "Environment variable name used to load storage DSN/URI"
-    )]
-    storage_dsn_env: String,
 
     #[arg(
         long,
         default_value = "true",
         action = clap::ArgAction::Set,
-        help = "Run SQLite migrations on startup (true/false)"
+        help = "Run migrations on startup (true/false)",
+        help_heading = "Storage"
     )]
-    sqlite_migrate_on_start: bool,
+    migrate_on_start: bool,
 
-    #[arg(long, default_value_t = 10)]
-    storage_max_connections: u32,
+    #[arg(
+        long,
+        env = "NYRO_POSTGRES_DSN",
+        help = "PostgreSQL connection string (required when --storage-backend=postgres)",
+        help_heading = "Storage"
+    )]
+    postgres_dsn: Option<String>,
 
-    #[arg(long, default_value_t = 1)]
-    storage_min_connections: u32,
+    #[arg(long, default_value_t = 10,
+          help = "Postgres: max connection pool size",
+          help_heading = "Storage")]
+    postgres_max_connections: u32,
 
-    #[arg(long, default_value_t = 10)]
-    storage_acquire_timeout_secs: u64,
+    #[arg(long, default_value_t = 1,
+          help = "Postgres: min connection pool size",
+          help_heading = "Storage")]
+    postgres_min_connections: u32,
 
-    #[arg(long, help = "Idle timeout in seconds for SQL backends")]
-    storage_idle_timeout_secs: Option<u64>,
+    #[arg(long, default_value_t = 10,
+          help = "Postgres: connection acquire timeout (seconds)",
+          help_heading = "Storage")]
+    postgres_acquire_timeout: u64,
 
-    #[arg(long, help = "Max lifetime in seconds for SQL backends")]
-    storage_max_lifetime_secs: Option<u64>,
+    #[arg(long, help = "Postgres: idle connection timeout (seconds)",
+          help_heading = "Storage")]
+    postgres_idle_timeout: Option<u64>,
 
+    #[arg(long, help = "Postgres: max connection lifetime (seconds)",
+          help_heading = "Storage")]
+    postgres_max_lifetime: Option<u64>,
+
+    // ── Standalone ────────────────────────────────────────────────────────────
     #[arg(
         long = "config",
         short = 'c',
-        help = "Path to YAML config file for standalone mode (no DB, no admin API, no WebUI)"
+        help = "Path to YAML config file for standalone mode (no DB, no admin API)",
+        help_heading = "Standalone"
     )]
     config_file: Option<String>,
-
-    #[arg(long, default_value_t = false)]
-    cache_exact_enabled: bool,
-    #[arg(long, default_value_t = 3600)]
-    cache_exact_ttl: u64,
-    #[arg(long, default_value_t = 1000)]
-    cache_exact_max_entries: usize,
-
-    #[arg(long, default_value_t = false)]
-    cache_semantic_enabled: bool,
-    #[arg(long, default_value = "")]
-    cache_semantic_route: String,
-    #[arg(long, default_value_t = 0.92)]
-    cache_semantic_threshold: f64,
-    #[arg(long, default_value_t = 1536)]
-    cache_semantic_dimensions: usize,
-    #[arg(long, default_value_t = 600)]
-    cache_semantic_ttl: u64,
-    #[arg(long, default_value_t = 500)]
-    cache_semantic_max_entries: usize,
 }
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter("nyro=debug,tower_http=debug")
-        .init();
-
     let args = Args::parse();
+
+    let filter = format!(
+        "nyro={level},tower_http={level}",
+        level = args.log_level
+    );
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .init();
 
     if let Some(ref config_path) = args.config_file {
         return run_standalone(config_path, &args).await;
@@ -141,16 +158,9 @@ async fn run_standalone(config_path: &str, args: &Args) -> anyhow::Result<()> {
     tracing::info!("standalone mode: loading {config_path}");
     let yaml = yaml_config::YamlConfig::load(config_path)?;
 
-    let proxy_host = if args.proxy_host != "127.0.0.1" {
-        args.proxy_host.clone()
-    } else {
-        yaml.server.proxy_host.clone()
-    };
-    let proxy_port = if args.proxy_port != 19530 {
-        args.proxy_port
-    } else {
-        yaml.server.proxy_port
-    };
+    // Standalone mode: proxy address comes exclusively from YAML
+    let proxy_host = yaml.server.proxy_host.clone();
+    let proxy_port = yaml.server.proxy_port;
 
     let providers = yaml_config::build_providers(&yaml);
     let routes = yaml_config::build_routes(&yaml, &providers);
@@ -189,8 +199,7 @@ async fn run_standalone(config_path: &str, args: &Args) -> anyhow::Result<()> {
         logging::run_collector(log_rx, storage_for_logs).await;
     });
 
-    let proxy_addr = format!("{proxy_host}:{proxy_port}");
-    tracing::info!("proxy  → http://{proxy_addr}");
+    tracing::info!("proxy  → http://{}:{}", proxy_host, proxy_port);
     tracing::info!("standalone mode: admin API and WebUI are disabled");
 
     gateway.start_proxy().await?;
@@ -199,13 +208,14 @@ async fn run_standalone(config_path: &str, args: &Args) -> anyhow::Result<()> {
 
 async fn run_full(args: &Args) -> anyhow::Result<()> {
     let data_dir = shellexpand::tilde(&args.data_dir).to_string();
-    let admin_key = args.admin_key.clone().filter(|k| !k.trim().is_empty());
+    let admin_token = args.admin_token.clone().filter(|t| !t.trim().is_empty());
 
-    if !is_loopback_host(&args.admin_host) && admin_key.is_none() {
+    if !is_loopback_host(&args.admin_host) && admin_token.is_none() {
         anyhow::bail!(
-            "--admin-key is required when --admin-host is not loopback (localhost/127.0.0.1/::1)"
+            "--admin-token is required when --admin-host is not loopback (localhost/127.0.0.1/::1)"
         );
     }
+
     let admin_cors_origins = if args.admin_cors_origins.is_empty() {
         default_local_origins(&[args.admin_port])
     } else {
@@ -223,7 +233,6 @@ async fn run_full(args: &Args) -> anyhow::Result<()> {
         proxy_cors_origins,
         data_dir: PathBuf::from(data_dir),
         storage: build_storage_config(args)?,
-        cache: build_cache_config_from_args(args)?,
         ..Default::default()
     };
 
@@ -242,14 +251,10 @@ async fn run_full(args: &Args) -> anyhow::Result<()> {
         logging::run_collector(log_rx, storage_for_logs).await;
     });
 
-    let admin_router = admin_routes::create_router(gateway, admin_key.clone());
-
-    let index_path = std::path::Path::new(&args.webui_dir).join("index.html");
-    let webui_service = tower_http::services::ServeDir::new(&args.webui_dir)
-        .fallback(tower_http::services::ServeFile::new(index_path));
+    let admin_router = admin_routes::create_router(gateway, admin_token.clone());
 
     let app = admin_router
-        .fallback_service(webui_service)
+        .fallback(serve_webui)
         .layer(build_cors_layer(&admin_cors_origins));
 
     let admin_addr = format!("{}:{}", args.admin_host, args.admin_port);
@@ -259,34 +264,118 @@ async fn run_full(args: &Args) -> anyhow::Result<()> {
     tracing::info!("proxy  → http://{proxy_bind_addr}");
     tracing::info!("webui  → http://{admin_addr}");
 
-    if admin_key.is_none() {
-        tracing::warn!("admin API auth disabled: set --admin-key for production");
+    if admin_token.is_none() {
+        tracing::warn!("admin API auth disabled: set --admin-token for production");
     }
     axum::serve(listener, app).await?;
     Ok(())
 }
 
-fn build_cache_config_from_args(args: &Args) -> anyhow::Result<CacheConfig> {
-    Ok(CacheConfig {
-        exact: ExactCacheConfig {
-            enabled: args.cache_exact_enabled,
-            default_ttl: Duration::from_secs(args.cache_exact_ttl.max(1)),
-            max_entries: args.cache_exact_max_entries.max(1),
-            stream_replay_tps: 100,
-            expose_headers: true,
+// ── WebUI (embedded) ──────────────────────────────────────────────────────────
+
+async fn serve_webui(uri: axum::http::Uri) -> Response {
+    let path = uri.path().trim_start_matches('/');
+    let file_path = if path.is_empty() { "index.html" } else { path };
+
+    match WebUiAssets::get(file_path) {
+        Some(content) => {
+            let mime = infer_mime(file_path);
+            Response::builder()
+                .header(header::CONTENT_TYPE, mime)
+                .body(Body::from(content.data.into_owned()))
+                .unwrap()
+        }
+        None => {
+            // SPA fallback: serve index.html for any unmatched path
+            match WebUiAssets::get("index.html") {
+                Some(content) => Response::builder()
+                    .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+                    .body(Body::from(content.data.into_owned()))
+                    .unwrap(),
+                None => Response::builder()
+                    .status(StatusCode::NOT_FOUND)
+                    .body(Body::empty())
+                    .unwrap(),
+            }
+        }
+    }
+}
+
+fn infer_mime(path: &str) -> &'static str {
+    if path.ends_with(".html") {
+        "text/html; charset=utf-8"
+    } else if path.ends_with(".js") || path.ends_with(".mjs") {
+        "application/javascript"
+    } else if path.ends_with(".css") {
+        "text/css"
+    } else if path.ends_with(".svg") {
+        "image/svg+xml"
+    } else if path.ends_with(".png") {
+        "image/png"
+    } else if path.ends_with(".ico") {
+        "image/x-icon"
+    } else if path.ends_with(".woff2") {
+        "font/woff2"
+    } else if path.ends_with(".woff") {
+        "font/woff"
+    } else if path.ends_with(".json") {
+        "application/json"
+    } else if path.ends_with(".map") {
+        "application/json"
+    } else {
+        "application/octet-stream"
+    }
+}
+
+// ── Storage ───────────────────────────────────────────────────────────────────
+
+fn build_storage_config(args: &Args) -> anyhow::Result<GatewayStorageConfig> {
+    let backend = parse_storage_backend(&args.storage_backend)?;
+
+    let postgres_url = if matches!(backend, StorageBackendKind::Postgres) {
+        let dsn = args
+            .postgres_dsn
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "--postgres-dsn (or env NYRO_POSTGRES_DSN) is required \
+                     when --storage-backend=postgres"
+                )
+            })?;
+        Some(dsn.to_string())
+    } else {
+        None
+    };
+
+    let sql = SqlStorageConfig {
+        url: postgres_url,
+        max_connections: args.postgres_max_connections,
+        min_connections: args.postgres_min_connections,
+        acquire_timeout: Duration::from_secs(args.postgres_acquire_timeout),
+        idle_timeout: args.postgres_idle_timeout.map(Duration::from_secs),
+        max_lifetime: args.postgres_max_lifetime.map(Duration::from_secs),
+    };
+
+    Ok(GatewayStorageConfig {
+        backend,
+        sqlite: SqliteStorageConfig {
+            migrate_on_start: args.migrate_on_start,
         },
-        semantic: SemanticCacheConfig {
-            enabled: args.cache_semantic_enabled,
-            embedding_route: args.cache_semantic_route.trim().to_string(),
-            similarity_threshold: args.cache_semantic_threshold,
-            vector_dimensions: args.cache_semantic_dimensions.max(1),
-            default_ttl: Duration::from_secs(args.cache_semantic_ttl.max(1)),
-            max_entries: args.cache_semantic_max_entries.max(1),
-            stream_replay_tps: 100,
-            expose_headers: true,
-        },
+        postgres: sql,
     })
 }
+
+fn parse_storage_backend(value: &str) -> anyhow::Result<StorageBackendKind> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "sqlite" => Ok(StorageBackendKind::Sqlite),
+        "postgres" => Ok(StorageBackendKind::Postgres),
+        other => anyhow::bail!("unsupported storage backend: {other}"),
+    }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn is_loopback_host(host: &str) -> bool {
     matches!(host, "127.0.0.1" | "localhost" | "::1")
@@ -338,57 +427,4 @@ fn build_cors_layer(origins: &[String]) -> CorsLayer {
             header::HeaderName::from_static("x-api-key"),
             header::HeaderName::from_static("anthropic-version"),
         ])
-}
-
-fn build_storage_config(args: &Args) -> anyhow::Result<GatewayStorageConfig> {
-    let backend = parse_storage_backend(&args.storage_backend)?;
-    let storage_dsn = resolve_storage_dsn(args, backend)?;
-    let sql = SqlStorageConfig {
-        url: storage_dsn.clone(),
-        max_connections: args.storage_max_connections,
-        min_connections: args.storage_min_connections,
-        acquire_timeout: Duration::from_secs(args.storage_acquire_timeout_secs),
-        idle_timeout: args.storage_idle_timeout_secs.map(Duration::from_secs),
-        max_lifetime: args.storage_max_lifetime_secs.map(Duration::from_secs),
-    };
-
-    Ok(GatewayStorageConfig {
-        backend,
-        sqlite: SqliteStorageConfig {
-            migrate_on_start: args.sqlite_migrate_on_start,
-        },
-        postgres: sql,
-    })
-}
-
-fn parse_storage_backend(value: &str) -> anyhow::Result<StorageBackendKind> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "sqlite" => Ok(StorageBackendKind::Sqlite),
-        "postgres" => Ok(StorageBackendKind::Postgres),
-        other => anyhow::bail!("unsupported storage backend: {other}"),
-    }
-}
-
-fn resolve_storage_dsn(args: &Args, backend: StorageBackendKind) -> anyhow::Result<Option<String>> {
-    if matches!(backend, StorageBackendKind::Sqlite) {
-        return Ok(None);
-    }
-
-    let env_name = args.storage_dsn_env.trim();
-    if env_name.is_empty() {
-        anyhow::bail!("--storage-dsn-env cannot be empty");
-    }
-
-    std::env::var(env_name)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-        .map(Some)
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "storage backend {} requires env {}",
-                args.storage_backend,
-                env_name
-            )
-        })
 }

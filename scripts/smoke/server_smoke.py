@@ -350,10 +350,8 @@ def run_smoke() -> None:
                 str(admin_port),
                 "--data-dir",
                 data_dir,
-                "--admin-key",
+                "--admin-token",
                 admin_key,
-                "--webui-dir",
-                "./webui/dist",
             ]
 
             proc = subprocess.Popen(

@@ -1,3 +1,5 @@
+import { getAdminToken, clearAdminToken } from "./auth";
+
 const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 async function invokeIPC<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -8,11 +10,28 @@ async function invokeIPC<T>(cmd: string, args?: Record<string, unknown>): Promis
 async function invokeHTTP<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
   const mapping = resolveHTTP(cmd, args);
   const init: RequestInit = { method: mapping.method };
+
+  const headers: Record<string, string> = {};
+  const token = getAdminToken();
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
   if (mapping.body) {
-    init.headers = { "Content-Type": "application/json" };
+    headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(mapping.body);
   }
+  if (Object.keys(headers).length > 0) {
+    init.headers = headers;
+  }
+
   const resp = await fetch(mapping.url, init);
+
+  if (resp.status === 401 && window.location.pathname !== "/login") {
+    clearAdminToken();
+    window.location.replace("/login");
+    throw new Error("Authentication required");
+  }
+
   if (!resp.ok) {
     const body = await resp.json().catch(() => ({}));
     throw new Error(body.error || `HTTP ${resp.status}`);
@@ -27,7 +46,9 @@ async function invokeHTTP<T>(cmd: string, args?: Record<string, unknown>): Promi
         : `Request failed: ${cmd}`;
     throw new Error(errorMessage);
   }
-  return json.data ?? json;
+  // Use explicit key check instead of ??, so that { "data": null } correctly
+  // returns null rather than falling back to the full response object.
+  return json && typeof json === "object" && "data" in json ? json.data : json;
 }
 
 interface HTTPMapping {

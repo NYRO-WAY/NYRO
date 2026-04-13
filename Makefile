@@ -8,12 +8,12 @@ dev: webui-build
 build: webui-build
 	cargo tauri build
 
-# Build server binary only (release)
-server:
+# Build server binary only (release, webui embedded)
+server: webui-build
 	cargo build -p nyro-server --release
 
-# Run server binary locally (debug)
-server-dev:
+# Run server binary locally (debug, webui embedded)
+server-dev: webui-build
 	cargo run -p nyro-server -- --proxy-port 19530 --admin-port 19531
 
 # Build webui

@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { Outlet } from "react-router-dom";
-import { Github, Languages, Moon, Sun } from "lucide-react";
+import { Outlet, useNavigate } from "react-router-dom";
+import { Github, Languages, LogOut, Moon, Sun } from "lucide-react";
 import { Sidebar } from "./sidebar";
 import { cn } from "@/lib/utils";
 import { IS_TAURI } from "@/lib/backend";
+import { clearAdminToken, getAdminToken } from "@/lib/auth";
 import { useLocale } from "@/lib/i18n";
 import { openExternalUrl } from "@/lib/open-external";
 
@@ -32,7 +33,9 @@ const NON_DRAGGABLE_SELECTOR = [
 export function AppLayout() {
   const [collapsed, setCollapsed] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">("light");
+  const [hasToken, setHasToken] = useState(false);
   const { locale, setLocale } = useLocale();
+  const navigate = useNavigate();
 
   useEffect(() => {
     const saved = localStorage.getItem("nyro-theme");
@@ -44,6 +47,9 @@ export function AppLayout() {
           : "light";
     setTheme(initial);
     document.documentElement.setAttribute("data-theme", initial);
+    if (!IS_TAURI) {
+      setHasToken(getAdminToken() !== null);
+    }
   }, []);
 
   async function toggleTheme() {
@@ -56,6 +62,11 @@ export function AppLayout() {
   function toggleLocale() {
     const next = locale === "zh-CN" ? "en-US" : "zh-CN";
     setLocale(next);
+  }
+
+  function handleLogout() {
+    clearAdminToken();
+    navigate("/login", { replace: true });
   }
 
   async function openProjectGithub() {
@@ -134,6 +145,15 @@ export function AppLayout() {
               >
                 <Languages className="h-4 w-4" />
               </button>
+              {hasToken && (
+                <button
+                  onClick={handleLogout}
+                  className="native-action-btn"
+                  title={locale === "zh-CN" ? "退出登录" : "Sign out"}
+                >
+                  <LogOut className="h-4 w-4" />
+                </button>
+              )}
             </div>
           </div>
         </div>

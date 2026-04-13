@@ -9,14 +9,14 @@ use nyro_core::Gateway;
 use serde::Deserialize;
 
 #[derive(Clone)]
-struct AdminKey(String);
+struct AdminToken(String);
 
 async fn admin_auth(
-    key: Option<Extension<AdminKey>>,
+    token_ext: Option<Extension<AdminToken>>,
     req: Request,
     next: Next,
 ) -> impl IntoResponse {
-    let Some(Extension(admin_key)) = key else {
+    let Some(Extension(admin_token)) = token_ext else {
         return next.run(req).await;
     };
 
@@ -30,18 +30,18 @@ async fn admin_auth(
         .strip_prefix("Bearer ")
         .unwrap_or(auth_header);
 
-    if token == admin_key.0 {
+    if token == admin_token.0 {
         next.run(req).await
     } else {
         (
             StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({"error": "invalid admin key"})),
+            Json(serde_json::json!({"error": "invalid admin token"})),
         )
             .into_response()
     }
 }
 
-pub fn create_router(gateway: Gateway, admin_key: Option<String>) -> Router {
+pub fn create_router(gateway: Gateway, admin_token: Option<String>) -> Router {
     let providers_item = get(get_provider_handler)
         .put(update_provider_handler)
         .delete(delete_provider_handler);
@@ -79,11 +79,11 @@ pub fn create_router(gateway: Gateway, admin_key: Option<String>) -> Router {
         .route("/config/import", axum::routing::post(import_config_handler))
         .with_state(gateway);
 
-    if let Some(key) = admin_key {
-        if !key.is_empty() {
+    if let Some(token) = admin_token {
+        if !token.is_empty() {
             api = api
                 .layer(middleware::from_fn(admin_auth))
-                .layer(Extension(AdminKey(key)));
+                .layer(Extension(AdminToken(token)));
         }
     }
 

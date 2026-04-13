@@ -9,13 +9,14 @@ description = "Nyro AI Gateway — Standalone Server Binary"
 nyro-core = { path = "../crates/nyro-core" }
 tokio = { workspace = true }
 axum = { workspace = true }
-tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
+tower-http = { version = "0.6", features = ["cors", "trace"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing = { workspace = true }
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 shellexpand = "3"
 anyhow = { workspace = true }
 serde_yaml = "0.9"
 chrono = { workspace = true }
+rust-embed = { version = "8", features = ["compression"] }
