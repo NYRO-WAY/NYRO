@@ -82,6 +82,8 @@ export default function SettingsPage() {
       enabled: false,
       default_ttl: 3600,
       max_entries: 1000,
+      stream_replay_tps: 100,
+      expose_headers: true,
     },
     semantic: {
       enabled: false,
@@ -90,6 +92,8 @@ export default function SettingsPage() {
       vector_dimensions: 1536,
       default_ttl: 600,
       max_entries: 500,
+      stream_replay_tps: 100,
+      expose_headers: true,
     },
   });
   const embeddingRoutes = routes.filter((route) => route.route_type === "embedding");
@@ -100,6 +104,8 @@ export default function SettingsPage() {
     ? cacheForm.exact.enabled !== cacheSettings.exact.enabled
       || cacheForm.exact.default_ttl !== cacheSettings.exact.default_ttl
       || cacheForm.exact.max_entries !== cacheSettings.exact.max_entries
+      || cacheForm.exact.stream_replay_tps !== cacheSettings.exact.stream_replay_tps
+      || cacheForm.exact.expose_headers !== cacheSettings.exact.expose_headers
     : false;
   const semanticCacheDirty = cacheSettings
     ? cacheForm.semantic.enabled !== cacheSettings.semantic.enabled
@@ -108,6 +114,8 @@ export default function SettingsPage() {
       || cacheForm.semantic.vector_dimensions !== cacheSettings.semantic.vector_dimensions
       || cacheForm.semantic.default_ttl !== cacheSettings.semantic.default_ttl
       || cacheForm.semantic.max_entries !== cacheSettings.semantic.max_entries
+      || cacheForm.semantic.stream_replay_tps !== cacheSettings.semantic.stream_replay_tps
+      || cacheForm.semantic.expose_headers !== cacheSettings.semantic.expose_headers
     : false;
   const normalizedProxyEnabledSetting = ["1", "true", "yes", "on"].includes(
     (proxyEnabledSetting ?? "").trim().toLowerCase(),
@@ -399,6 +407,39 @@ export default function SettingsPage() {
                   }
                 />
               </div>
+              <div className="space-y-1.5">
+                <label className="ml-1 text-xs text-slate-700">{isZh ? "流式重放速率 (TPS)" : "Stream Replay TPS"}</label>
+                <Input
+                  type="number"
+                  min={0}
+                  placeholder={isZh ? "0 = 不限速" : "0 = No Limit"}
+                  value={cacheForm.exact.stream_replay_tps}
+                  onChange={(e) =>
+                    setCacheForm((prev) => ({
+                      ...prev,
+                      exact: { ...prev.exact, stream_replay_tps: Math.max(0, Number(e.target.value || 0)) },
+                    }))
+                  }
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="ml-1 text-xs text-slate-700">{isZh ? "输出缓存响应头" : "Expose Cache Headers"}</label>
+                <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2.5">
+                  <div className="flex items-center gap-2">
+                    <ToggleStatusLabel enabled={cacheForm.exact.expose_headers} isZh={isZh} />
+                  </div>
+                  <Switch
+                    checked={cacheForm.exact.expose_headers}
+                    disabled={saveCacheMut.isPending}
+                    onCheckedChange={(checked) =>
+                      setCacheForm((prev) => ({
+                        ...prev,
+                        exact: { ...prev.exact, expose_headers: checked },
+                      }))
+                    }
+                  />
+                </div>
+              </div>
             </div>
             <div className="flex items-center gap-2">
               <Button
@@ -545,6 +586,39 @@ export default function SettingsPage() {
                     }))
                   }
                 />
+              </div>
+              <div className="space-y-1.5">
+                <label className="ml-1 text-xs text-slate-700">{isZh ? "流式重放速率 (TPS)" : "Stream Replay TPS"}</label>
+                <Input
+                  type="number"
+                  min={0}
+                  placeholder={isZh ? "0 = 不限速" : "0 = No Limit"}
+                  value={cacheForm.semantic.stream_replay_tps}
+                  onChange={(e) =>
+                    setCacheForm((prev) => ({
+                      ...prev,
+                      semantic: { ...prev.semantic, stream_replay_tps: Math.max(0, Number(e.target.value || 0)) },
+                    }))
+                  }
+                />
+              </div>
+              <div className="space-y-1.5">
+                <label className="ml-1 text-xs text-slate-700">{isZh ? "输出缓存响应头" : "Expose Cache Headers"}</label>
+                <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2.5">
+                  <div className="flex items-center gap-2">
+                    <ToggleStatusLabel enabled={cacheForm.semantic.expose_headers} isZh={isZh} />
+                  </div>
+                  <Switch
+                    checked={cacheForm.semantic.expose_headers}
+                    disabled={saveCacheMut.isPending}
+                    onCheckedChange={(checked) =>
+                      setCacheForm((prev) => ({
+                        ...prev,
+                        semantic: { ...prev.semantic, expose_headers: checked },
+                      }))
+                    }
+                  />
+                </div>
               </div>
               </div>
               <div className="flex items-center gap-2">

@@ -241,6 +241,8 @@ export interface CacheSettings {
     enabled: boolean;
     default_ttl: number;
     max_entries: number;
+    stream_replay_tps: number;
+    expose_headers: boolean;
   };
   semantic: {
     enabled: boolean;
@@ -249,6 +251,8 @@ export interface CacheSettings {
     vector_dimensions: number;
     default_ttl: number;
     max_entries: number;
+    stream_replay_tps: number;
+    expose_headers: boolean;
   };
 }
 

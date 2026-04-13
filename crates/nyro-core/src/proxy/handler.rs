@@ -353,6 +353,8 @@ async fn proxy_pipeline(
                         Some(key),
                         "EXACT",
                         None,
+                        cache_config.exact.stream_replay_tps,
+                        cache_config.exact.expose_headers,
                     );
                     emit_log(
                         &gw,
@@ -393,6 +395,8 @@ async fn proxy_pipeline(
                                     Some(key),
                                     "EXACT",
                                     None,
+                                    cache_config.exact.stream_replay_tps,
+                                    cache_config.exact.expose_headers,
                                 );
                                 emit_log(
                                     &gw,
@@ -450,6 +454,8 @@ async fn proxy_pipeline(
                                 Some(&hit.key),
                                 "SEMANTIC",
                                 Some(hit.score),
+                                cache_config.semantic.stream_replay_tps,
+                                cache_config.semantic.expose_headers,
                             );
                             emit_log(
                                 &gw,
@@ -567,6 +573,8 @@ async fn proxy_pipeline(
         forward_headers.extend(extra_headers.clone());
         let egress_str = egress.to_string();
 
+        let miss_expose_headers =
+            cache_config.exact.expose_headers || cache_config.semantic.expose_headers;
         let response = if is_stream {
             handle_stream(
                 gw.clone(),
@@ -592,6 +600,7 @@ async fn proxy_pipeline(
                 semantic_write_ctx.clone(),
                 singleflight_leader.as_ref().map(|(k, _)| k.as_str()),
                 singleflight_leader.as_ref().map(|(_, tx)| tx.clone()),
+                miss_expose_headers,
             )
             .await
         } else {
@@ -617,6 +626,7 @@ async fn proxy_pipeline(
                 exact_enabled_for_route,
                 Some(exact_ttl),
                 semantic_write_ctx.clone(),
+                miss_expose_headers,
             )
             .await
         };
@@ -666,6 +676,7 @@ async fn handle_non_stream(
     allow_exact_store: bool,
     exact_cache_ttl: Option<Duration>,
     semantic_write_ctx: Option<SemanticWriteContext>,
+    expose_headers: bool,
 ) -> Response {
     let credential_to_use = credential.to_string();
     let call_result = match client
@@ -740,7 +751,7 @@ async fn handle_non_stream(
         Json(output.clone()),
     )
         .into_response();
-    set_cache_headers(&mut response, "MISS", cache_key, None);
+    set_cache_headers(&mut response, "MISS", cache_key, None, expose_headers);
 
     if status < 400 && !is_tool {
         let entry = CacheEntry {
@@ -807,6 +818,7 @@ async fn handle_stream(
     semantic_write_ctx: Option<SemanticWriteContext>,
     singleflight_key: Option<&str>,
     singleflight_tx: Option<broadcast::Sender<Vec<u8>>>,
+    expose_headers: bool,
 ) -> Response {
     let credential_to_use = credential.to_string();
     let call_result = match client
@@ -1015,7 +1027,7 @@ async fn handle_stream(
         .header(header::CONNECTION, "keep-alive")
         .body(body)
         .unwrap();
-    set_cache_headers(&mut response, "MISS", cache_key, None);
+    set_cache_headers(&mut response, "MISS", cache_key, None, expose_headers);
     response
 }
 
@@ -1466,19 +1478,28 @@ fn extract_semantic_embedding_input(request: &InternalRequest) -> Option<(String
     Some((system_prompt, embedding_text))
 }
 
-fn set_cache_headers(response: &mut Response, cache_status: &str, key: Option<&str>, score: Option<f64>) {
+fn set_cache_headers(
+    response: &mut Response,
+    cache_status: &str,
+    key: Option<&str>,
+    score: Option<f64>,
+    expose_headers: bool,
+) {
+    if !expose_headers {
+        return;
+    }
     let headers = response.headers_mut();
     if let Ok(value) = HeaderValue::from_str(cache_status) {
-        headers.insert("x-nyro-cache", value);
+        headers.insert("X-NYRO-CACHE", value);
     }
     if let Some(key) = key {
         if let Ok(value) = HeaderValue::from_str(key) {
-            headers.insert("x-nyro-cache-key", value);
+            headers.insert("X-NYRO-CACHE-KEY", value);
         }
     }
     if let Some(score) = score {
         if let Ok(value) = HeaderValue::from_str(&format!("{score:.4}")) {
-            headers.insert("x-nyro-cache-score", value);
+            headers.insert("X-NYRO-CACHE-SCORE", value);
         }
     }
 }
@@ -1490,10 +1511,20 @@ fn cached_entry_to_response(
     cache_key: Option<&str>,
     cache_status: &str,
     score: Option<f64>,
+    stream_replay_tps: u32,
+    expose_headers: bool,
 ) -> Response {
     if is_stream {
         if let Some(internal) = entry.internal_response.as_ref() {
-            return replay_cached_stream(ingress, internal, cache_key, cache_status, score);
+            return replay_cached_stream(
+                ingress,
+                internal,
+                cache_key,
+                cache_status,
+                score,
+                stream_replay_tps,
+                expose_headers,
+            );
         }
     }
     let mut response = (
@@ -1501,7 +1532,7 @@ fn cached_entry_to_response(
         Json(entry.payload.clone()),
     )
         .into_response();
-    set_cache_headers(&mut response, cache_status, cache_key, score);
+    set_cache_headers(&mut response, cache_status, cache_key, score, expose_headers);
     response
 }
 
@@ -1511,9 +1542,17 @@ fn replay_cached_stream(
     cache_key: Option<&str>,
     cache_status: &str,
     score: Option<f64>,
+    stream_replay_tps: u32,
+    expose_headers: bool,
 ) -> Response {
     let mut formatter = crate::protocol::get_stream_formatter(ingress);
     let deltas = internal_response_to_deltas(internal);
+    // When TPS throttle is enabled, split large text chunks to ~1 token each (4 chars).
+    let deltas = if stream_replay_tps > 0 {
+        split_text_deltas(deltas, 4)
+    } else {
+        deltas
+    };
     let mut payloads: Vec<String> = formatter
         .format_deltas(&deltas)
         .into_iter()
@@ -1526,9 +1565,23 @@ fn replay_cached_stream(
             .map(|event| event.to_sse_string()),
     );
 
+    let interval = if stream_replay_tps > 0 {
+        Some(std::time::Duration::from_micros(
+            1_000_000 / stream_replay_tps as u64,
+        ))
+    } else {
+        None
+    };
+
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<String, Infallible>>(payloads.len().max(1));
     tokio::spawn(async move {
-        for payload in payloads {
+        for (i, payload) in payloads.into_iter().enumerate() {
+            // First chunk is sent immediately to keep TTFT at zero.
+            if i > 0 {
+                if let Some(d) = interval {
+                    tokio::time::sleep(d).await;
+                }
+            }
             if tx.send(Ok(payload)).await.is_err() {
                 break;
             }
@@ -1543,7 +1596,7 @@ fn replay_cached_stream(
         .header(header::CONNECTION, "keep-alive")
         .body(body)
         .unwrap();
-    set_cache_headers(&mut response, cache_status, cache_key, score);
+    set_cache_headers(&mut response, cache_status, cache_key, score, expose_headers);
     response
 }
 
@@ -1585,6 +1638,35 @@ fn internal_response_to_deltas(internal: &InternalResponse) -> Vec<StreamDelta> 
             .unwrap_or_else(|| "stop".to_string()),
     });
     deltas
+}
+
+fn split_text_deltas(deltas: Vec<StreamDelta>, chunk_chars: usize) -> Vec<StreamDelta> {
+    deltas
+        .into_iter()
+        .flat_map(|d| match d {
+            StreamDelta::TextDelta(text) => {
+                let chars: Vec<char> = text.chars().collect();
+                if chars.len() <= chunk_chars {
+                    return vec![StreamDelta::TextDelta(text)];
+                }
+                chars
+                    .chunks(chunk_chars)
+                    .map(|c| StreamDelta::TextDelta(c.iter().collect()))
+                    .collect()
+            }
+            StreamDelta::ReasoningDelta(text) => {
+                let chars: Vec<char> = text.chars().collect();
+                if chars.len() <= chunk_chars {
+                    return vec![StreamDelta::ReasoningDelta(text)];
+                }
+                chars
+                    .chunks(chunk_chars)
+                    .map(|c| StreamDelta::ReasoningDelta(c.iter().collect()))
+                    .collect()
+            }
+            other => vec![other],
+        })
+        .collect()
 }
 
 async fn finalize_singleflight(
