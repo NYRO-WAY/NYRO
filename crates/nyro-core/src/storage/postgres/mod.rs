@@ -308,10 +308,10 @@ impl ProviderStore for PostgresProviderStore {
         let static_models = input.static_models.or(current.static_models);
         let api_key = input.api_key.unwrap_or(current.api_key);
         let use_proxy = input.use_proxy.unwrap_or(current.use_proxy);
-        let is_active = input.is_active.unwrap_or(current.is_active);
+        let is_enabled = input.is_enabled.unwrap_or(current.is_enabled);
 
         sqlx::query(
-            "UPDATE providers SET name=$1, vendor=$2, protocol=$3, base_url=$4, default_protocol=$5, protocol_endpoints=$6, preset_key=$7, channel=$8, models_source=$9, capabilities_source=$10, static_models=$11, api_key=$12, use_proxy=$13, is_active=$14, updated_at=CURRENT_TIMESTAMP WHERE id=$15",
+            "UPDATE providers SET name=$1, vendor=$2, protocol=$3, base_url=$4, default_protocol=$5, protocol_endpoints=$6, preset_key=$7, channel=$8, models_source=$9, capabilities_source=$10, static_models=$11, api_key=$12, use_proxy=$13, is_enabled=$14, updated_at=CURRENT_TIMESTAMP WHERE id=$15",
         )
         .bind(name.trim())
         .bind(vendor)
@@ -326,7 +326,7 @@ impl ProviderStore for PostgresProviderStore {
         .bind(static_models)
         .bind(api_key)
         .bind(use_proxy)
-        .bind(is_active)
+        .bind(is_enabled)
         .bind(id)
         .execute(&self.pool)
         .await?;
@@ -448,10 +448,10 @@ impl RouteStore for PostgresRouteStore {
         let cache_exact_ttl = input.cache_exact_ttl;
         let cache_semantic_ttl = input.cache_semantic_ttl;
         let cache_semantic_threshold = input.cache_semantic_threshold;
-        let is_active = input.is_active.unwrap_or(current.is_active);
+        let is_enabled = input.is_enabled.unwrap_or(current.is_enabled);
 
         sqlx::query(
-            "UPDATE routes SET name=$1, virtual_model=$2, strategy=$3, target_provider=$4, target_model=$5, access_control=$6, route_type=$7, cache_exact_ttl=$8, cache_semantic_ttl=$9, cache_semantic_threshold=$10, is_active=$11 WHERE id=$12",
+            "UPDATE routes SET name=$1, virtual_model=$2, strategy=$3, target_provider=$4, target_model=$5, access_control=$6, route_type=$7, cache_exact_ttl=$8, cache_semantic_ttl=$9, cache_semantic_threshold=$10, is_enabled=$11 WHERE id=$12",
         )
         .bind(name.trim())
         .bind(&virtual_model)
@@ -463,7 +463,7 @@ impl RouteStore for PostgresRouteStore {
         .bind(cache_exact_ttl)
         .bind(cache_semantic_ttl)
         .bind(cache_semantic_threshold)
-        .bind(is_active)
+        .bind(is_enabled)
         .bind(id)
         .execute(&self.pool)
         .await?;
@@ -527,7 +527,7 @@ impl RouteStore for PostgresRouteStore {
 #[async_trait]
 impl RouteSnapshotStore for PostgresRouteStore {
     async fn load_active_snapshot(&self) -> anyhow::Result<Vec<Route>> {
-        let sql = format!("{} WHERE is_active = true", route_select(None));
+        let sql = format!("{} WHERE COALESCE(is_enabled, TRUE) = true", route_select(None));
         Ok(sqlx::query_as::<_, Route>(&sql)
             .fetch_all(&self.pool)
             .await?)
@@ -686,18 +686,18 @@ impl ApiKeyStore for PostgresApiKeyStore {
         let rpd = input.rpd.or(current.rpd);
         let tpm = input.tpm.or(current.tpm);
         let tpd = input.tpd.or(current.tpd);
-        let status = input.status.unwrap_or(current.status);
+        let is_enabled = input.is_enabled.unwrap_or(current.is_enabled);
         let expires_at = input.expires_at.or(current.expires_at);
 
         sqlx::query(
-            "UPDATE api_keys SET name=$1, rpm=$2, rpd=$3, tpm=$4, tpd=$5, status=$6, expires_at=NULLIF($7, '')::timestamptz, updated_at=CURRENT_TIMESTAMP WHERE id=$8",
+            "UPDATE api_keys SET name=$1, rpm=$2, rpd=$3, tpm=$4, tpd=$5, is_enabled=$6, expires_at=NULLIF($7, '')::timestamptz, updated_at=CURRENT_TIMESTAMP WHERE id=$8",
         )
         .bind(name.trim())
         .bind(rpm)
         .bind(rpd)
         .bind(tpm)
         .bind(tpd)
-        .bind(status)
+        .bind(is_enabled)
         .bind(expires_at.as_deref().map(str::trim).unwrap_or(""))
         .bind(id)
         .execute(&self.pool)
@@ -750,7 +750,7 @@ impl AuthAccessStore for PostgresAuthAccessStore {
             _,
             (
                 String,
-                String,
+                bool,
                 Option<String>,
                 Option<i32>,
                 Option<i32>,
@@ -758,16 +758,16 @@ impl AuthAccessStore for PostgresAuthAccessStore {
                 Option<i32>,
             ),
         >(
-            "SELECT id, status, to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS expires_at, rpm, rpd, tpm, tpd FROM api_keys WHERE key = $1",
+            "SELECT id, COALESCE(is_enabled, TRUE) AS is_enabled, to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS expires_at, rpm, rpd, tpm, tpd FROM api_keys WHERE key = $1",
         )
         .bind(raw_key)
         .fetch_optional(&self.pool)
         .await?;
 
         Ok(row.map(
-            |(id, status, expires_at, rpm, rpd, tpm, tpd)| ApiKeyAccessRecord {
+            |(id, is_enabled, expires_at, rpm, rpd, tpm, tpd)| ApiKeyAccessRecord {
                 id,
-                status,
+                is_enabled,
                 expires_at,
                 rpm,
                 rpd,
@@ -1111,6 +1111,32 @@ impl StorageBootstrap for PostgresBootstrap {
         sqlx::query("CREATE EXTENSION IF NOT EXISTS vector")
             .execute(self.adapter.pool())
             .await?;
+        // Migrate: providers/routes is_active -> is_enabled
+        sqlx::query("ALTER TABLE providers ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN DEFAULT TRUE")
+            .execute(self.adapter.pool())
+            .await?;
+        sqlx::query("UPDATE providers SET is_enabled = is_active WHERE is_active IS NOT NULL AND is_enabled IS DISTINCT FROM is_active")
+            .execute(self.adapter.pool())
+            .await
+            .ok();
+        sqlx::query("ALTER TABLE routes ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN DEFAULT TRUE")
+            .execute(self.adapter.pool())
+            .await?;
+        sqlx::query("UPDATE routes SET is_enabled = is_active WHERE is_active IS NOT NULL AND is_enabled IS DISTINCT FROM is_active")
+            .execute(self.adapter.pool())
+            .await
+            .ok();
+        // Migrate: api_keys status -> is_enabled
+        sqlx::query("ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN DEFAULT TRUE")
+            .execute(self.adapter.pool())
+            .await?;
+        sqlx::query(
+            "UPDATE api_keys SET is_enabled = CASE WHEN status = 'active' THEN TRUE ELSE FALSE END \
+             WHERE status IS NOT NULL AND is_enabled IS DISTINCT FROM (status = 'active')",
+        )
+        .execute(self.adapter.pool())
+        .await
+        .ok();
         ensure_semantic_cache_vectors_table(self.adapter.pool(), self.vector_dimensions).await?;
         Ok(())
     }
@@ -1206,7 +1232,7 @@ fn is_pg_permission_error(error: &anyhow::Error) -> bool {
 
 fn provider_select(suffix: Option<&str>) -> String {
     let mut sql = String::from(
-        "SELECT id, name, vendor, protocol, base_url, COALESCE(default_protocol, protocol) AS default_protocol, COALESCE(protocol_endpoints, '{}') AS protocol_endpoints, preset_key, channel, models_source, capabilities_source, static_models, api_key, COALESCE(use_proxy, FALSE) AS use_proxy, last_test_success, to_char(last_test_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS last_test_at, is_active, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS updated_at FROM providers",
+        "SELECT id, name, vendor, protocol, base_url, COALESCE(default_protocol, protocol) AS default_protocol, COALESCE(protocol_endpoints, '{}') AS protocol_endpoints, preset_key, channel, models_source, capabilities_source, static_models, api_key, COALESCE(use_proxy, FALSE) AS use_proxy, last_test_success, to_char(last_test_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS last_test_at, COALESCE(is_enabled, TRUE) AS is_enabled, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS updated_at FROM providers",
     );
     if let Some(suffix) = suffix {
         sql.push(' ');
@@ -1219,7 +1245,7 @@ fn provider_select(suffix: Option<&str>) -> String {
 
 fn route_select(suffix: Option<&str>) -> String {
     let mut sql = String::from(
-        "SELECT id, name, virtual_model, COALESCE(strategy, 'weighted') AS strategy, target_provider, target_model, COALESCE(access_control, false) AS access_control, COALESCE(route_type, 'chat') AS route_type, cache_exact_ttl, cache_semantic_ttl, cache_semantic_threshold, is_active, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at FROM routes",
+        "SELECT id, name, virtual_model, COALESCE(strategy, 'weighted') AS strategy, target_provider, target_model, COALESCE(access_control, false) AS access_control, COALESCE(route_type, 'chat') AS route_type, cache_exact_ttl, cache_semantic_ttl, cache_semantic_threshold, COALESCE(is_enabled, TRUE) AS is_enabled, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at FROM routes",
     );
     if let Some(suffix) = suffix {
         sql.push(' ');
@@ -1230,7 +1256,7 @@ fn route_select(suffix: Option<&str>) -> String {
 
 fn api_key_select(suffix: Option<&str>) -> String {
     let mut sql = String::from(
-        "SELECT id, key, name, rpm, rpd, tpm, tpd, status, to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS expires_at, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS updated_at FROM api_keys",
+        "SELECT id, key, name, rpm, rpd, tpm, tpd, COALESCE(is_enabled, TRUE) AS is_enabled, to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS expires_at, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS updated_at FROM api_keys",
     );
     if let Some(suffix) = suffix {
         sql.push(' ');
@@ -1250,7 +1276,7 @@ fn api_key_with_bindings(row: ApiKey, route_ids: Vec<String>) -> ApiKeyWithBindi
         rpd: row.rpd,
         tpm: row.tpm,
         tpd: row.tpd,
-        status: row.status,
+        is_enabled: row.is_enabled,
         expires_at: row.expires_at,
         created_at: row.created_at,
         updated_at: row.updated_at,
@@ -1325,7 +1351,7 @@ CREATE TABLE IF NOT EXISTS providers (
     use_proxy BOOLEAN NOT NULL DEFAULT FALSE,
     last_test_success BOOLEAN,
     last_test_at TIMESTAMPTZ,
-    is_active BOOLEAN DEFAULT TRUE,
+    is_enabled BOOLEAN DEFAULT TRUE,
     priority INTEGER DEFAULT 0,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
@@ -1343,7 +1369,7 @@ CREATE TABLE IF NOT EXISTS routes (
     cache_semantic_ttl BIGINT,
     cache_semantic_threshold DOUBLE PRECISION,
     access_control BOOLEAN DEFAULT FALSE,
-    is_active BOOLEAN DEFAULT TRUE,
+    is_enabled BOOLEAN DEFAULT TRUE,
     priority INTEGER DEFAULT 0,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
@@ -1407,7 +1433,7 @@ CREATE TABLE IF NOT EXISTS api_keys (
     rpd INTEGER,
     tpm INTEGER,
     tpd INTEGER,
-    status TEXT NOT NULL DEFAULT 'active',
+    is_enabled BOOLEAN DEFAULT TRUE,
     expires_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP

@@ -126,7 +126,7 @@ struct SqliteProviderStore {
 impl ProviderStore for SqliteProviderStore {
     async fn list(&self) -> anyhow::Result<Vec<Provider>> {
         Ok(sqlx::query_as::<_, Provider>(
-            "SELECT id, name, vendor, protocol, base_url, COALESCE(default_protocol, protocol) AS default_protocol, COALESCE(protocol_endpoints, '{}') AS protocol_endpoints, preset_key, channel, models_source, capabilities_source, static_models, api_key, COALESCE(use_proxy, 0) AS use_proxy, last_test_success, last_test_at, is_active, created_at, updated_at FROM providers ORDER BY created_at DESC",
+            "SELECT id, name, vendor, protocol, base_url, COALESCE(default_protocol, protocol) AS default_protocol, COALESCE(protocol_endpoints, '{}') AS protocol_endpoints, preset_key, channel, models_source, capabilities_source, static_models, api_key, COALESCE(use_proxy, 0) AS use_proxy, last_test_success, last_test_at, COALESCE(is_enabled, 1) AS is_enabled, created_at, updated_at FROM providers ORDER BY created_at DESC",
         )
         .fetch_all(&self.pool)
         .await?)
@@ -134,7 +134,7 @@ impl ProviderStore for SqliteProviderStore {
 
     async fn get(&self, id: &str) -> anyhow::Result<Option<Provider>> {
         Ok(sqlx::query_as::<_, Provider>(
-            "SELECT id, name, vendor, protocol, base_url, COALESCE(default_protocol, protocol) AS default_protocol, COALESCE(protocol_endpoints, '{}') AS protocol_endpoints, preset_key, channel, models_source, capabilities_source, static_models, api_key, COALESCE(use_proxy, 0) AS use_proxy, last_test_success, last_test_at, is_active, created_at, updated_at FROM providers WHERE id = ?",
+            "SELECT id, name, vendor, protocol, base_url, COALESCE(default_protocol, protocol) AS default_protocol, COALESCE(protocol_endpoints, '{}') AS protocol_endpoints, preset_key, channel, models_source, capabilities_source, static_models, api_key, COALESCE(use_proxy, 0) AS use_proxy, last_test_success, last_test_at, COALESCE(is_enabled, 1) AS is_enabled, created_at, updated_at FROM providers WHERE id = ?",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -199,10 +199,10 @@ impl ProviderStore for SqliteProviderStore {
         let static_models = input.static_models.or(current.static_models);
         let api_key = input.api_key.unwrap_or(current.api_key);
         let use_proxy = input.use_proxy.unwrap_or(current.use_proxy);
-        let is_active = input.is_active.unwrap_or(current.is_active);
+        let is_enabled = input.is_enabled.unwrap_or(current.is_enabled);
 
         sqlx::query(
-            "UPDATE providers SET name=?, vendor=?, protocol=?, base_url=?, default_protocol=?, protocol_endpoints=?, preset_key=?, channel=?, models_source=?, capabilities_source=?, static_models=?, api_key=?, use_proxy=?, is_active=?, updated_at=datetime('now') WHERE id=?",
+            "UPDATE providers SET name=?, vendor=?, protocol=?, base_url=?, default_protocol=?, protocol_endpoints=?, preset_key=?, channel=?, models_source=?, capabilities_source=?, static_models=?, api_key=?, use_proxy=?, is_enabled=?, updated_at=datetime('now') WHERE id=?",
         )
         .bind(name)
         .bind(vendor)
@@ -217,7 +217,7 @@ impl ProviderStore for SqliteProviderStore {
         .bind(static_models)
         .bind(api_key)
         .bind(use_proxy)
-        .bind(is_active)
+        .bind(is_enabled)
         .bind(id)
         .execute(&self.pool)
         .await?;
@@ -294,7 +294,7 @@ impl SqliteRouteStore {
 impl RouteStore for SqliteRouteStore {
     async fn list(&self) -> anyhow::Result<Vec<Route>> {
         Ok(sqlx::query_as::<_, Route>(
-            "SELECT id, name, virtual_model, COALESCE(strategy, 'weighted') AS strategy, target_provider, target_model, COALESCE(access_control, 0) AS access_control, COALESCE(route_type, 'chat') AS route_type, cache_exact_ttl, cache_semantic_ttl, cache_semantic_threshold, is_active, created_at FROM routes ORDER BY created_at DESC",
+            "SELECT id, name, virtual_model, COALESCE(strategy, 'weighted') AS strategy, target_provider, target_model, COALESCE(access_control, 0) AS access_control, COALESCE(route_type, 'chat') AS route_type, cache_exact_ttl, cache_semantic_ttl, cache_semantic_threshold, COALESCE(is_enabled, 1) AS is_enabled, created_at FROM routes ORDER BY created_at DESC",
         )
         .fetch_all(&self.pool)
         .await?)
@@ -302,7 +302,7 @@ impl RouteStore for SqliteRouteStore {
 
     async fn get(&self, id: &str) -> anyhow::Result<Option<Route>> {
         Ok(sqlx::query_as::<_, Route>(
-            "SELECT id, name, virtual_model, COALESCE(strategy, 'weighted') AS strategy, target_provider, target_model, COALESCE(access_control, 0) AS access_control, COALESCE(route_type, 'chat') AS route_type, cache_exact_ttl, cache_semantic_ttl, cache_semantic_threshold, is_active, created_at FROM routes WHERE id = ?",
+            "SELECT id, name, virtual_model, COALESCE(strategy, 'weighted') AS strategy, target_provider, target_model, COALESCE(access_control, 0) AS access_control, COALESCE(route_type, 'chat') AS route_type, cache_exact_ttl, cache_semantic_ttl, cache_semantic_threshold, COALESCE(is_enabled, 1) AS is_enabled, created_at FROM routes WHERE id = ?",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -377,11 +377,11 @@ impl RouteStore for SqliteRouteStore {
         let cache_exact_ttl = input.cache_exact_ttl;
         let cache_semantic_ttl = input.cache_semantic_ttl;
         let cache_semantic_threshold = input.cache_semantic_threshold;
-        let is_active = input.is_active.unwrap_or(current.is_active);
+        let is_enabled = input.is_enabled.unwrap_or(current.is_enabled);
 
         if self.has_match_pattern_column().await? {
             sqlx::query(
-                "UPDATE routes SET name=?, virtual_model=?, match_pattern=?, strategy=?, target_provider=?, target_model=?, access_control=?, route_type=?, cache_exact_ttl=?, cache_semantic_ttl=?, cache_semantic_threshold=?, is_active=? WHERE id=?",
+                "UPDATE routes SET name=?, virtual_model=?, match_pattern=?, strategy=?, target_provider=?, target_model=?, access_control=?, route_type=?, cache_exact_ttl=?, cache_semantic_ttl=?, cache_semantic_threshold=?, is_enabled=? WHERE id=?",
             )
             .bind(name.trim())
             .bind(&virtual_model)
@@ -394,13 +394,13 @@ impl RouteStore for SqliteRouteStore {
             .bind(cache_exact_ttl)
             .bind(cache_semantic_ttl)
             .bind(cache_semantic_threshold)
-            .bind(is_active)
+            .bind(is_enabled)
             .bind(id)
             .execute(&self.pool)
             .await?;
         } else {
             sqlx::query(
-                "UPDATE routes SET name=?, virtual_model=?, strategy=?, target_provider=?, target_model=?, access_control=?, route_type=?, cache_exact_ttl=?, cache_semantic_ttl=?, cache_semantic_threshold=?, is_active=? WHERE id=?",
+                "UPDATE routes SET name=?, virtual_model=?, strategy=?, target_provider=?, target_model=?, access_control=?, route_type=?, cache_exact_ttl=?, cache_semantic_ttl=?, cache_semantic_threshold=?, is_enabled=? WHERE id=?",
             )
             .bind(name.trim())
             .bind(&virtual_model)
@@ -412,7 +412,7 @@ impl RouteStore for SqliteRouteStore {
             .bind(cache_exact_ttl)
             .bind(cache_semantic_ttl)
             .bind(cache_semantic_threshold)
-            .bind(is_active)
+            .bind(is_enabled)
             .bind(id)
             .execute(&self.pool)
             .await?;
@@ -496,10 +496,10 @@ impl RouteSnapshotStore for SqliteRouteStore {
                 cache_exact_ttl,
                 cache_semantic_ttl,
                 cache_semantic_threshold,
-                is_active,
+                COALESCE(is_enabled, 1) AS is_enabled,
                 created_at
             FROM routes
-            WHERE is_active = 1"#,
+            WHERE COALESCE(is_enabled, 1) = 1"#,
         )
         .fetch_all(&self.pool)
         .await?)
@@ -603,7 +603,7 @@ struct SqliteApiKeyStore {
 impl ApiKeyStore for SqliteApiKeyStore {
     async fn list(&self) -> anyhow::Result<Vec<ApiKeyWithBindings>> {
         let rows = sqlx::query_as::<_, ApiKey>(
-            "SELECT id, key, name, rpm, rpd, tpm, tpd, status, expires_at, created_at, updated_at FROM api_keys ORDER BY created_at DESC",
+            "SELECT id, key, name, rpm, rpd, tpm, tpd, COALESCE(is_enabled, 1) AS is_enabled, expires_at, created_at, updated_at FROM api_keys ORDER BY created_at DESC",
         )
         .fetch_all(&self.pool)
         .await?;
@@ -619,7 +619,7 @@ impl ApiKeyStore for SqliteApiKeyStore {
                 rpd: row.rpd,
                 tpm: row.tpm,
                 tpd: row.tpd,
-                status: row.status,
+                is_enabled: row.is_enabled,
                 expires_at: row.expires_at,
                 created_at: row.created_at,
                 updated_at: row.updated_at,
@@ -631,7 +631,7 @@ impl ApiKeyStore for SqliteApiKeyStore {
 
     async fn get(&self, id: &str) -> anyhow::Result<Option<ApiKeyWithBindings>> {
         let row = sqlx::query_as::<_, ApiKey>(
-            "SELECT id, key, name, rpm, rpd, tpm, tpd, status, expires_at, created_at, updated_at FROM api_keys WHERE id = ?",
+            "SELECT id, key, name, rpm, rpd, tpm, tpd, COALESCE(is_enabled, 1) AS is_enabled, expires_at, created_at, updated_at FROM api_keys WHERE id = ?",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -649,7 +649,7 @@ impl ApiKeyStore for SqliteApiKeyStore {
             rpd: row.rpd,
             tpm: row.tpm,
             tpd: row.tpd,
-            status: row.status,
+            is_enabled: row.is_enabled,
             expires_at: row.expires_at,
             created_at: row.created_at,
             updated_at: row.updated_at,
@@ -661,7 +661,7 @@ impl ApiKeyStore for SqliteApiKeyStore {
         let id = uuid::Uuid::new_v4().to_string();
         let key = format!("sk-{}", uuid::Uuid::new_v4().simple());
         sqlx::query(
-            "INSERT INTO api_keys (id, key, name, rpm, rpd, tpm, tpd, status, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?)",
+            "INSERT INTO api_keys (id, key, name, rpm, rpd, tpm, tpd, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&key)
@@ -682,7 +682,7 @@ impl ApiKeyStore for SqliteApiKeyStore {
 
     async fn update(&self, id: &str, input: UpdateApiKey) -> anyhow::Result<ApiKeyWithBindings> {
         let current = sqlx::query_as::<_, ApiKey>(
-            "SELECT id, key, name, rpm, rpd, tpm, tpd, status, expires_at, created_at, updated_at FROM api_keys WHERE id = ?",
+            "SELECT id, key, name, rpm, rpd, tpm, tpd, COALESCE(is_enabled, 1) AS is_enabled, expires_at, created_at, updated_at FROM api_keys WHERE id = ?",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -694,18 +694,18 @@ impl ApiKeyStore for SqliteApiKeyStore {
         let rpd = input.rpd.or(current.rpd);
         let tpm = input.tpm.or(current.tpm);
         let tpd = input.tpd.or(current.tpd);
-        let status = input.status.unwrap_or(current.status);
+        let is_enabled = input.is_enabled.unwrap_or(current.is_enabled);
         let expires_at = input.expires_at.or(current.expires_at);
 
         sqlx::query(
-            "UPDATE api_keys SET name=?, rpm=?, rpd=?, tpm=?, tpd=?, status=?, expires_at=?, updated_at=datetime('now') WHERE id=?",
+            "UPDATE api_keys SET name=?, rpm=?, rpd=?, tpm=?, tpd=?, is_enabled=?, expires_at=?, updated_at=datetime('now') WHERE id=?",
         )
         .bind(name.trim())
         .bind(rpm)
         .bind(rpd)
         .bind(tpm)
         .bind(tpd)
-        .bind(status)
+        .bind(is_enabled)
         .bind(expires_at.as_ref().map(|v| v.trim()).filter(|v| !v.is_empty()))
         .bind(id)
         .execute(&self.pool)
@@ -763,22 +763,22 @@ impl AuthAccessStore for SqliteAuthAccessStore {
             _,
             (
                 String,
-                String,
+                bool,
                 Option<String>,
                 Option<i32>,
                 Option<i32>,
                 Option<i32>,
                 Option<i32>,
             ),
-        >("SELECT id, status, expires_at, rpm, rpd, tpm, tpd FROM api_keys WHERE key = ?")
+        >("SELECT id, COALESCE(is_enabled, 1) AS is_enabled, expires_at, rpm, rpd, tpm, tpd FROM api_keys WHERE key = ?")
         .bind(raw_key)
         .fetch_optional(&self.pool)
         .await?;
 
         Ok(row.map(
-            |(id, status, expires_at, rpm, rpd, tpm, tpd)| ApiKeyAccessRecord {
+            |(id, is_enabled, expires_at, rpm, rpd, tpm, tpd)| ApiKeyAccessRecord {
                 id,
-                status,
+                is_enabled,
                 expires_at,
                 rpm,
                 rpd,

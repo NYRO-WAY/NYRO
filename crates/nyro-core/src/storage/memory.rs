@@ -150,7 +150,7 @@ impl RouteStore for MemoryStorage {
 impl RouteSnapshotStore for MemoryStorage {
     async fn load_active_snapshot(&self) -> anyhow::Result<Vec<Route>> {
         let routes = self.routes.read().await;
-        Ok(routes.iter().filter(|r| r.is_active).cloned().collect())
+        Ok(routes.iter().filter(|r| r.is_enabled).cloned().collect())
     }
 }
 

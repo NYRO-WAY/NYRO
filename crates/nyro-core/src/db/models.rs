@@ -28,7 +28,7 @@ pub struct Provider {
     pub use_proxy: bool,
     pub last_test_success: Option<bool>,
     pub last_test_at: Option<String>,
-    pub is_active: bool,
+    pub is_enabled: bool,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -59,7 +59,7 @@ pub struct Route {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[sqlx(skip)]
     pub cache: Option<RouteCacheConfig>,
-    pub is_active: bool,
+    pub is_enabled: bool,
     pub created_at: String,
     #[serde(default)]
     #[sqlx(skip)]
@@ -120,7 +120,7 @@ pub struct ApiKey {
     pub rpd: Option<i32>,
     pub tpm: Option<i32>,
     pub tpd: Option<i32>,
-    pub status: String,
+    pub is_enabled: bool,
     pub expires_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -135,7 +135,7 @@ pub struct ApiKeyWithBindings {
     pub rpd: Option<i32>,
     pub tpm: Option<i32>,
     pub tpd: Option<i32>,
-    pub status: String,
+    pub is_enabled: bool,
     pub expires_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
@@ -200,7 +200,7 @@ pub struct UpdateProvider {
     pub static_models: Option<String>,
     pub api_key: Option<String>,
     pub use_proxy: Option<bool>,
-    pub is_active: Option<bool>,
+    pub is_enabled: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -224,7 +224,7 @@ pub struct UpdateRoute {
     pub cache_semantic_ttl: Option<i64>,
     #[serde(skip)]
     pub cache_semantic_threshold: Option<f64>,
-    pub is_active: Option<bool>,
+    pub is_enabled: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -305,7 +305,7 @@ pub struct UpdateApiKey {
     pub rpd: Option<i32>,
     pub tpm: Option<i32>,
     pub tpd: Option<i32>,
-    pub status: Option<String>,
+    pub is_enabled: Option<bool>,
     pub expires_at: Option<String>,
     pub route_ids: Option<Vec<String>>,
 }
@@ -413,7 +413,7 @@ pub struct ExportProvider {
     pub api_key: String,
     #[serde(default)]
     pub use_proxy: bool,
-    pub is_active: bool,
+    pub is_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -423,7 +423,7 @@ pub struct ExportRoute {
     pub target_model: String,
     #[serde(default)]
     pub access_control: bool,
-    pub is_active: bool,
+    pub is_enabled: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, GitBranch, Pencil, Plus, Route as RouteIcon, Trash2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, GitBranch, Pencil, Plus, Route as RouteIcon, Trash2, ToggleRight, ToggleLeft, X } from "lucide-react";
 
 import { backend } from "@/lib/backend";
 import { localizeBackendErrorMessage } from "@/lib/backend-error";
@@ -432,6 +432,17 @@ export default function RoutesPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["routes"] }),
     onError: (error: unknown) => {
       showErrorDialog("删除路由失败", "Failed to delete route", error);
+    },
+  });
+
+  const [routeToDisable, setRouteToDisable] = useState<RouteType | null>(null);
+
+  const toggleEnabledMut = useMutation({
+    mutationFn: ({ id, is_enabled }: { id: string; is_enabled: boolean }) =>
+      backend("update_route", { id, input: { is_enabled } }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["routes"] }),
+    onError: (error: unknown) => {
+      showErrorDialog("操作失败", "Operation failed", error);
     },
   });
 
@@ -1004,15 +1015,32 @@ export default function RoutesPage() {
                         {isZh ? "语义相似缓存" : "Semantic Cache"}
                       </Badge>
                     )}
-                    {!route.is_active && (
+                    {!route.is_enabled && (
                       <Badge variant="danger" className="connect-label-badge">
-                        {isZh ? "停用" : "Inactive"}
+                        {isZh ? "已禁用" : "Disabled"}
                       </Badge>
                     )}
                   </div>
                   </div>
                 </div>
                 <div className="flex items-center gap-0.5">
+                  <button
+                    onClick={() => {
+                      if (route.is_enabled) {
+                        setRouteToDisable(route);
+                      } else {
+                        toggleEnabledMut.mutate({ id: route.id, is_enabled: true });
+                      }
+                    }}
+                    title={route.is_enabled ? (isZh ? "禁用" : "Disable") : (isZh ? "启用" : "Enable")}
+                    className="cursor-pointer rounded-lg p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+                  >
+                    {route.is_enabled ? (
+                      <ToggleRight className="h-4 w-4 text-green-500" />
+                    ) : (
+                      <ToggleLeft className="h-4 w-4 text-slate-400" />
+                    )}
+                  </button>
                   <button
                     onClick={() => startEdit(route)}
                     className="cursor-pointer rounded-lg p-2 text-slate-400 transition-colors hover:bg-blue-50 hover:text-blue-500"
@@ -1073,6 +1101,21 @@ export default function RoutesPage() {
         </div>
       )}
 
+      <ConfirmDialog
+        open={Boolean(routeToDisable)}
+        onOpenChange={(open) => {
+          if (!open) setRouteToDisable(null);
+        }}
+        title={isZh ? "确认禁用路由" : "Confirm route disable"}
+        description={isZh ? "禁用后，该虚拟模型将不可用，确认禁用？" : "After disabling, the virtual model will be unavailable. Confirm disable?"}
+        cancelText={isZh ? "取消" : "Cancel"}
+        confirmText={isZh ? "禁用" : "Disable"}
+        onConfirm={() => {
+          if (!routeToDisable) return;
+          toggleEnabledMut.mutate({ id: routeToDisable.id, is_enabled: false });
+          setRouteToDisable(null);
+        }}
+      />
       <ConfirmDialog
         open={Boolean(routeToDelete)}
         onOpenChange={(open) => {

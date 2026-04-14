@@ -60,6 +60,14 @@ pub async fn migrate(pool: &SqlitePool, vector_dimensions: usize) -> anyhow::Res
     ensure_request_log_column(pool, "api_key_id", "TEXT").await?;
     ensure_api_key_tables(pool).await?;
     ensure_api_key_column(pool, "rpd", "INTEGER").await?;
+    // Migrate: providers/routes is_active -> is_enabled
+    ensure_provider_column(pool, "is_enabled", "INTEGER DEFAULT 1").await?;
+    migrate_provider_is_active_to_is_enabled(pool).await?;
+    ensure_route_column(pool, "is_enabled", "INTEGER DEFAULT 1").await?;
+    migrate_route_is_active_to_is_enabled(pool).await?;
+    // Migrate: api_keys status -> is_enabled
+    ensure_api_key_column(pool, "is_enabled", "INTEGER DEFAULT 1").await?;
+    migrate_api_key_status_to_is_enabled(pool).await?;
     ensure_route_targets_table(pool).await?;
     ensure_cache_entries_table(pool).await?;
     ensure_semantic_cache_vectors_table(pool, vector_dimensions).await?;
@@ -176,7 +184,7 @@ async fn ensure_api_key_tables(pool: &SqlitePool) -> anyhow::Result<()> {
             rpd         INTEGER,
             tpm         INTEGER,
             tpd         INTEGER,
-            status      TEXT NOT NULL DEFAULT 'active',
+            is_enabled  INTEGER DEFAULT 1,
             expires_at  TEXT,
             created_at  TEXT DEFAULT (datetime('now')),
             updated_at  TEXT DEFAULT (datetime('now'))
@@ -304,6 +312,36 @@ async fn semantic_cache_vectors_table_exists(pool: &SqlitePool) -> anyhow::Resul
     Ok(count > 0)
 }
 
+async fn migrate_provider_is_active_to_is_enabled(pool: &SqlitePool) -> anyhow::Result<()> {
+    if column_exists(pool, "providers", "is_active").await? {
+        sqlx::query("UPDATE providers SET is_enabled = is_active WHERE is_enabled IS NULL OR is_enabled != is_active AND is_active IS NOT NULL")
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
+async fn migrate_route_is_active_to_is_enabled(pool: &SqlitePool) -> anyhow::Result<()> {
+    if column_exists(pool, "routes", "is_active").await? {
+        sqlx::query("UPDATE routes SET is_enabled = is_active WHERE is_enabled IS NULL OR is_enabled != is_active AND is_active IS NOT NULL")
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
+}
+
+async fn migrate_api_key_status_to_is_enabled(pool: &SqlitePool) -> anyhow::Result<()> {
+    if column_exists(pool, "api_keys", "status").await? {
+        sqlx::query(
+            "UPDATE api_keys SET is_enabled = CASE WHEN status = 'active' THEN 1 ELSE 0 END \
+             WHERE is_enabled IS NULL OR (status = 'active' AND is_enabled = 0) OR (status != 'active' AND is_enabled = 1)",
+        )
+        .execute(pool)
+        .await?;
+    }
+    Ok(())
+}
+
 async fn backfill_route_fields(pool: &SqlitePool) -> anyhow::Result<()> {
     if column_exists(pool, "routes", "strategy").await? {
         sqlx::query(
@@ -389,7 +427,7 @@ CREATE TABLE IF NOT EXISTS providers (
     use_proxy   INTEGER DEFAULT 0,
     last_test_success INTEGER,
     last_test_at TEXT,
-    is_active   INTEGER DEFAULT 1,
+    is_enabled  INTEGER DEFAULT 1,
     priority    INTEGER DEFAULT 0,
     created_at  TEXT DEFAULT (datetime('now')),
     updated_at  TEXT DEFAULT (datetime('now'))
@@ -407,7 +445,7 @@ CREATE TABLE IF NOT EXISTS routes (
     cache_semantic_ttl INTEGER,
     cache_semantic_threshold REAL,
     access_control    INTEGER DEFAULT 0,
-    is_active         INTEGER DEFAULT 1,
+    is_enabled        INTEGER DEFAULT 1,
     priority          INTEGER DEFAULT 0,
     created_at        TEXT DEFAULT (datetime('now'))
 );

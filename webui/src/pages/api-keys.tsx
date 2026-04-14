@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronLeft, ChevronRight, Copy, KeyRound, Pencil, Plus, Trash2, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Copy, KeyRound, Pencil, Plus, Trash2, ToggleRight, ToggleLeft, X } from "lucide-react";
 
 import { backend } from "@/lib/backend";
 import { localizeBackendErrorMessage } from "@/lib/backend-error";
@@ -69,13 +69,6 @@ function isApiKeyExpired(expiresAt: string | null | undefined) {
   }
   const fallbackMillis = Date.parse(expiresAt);
   return !Number.isNaN(fallbackMillis) && fallbackMillis <= Date.now();
-}
-
-function formatAdminStatusLabel(status: string, isZh: boolean) {
-  const normalized = status.trim().toLowerCase();
-  if (normalized === "active") return isZh ? "正常" : "Active";
-  if (normalized === "revoked") return isZh ? "吊销" : "Revoked";
-  return status;
 }
 
 function formatValidityLabel(expired: boolean, isZh: boolean) {
@@ -201,6 +194,15 @@ export default function ApiKeysPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["api-keys"] }),
     onError: (error: unknown) => {
       showErrorDialog("删除 API Key 失败", "Failed to delete API key", error);
+    },
+  });
+
+  const toggleEnabledMut = useMutation({
+    mutationFn: ({ id, is_enabled }: { id: string; is_enabled: boolean }) =>
+      backend("update_api_key", { id, input: { is_enabled } }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["api-keys"] }),
+    onError: (error: unknown) => {
+      showErrorDialog("操作失败", "Operation failed", error);
     },
   });
 
@@ -607,9 +609,11 @@ export default function ApiKeysPage() {
                       <code className="inline-flex h-5 items-center rounded bg-slate-100 px-2 py-0.5 text-[10px] leading-none font-medium text-slate-600">
                         {shortApiKeyTag(item.key)}
                       </code>
-                      <Badge variant={item.status === "active" ? "success" : "danger"} className="connect-label-badge">
-                        {formatAdminStatusLabel(item.status, isZh)}
-                      </Badge>
+                      {!item.is_enabled && (
+                        <Badge variant="danger" className="connect-label-badge">
+                          {isZh ? "已禁用" : "Disabled"}
+                        </Badge>
+                      )}
                       <Badge variant={keyExpired ? "danger" : "success"} className="connect-label-badge">
                         {formatValidityLabel(keyExpired, isZh)}
                       </Badge>
@@ -634,6 +638,17 @@ export default function ApiKeysPage() {
                   </div>
                 </div>
                 <div className="flex items-center gap-0.5">
+                  <button
+                    onClick={() => toggleEnabledMut.mutate({ id: item.id, is_enabled: !item.is_enabled })}
+                    title={item.is_enabled ? (isZh ? "禁用" : "Disable") : (isZh ? "启用" : "Enable")}
+                    className="cursor-pointer rounded-lg p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+                  >
+                    {item.is_enabled ? (
+                      <ToggleRight className="h-4 w-4 text-green-500" />
+                    ) : (
+                      <ToggleLeft className="h-4 w-4 text-slate-400" />
+                    )}
+                  </button>
                   <button
                     onClick={() => copyKey(item)}
                     title={copiedId === item.id ? (isZh ? "复制成功" : "Copied") : (isZh ? "复制 Key" : "Copy Key")}

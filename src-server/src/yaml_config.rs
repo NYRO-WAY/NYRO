@@ -256,7 +256,7 @@ pub fn build_providers(yaml: &YamlConfig) -> Vec<Provider> {
                 use_proxy: yp.use_proxy,
                 last_test_success: None,
                 last_test_at: None,
-                is_active: true,
+                is_enabled: true,
                 created_at: now.clone(),
                 updated_at: now,
             }
@@ -314,7 +314,7 @@ pub fn build_routes(yaml: &YamlConfig, providers: &[Provider]) -> Vec<Route> {
                 cache_semantic_ttl: None,
                 cache_semantic_threshold: None,
                 cache: None,
-                is_active: true,
+                is_enabled: true,
                 created_at: now,
                 targets,
             }

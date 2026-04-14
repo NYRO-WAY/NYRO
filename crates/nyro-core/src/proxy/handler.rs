@@ -217,7 +217,7 @@ pub async fn models_list(State(gw): State<Gateway>, headers: HeaderMap) -> Respo
     if let Some(raw_key) = extract_api_key(&headers) {
         if let Some(store) = gw.storage.auth() {
             if let Ok(Some(key_row)) = store.find_api_key(&raw_key).await {
-                let key_active = key_row.status == "active"
+                let key_active = key_row.is_enabled
                     && key_row
                         .expires_at
                         .as_ref()
@@ -1060,7 +1060,7 @@ impl<'a> GatewayProxyAccessStore<'a> {
 impl ProxyAccessStore for GatewayProxyAccessStore<'_> {
     async fn get_active_provider(&self, id: &str) -> anyhow::Result<Option<Provider>> {
         let provider = self.gw.storage.providers().get(id).await?;
-        Ok(provider.filter(|p| p.is_active))
+        Ok(provider.filter(|p| p.is_enabled))
     }
 
     async fn find_api_key(&self, raw_key: &str) -> anyhow::Result<Option<ApiKeyAccessRecord>> {
@@ -1114,8 +1114,8 @@ async fn authorize_route_access<S: ProxyAccessStore + ?Sized>(
         return Err(error_response(401, "invalid api key"));
     };
 
-    if key_row.status != "active" {
-        return Err(error_response(403, "api key revoked"));
+    if !key_row.is_enabled {
+        return Err(error_response(403, "api key disabled"));
     }
 
     if let Some(expires) = key_row.expires_at.as_ref() {
