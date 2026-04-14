@@ -4,6 +4,38 @@ Nyro 的所有重要变更均记录在此文件中。
 
 ---
 
+## v1.6.1
+
+> 发布于 2026-04-14
+
+#### 功能
+
+- **流式缓存重放 TPS 限速**：在 `ExactCacheConfig` 和 `SemanticCacheConfig` 中新增 `stream_replay_tps`（默认 100）；设为 `0` 可禁用限速并恢复即时输出行为；实现 `split_text_deltas` 辅助函数，将较大的 `TextDelta`/`ReasoningDelta` 切分为约 1 Token 的小块以平滑逐 Token 输出节奏；首个 SSE chunk 始终立即下发，保证 TTFT 为零
+- **独立缓存响应头控制**：在两种缓存配置中新增 `expose_headers`（默认 `true`），可分别控制 exact 和 semantic 缓存命中时是否下发 `X-NYRO-CACHE-*` 响应头；响应头统一改为全大写：`X-NYRO-CACHE` / `X-NYRO-CACHE-KEY` / `X-NYRO-CACHE-SCORE`
+- **WebUI 内嵌至服务端二进制**：移除 `--webui-dir` CLI 参数，通过 `rust-embed` 将 `webui/dist` 直接内嵌到二进制文件中；新增 `--log-level` 参数（环境变量 `NYRO_LOG_LEVEL`）替代硬编码的 tracing 过滤规则；关键参数支持环境变量（`NYRO_PROXY_HOST`、`NYRO_ADMIN_TOKEN` 等）
+- **浏览器 Token 鉴权**：新增 `/login` 页面及浏览器 WebUI 的 Token 鉴权流程；管理 Token 生效时 WebUI 顶栏显示登出图标（Tauri IPC 路径不受影响）
+- **资源启用/禁用切换**：在 WebUI 的 Provider、路由、API Key 列表页新增启用/禁用切换按钮；仅在资源被禁用时显示危险徽标
+
+#### 改进
+
+- **服务端 CLI 精简**：CLI 参数从 27 个减少至 18 个；`--admin-key` 重命名为 `--admin-token`，`--storage-dsn-env` 重命名为 `--postgres-dsn`；PostgreSQL 连接池参数统一加 `postgres-` 前缀；`--sqlite-migrate-on-start` 重命名为 `--migrate-on-start`；移除 9 个缓存相关 CLI 参数（现通过 Admin API / WebUI + DB 管理）
+- **状态字段统一**：将 `providers.is_active`、`routes.is_active`、`api_keys.status` 统一重命名为 `is_enabled`（BOOLEAN 类型），覆盖所有存储后端、SQL 查询、Rust 模型与 WebUI；同时为 SQLite 和 PostgreSQL 提供非破坏性 schema 迁移
+
+#### 修复
+
+- 修复 feat #45 引入的两个新字段 `stream_replay_tps` 和 `expose_headers` 未在 nyro-server 缓存配置初始化代码（`main.rs` 和 `yaml_config.rs`）中添加，导致 CI 编译失败
+- 修复 standalone 模式下代理 host/port 优先级 bug：CLI 传入值被默认值静默覆盖
+- 修复 `backend.ts` 中 null-data bug：当 `data` 为 `null` 时，`json.data ?? json` 返回完整响应对象，导致 Provider 与 Settings 页面调用 `.trim()` 时崩溃
+
+#### 文档
+
+- 将 8 个过时设计文档合并为单一 `docs/design/architecture.md`
+- 新增 `docs/standalone/` 目录，包含完整的 Standalone 模式使用指南及缓存章节
+- 删除 `examples/` 目录（内容已整合至 standalone 文档）
+- 修复 `docs/server/README.md`、`README.md`、`README_CN.md` 中的过时 CLI 参数说明
+
+---
+
 ## v1.6.0
 
 > 发布于 2026-04-12

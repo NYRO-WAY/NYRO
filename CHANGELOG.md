@@ -4,6 +4,38 @@ All notable changes to Nyro will be documented in this file.
 
 ---
 
+## v1.6.1
+
+> Released on 2026-04-14
+
+#### Features
+
+- **Stream replay TPS throttle**: add `stream_replay_tps` (default 100) to `ExactCacheConfig` and `SemanticCacheConfig`; set to `0` to disable throttle and restore instant-flush behavior; implement `split_text_deltas` helper to chunk large `TextDelta`/`ReasoningDelta` into ~1-token pieces for smooth per-token pacing; first SSE chunk is always sent immediately to keep TTFT at zero
+- **Per-cache response header control**: add `expose_headers` (default `true`) to both cache configs, independently controlling whether `X-NYRO-CACHE-*` headers are emitted per exact vs semantic cache; rename response headers to uppercase: `X-NYRO-CACHE` / `X-NYRO-CACHE-KEY` / `X-NYRO-CACHE-SCORE`
+- **Embedded WebUI in server binary**: remove `--webui-dir` CLI param; embed `webui/dist` into the binary via `rust-embed`; add `--log-level` param (env `NYRO_LOG_LEVEL`) to replace hardcoded tracing filter; add env-var support for key params (`NYRO_PROXY_HOST`, `NYRO_ADMIN_TOKEN`, etc.)
+- **Browser token authentication**: add `/login` page and token auth flow for browser-based WebUI access; add logout icon in web topbar when admin token is active (Tauri IPC path is unaffected)
+- **Resource enable/disable toggles**: add enable/disable toggle buttons in WebUI list pages for providers, routes, and API keys; show danger badge only when resource is disabled
+
+#### Improvements
+
+- **Server CLI simplification**: reduce CLI params from 27 to 18; rename `--admin-key` → `--admin-token`, `--storage-dsn-env` → `--postgres-dsn`; prefix Postgres pool params with `postgres-*`; rename `--sqlite-migrate-on-start` → `--migrate-on-start`; remove 9 cache CLI params (now managed via Admin API / WebUI + DB)
+- **Status field unification**: rename `providers.is_active`, `routes.is_active`, `api_keys.status` to `is_enabled` (BOOLEAN) across all storage backends, SQL queries, Rust models, and WebUI; add non-breaking schema migration for both SQLite and PostgreSQL
+
+#### Fixes
+
+- Fix missing `stream_replay_tps` and `expose_headers` fields in nyro-server cache config initializers (`main.rs` and `yaml_config.rs`) causing a compile error after feat #45
+- Fix standalone mode proxy host/port priority bug where CLI value was silently overridden by the default
+- Fix `backend.ts` null-data bug where `json.data ?? json` returned the full response object when `data` was `null`, causing `.trim()` crashes on Providers and Settings pages
+
+#### Documentation
+
+- Consolidate 8 stale design docs into a single `docs/design/architecture.md`
+- Add `docs/standalone/` with full Standalone mode guide including cache section
+- Remove `examples/` directory (content inlined into standalone docs)
+- Fix stale CLI params across `docs/server/README.md`, `README.md`, and `README_CN.md`
+
+---
+
 ## v1.6.0
 
 > Released on 2026-04-12
