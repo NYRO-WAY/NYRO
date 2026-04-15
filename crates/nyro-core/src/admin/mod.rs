@@ -69,6 +69,10 @@ impl AdminService {
                 capabilities_source: input.capabilities_source,
                 static_models: input.static_models,
                 api_key: input.api_key,
+                auth_mode: input.auth_mode,
+                access_token: input.access_token,
+                refresh_token: input.refresh_token,
+                expires_at: input.expires_at,
                 use_proxy: input.use_proxy,
             })
             .await
@@ -108,6 +112,10 @@ impl AdminService {
             .or(current.capabilities_source);
         let static_models = input.static_models.or(current.static_models);
         let api_key = input.api_key.unwrap_or(current.api_key);
+        let auth_mode = input.auth_mode.unwrap_or(current.auth_mode);
+        let access_token = input.access_token.or(current.access_token);
+        let refresh_token = input.refresh_token.or(current.refresh_token);
+        let expires_at = input.expires_at.or(current.expires_at);
         let use_proxy = input.use_proxy.unwrap_or(current.use_proxy);
         let is_active = input.is_active.unwrap_or(current.is_active);
         let base_url_changed = base_url != current_base_url;
@@ -131,6 +139,10 @@ impl AdminService {
                     capabilities_source,
                     static_models,
                     api_key: Some(api_key),
+                    auth_mode: Some(auth_mode),
+                    access_token,
+                    refresh_token,
+                    expires_at,
                     use_proxy: Some(use_proxy),
                     is_active: Some(is_active),
                 },
@@ -239,6 +251,7 @@ impl AdminService {
 
     pub async fn test_provider_models(&self, id: &str) -> anyhow::Result<Vec<String>> {
         let provider = self.get_provider(id).await?;
+        let credential = resolve_provider_credential(&provider)?;
         let endpoint = provider
             .effective_models_source()
             .map(str::trim)
@@ -260,7 +273,7 @@ impl AdminService {
             .headers(build_model_headers(
                 &provider.protocol,
                 provider.vendor.as_deref(),
-                &provider.api_key,
+                &credential,
             )?)
             .timeout(Duration::from_secs(10));
 
@@ -269,11 +282,11 @@ impl AdminService {
             request = self
                 .gw
                 .http_client
-                .get(format!("{endpoint}{separator}key={}", provider.api_key))
+                .get(format!("{endpoint}{separator}key={}", credential))
                 .headers(build_model_headers(
                     &provider.protocol,
                     provider.vendor.as_deref(),
-                    &provider.api_key,
+                    &credential,
                 )?)
                 .timeout(Duration::from_secs(10));
         }
@@ -297,6 +310,7 @@ impl AdminService {
 
     pub async fn get_provider_models(&self, id: &str) -> anyhow::Result<Vec<String>> {
         let provider = self.get_provider(id).await?;
+        let credential = resolve_provider_credential(&provider)?;
 
         if let Some(endpoint) = resolve_models_endpoint(&provider) {
             if let Some(models) = lookup_models_dev_models(&self.gw.config.data_dir, &endpoint)? {
@@ -312,7 +326,7 @@ impl AdminService {
                 .headers(build_model_headers(
                     &provider.protocol,
                     provider.vendor.as_deref(),
-                    &provider.api_key,
+                    &credential,
                 )?);
 
             if provider.protocol == "gemini" {
@@ -320,11 +334,11 @@ impl AdminService {
                 request = self
                     .gw
                     .http_client
-                    .get(format!("{endpoint}{separator}key={}", provider.api_key))
+                    .get(format!("{endpoint}{separator}key={}", credential))
                     .headers(build_model_headers(
                         &provider.protocol,
                         provider.vendor.as_deref(),
-                        &provider.api_key,
+                        &credential,
                     )?);
             }
 
@@ -396,6 +410,10 @@ impl AdminService {
                 target.model.clone()
             };
             let adapter = adapter::get_adapter(&provider, Protocol::OpenAI);
+            let credential = match resolve_provider_credential(&provider) {
+                Ok(value) => value,
+                Err(_) => continue,
+            };
             let client = match self.gw.http_client_for_provider(provider.use_proxy).await {
                 Ok(http_client) => ProxyClient::new(http_client),
                 Err(_) => continue,
@@ -405,7 +423,7 @@ impl AdminService {
                     adapter.as_ref(),
                     &openai_base_url,
                     "/v1/embeddings",
-                    &provider.api_key,
+                    &credential,
                     serde_json::json!({
                         "model": actual_model,
                         "input": "nyro.embedding.dimensions.probe",
@@ -465,6 +483,7 @@ impl AdminService {
         url: &str,
         model: &str,
     ) -> anyhow::Result<ModelCapabilities> {
+        let credential = resolve_provider_credential(provider)?;
         let mut request = self
             .gw
             .http_client
@@ -472,7 +491,7 @@ impl AdminService {
             .headers(build_model_headers(
                 &provider.protocol,
                 provider.vendor.as_deref(),
-                &provider.api_key,
+                &credential,
             )?)
             .timeout(Duration::from_secs(10));
 
@@ -481,11 +500,11 @@ impl AdminService {
             request = self
                 .gw
                 .http_client
-                .get(format!("{url}{separator}key={}", provider.api_key))
+                .get(format!("{url}{separator}key={}", credential))
                 .headers(build_model_headers(
                     &provider.protocol,
                     provider.vendor.as_deref(),
-                    &provider.api_key,
+                    &credential,
                 )?)
                 .timeout(Duration::from_secs(10));
         }
@@ -882,6 +901,10 @@ impl AdminService {
                     capabilities_source: p.capabilities_source,
                     static_models: p.static_models,
                     api_key: p.api_key,
+                    auth_mode: p.auth_mode,
+                    access_token: p.access_token,
+                    refresh_token: p.refresh_token,
+                    expires_at: p.expires_at,
                     use_proxy: p.use_proxy,
                     is_active: p.is_active,
                 })
@@ -937,6 +960,10 @@ impl AdminService {
                         capabilities_source: p.capabilities_source.clone(),
                         static_models: p.static_models.clone(),
                         api_key: p.api_key.clone(),
+                        auth_mode: p.auth_mode.clone(),
+                        access_token: p.access_token.clone(),
+                        refresh_token: p.refresh_token.clone(),
+                        expires_at: p.expires_at.clone(),
                         use_proxy: p.use_proxy,
                     })
                     .await
@@ -1354,6 +1381,26 @@ fn resolve_openai_base_url(provider: &Provider) -> Option<String> {
         return None;
     }
     Some(trimmed.to_string())
+}
+
+fn resolve_provider_credential(provider: &Provider) -> anyhow::Result<String> {
+    let auth_mode = provider.auth_mode.trim();
+    let credential = match auth_mode {
+        "api_key" | "" => provider.api_key.trim(),
+        "oauth" => provider
+            .access_token
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or(""),
+        other => anyhow::bail!("unsupported provider auth_mode: {other}"),
+    };
+
+    if credential.is_empty() {
+        let source = if auth_mode == "oauth" { "access_token" } else { "api_key" };
+        anyhow::bail!("provider credential is empty for auth_mode={} ({source})", if auth_mode.is_empty() { "api_key" } else { auth_mode });
+    }
+
+    Ok(credential.to_string())
 }
 
 fn build_model_headers(

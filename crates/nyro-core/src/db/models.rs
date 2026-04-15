@@ -3,6 +3,16 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
+
+fn default_provider_auth_mode() -> String {
+    "api_key".to_string()
+}
+
+pub fn is_valid_provider_auth_mode(value: &str) -> bool {
+    matches!(value.trim(), "api_key" | "oauth")
+}
+
+
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Provider {
     pub id: String,
@@ -24,6 +34,11 @@ pub struct Provider {
     pub capabilities_source: Option<String>,
     pub static_models: Option<String>,
     pub api_key: String,
+    #[serde(default = "default_provider_auth_mode")]
+    pub auth_mode: String,
+    pub access_token: Option<String>,
+    pub refresh_token: Option<String>,
+    pub expires_at: Option<String>,
     #[serde(default)]
     pub use_proxy: bool,
     pub last_test_success: Option<bool>,
@@ -179,6 +194,11 @@ pub struct CreateProvider {
     pub capabilities_source: Option<String>,
     pub static_models: Option<String>,
     pub api_key: String,
+    #[serde(default = "default_provider_auth_mode")]
+    pub auth_mode: String,
+    pub access_token: Option<String>,
+    pub refresh_token: Option<String>,
+    pub expires_at: Option<String>,
     #[serde(default)]
     pub use_proxy: bool,
 }
@@ -199,6 +219,10 @@ pub struct UpdateProvider {
     pub capabilities_source: Option<String>,
     pub static_models: Option<String>,
     pub api_key: Option<String>,
+    pub auth_mode: Option<String>,
+    pub access_token: Option<String>,
+    pub refresh_token: Option<String>,
+    pub expires_at: Option<String>,
     pub use_proxy: Option<bool>,
     pub is_active: Option<bool>,
 }
@@ -411,6 +435,11 @@ pub struct ExportProvider {
     pub capabilities_source: Option<String>,
     pub static_models: Option<String>,
     pub api_key: String,
+    #[serde(default = "default_provider_auth_mode")]
+    pub auth_mode: String,
+    pub access_token: Option<String>,
+    pub refresh_token: Option<String>,
+    pub expires_at: Option<String>,
     #[serde(default)]
     pub use_proxy: bool,
     pub is_active: bool,

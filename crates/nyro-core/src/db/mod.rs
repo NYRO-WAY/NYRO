@@ -35,6 +35,10 @@ pub async fn migrate(pool: &SqlitePool) -> anyhow::Result<()> {
     ensure_provider_column(pool, "last_test_success", "INTEGER").await?;
     ensure_provider_column(pool, "last_test_at", "TEXT").await?;
     ensure_provider_column(pool, "use_proxy", "INTEGER DEFAULT 0").await?;
+    ensure_provider_column(pool, "auth_mode", "TEXT NOT NULL DEFAULT 'api_key'").await?;
+    ensure_provider_column(pool, "access_token", "TEXT").await?;
+    ensure_provider_column(pool, "refresh_token", "TEXT").await?;
+    ensure_provider_column(pool, "expires_at", "TEXT").await?;
     ensure_provider_column(pool, "default_protocol", "TEXT NOT NULL DEFAULT ''").await?;
     ensure_provider_column(pool, "protocol_endpoints", "TEXT NOT NULL DEFAULT '{}'").await?;
     backfill_provider_protocol_endpoints(pool).await?;
@@ -307,6 +311,10 @@ CREATE TABLE IF NOT EXISTS providers (
     capabilities_source TEXT,
     static_models TEXT,
     api_key     TEXT NOT NULL,
+    auth_mode   TEXT NOT NULL DEFAULT 'api_key' CHECK (auth_mode IN ('api_key', 'oauth')),
+    access_token TEXT,
+    refresh_token TEXT,
+    expires_at  TEXT,
     use_proxy   INTEGER DEFAULT 0,
     last_test_success INTEGER,
     last_test_at TEXT,

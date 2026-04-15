@@ -6,6 +6,7 @@ use sqlx::{Pool, Postgres};
 use std::time::Duration;
 
 use crate::db::models::{
+    is_valid_provider_auth_mode,
     ApiKey, ApiKeyWithBindings, CreateApiKey, CreateProvider, CreateRoute, CreateRouteTarget,
     LogPage, LogQuery, ModelStats, Provider, ProviderStats, RequestLog, Route, RouteTarget,
     StatsHourly, StatsOverview, UpdateApiKey, UpdateProvider, UpdateRoute,
@@ -186,8 +187,11 @@ impl ProviderStore for PostgresProviderStore {
             .as_deref()
             .unwrap_or(input.protocol.as_str());
         let protocol_endpoints = input.protocol_endpoints.as_deref().unwrap_or("{}");
+        if !is_valid_provider_auth_mode(&input.auth_mode) {
+            anyhow::bail!("unsupported provider auth_mode: {}", input.auth_mode);
+        }
         sqlx::query(
-            "INSERT INTO providers (id, name, vendor, protocol, base_url, default_protocol, protocol_endpoints, preset_key, channel, models_source, capabilities_source, static_models, api_key, use_proxy) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
+            "INSERT INTO providers (id, name, vendor, protocol, base_url, default_protocol, protocol_endpoints, preset_key, channel, models_source, capabilities_source, static_models, api_key, auth_mode, access_token, refresh_token, expires_at, use_proxy) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)",
         )
         .bind(&id)
         .bind(input.name.trim())
@@ -202,6 +206,10 @@ impl ProviderStore for PostgresProviderStore {
         .bind(input.capabilities_source)
         .bind(input.static_models)
         .bind(input.api_key)
+        .bind(input.auth_mode)
+        .bind(input.access_token)
+        .bind(input.refresh_token)
+        .bind(input.expires_at)
         .bind(input.use_proxy)
         .execute(&self.pool)
         .await?;
@@ -232,11 +240,18 @@ impl ProviderStore for PostgresProviderStore {
         let capabilities_source = input.capabilities_source.or(current.capabilities_source);
         let static_models = input.static_models.or(current.static_models);
         let api_key = input.api_key.unwrap_or(current.api_key);
+        let auth_mode = input.auth_mode.unwrap_or(current.auth_mode);
+        if !is_valid_provider_auth_mode(&auth_mode) {
+            anyhow::bail!("unsupported provider auth_mode: {}", auth_mode);
+        }
+        let access_token = input.access_token.or(current.access_token);
+        let refresh_token = input.refresh_token.or(current.refresh_token);
+        let expires_at = input.expires_at.or(current.expires_at);
         let use_proxy = input.use_proxy.unwrap_or(current.use_proxy);
         let is_active = input.is_active.unwrap_or(current.is_active);
 
         sqlx::query(
-            "UPDATE providers SET name=$1, vendor=$2, protocol=$3, base_url=$4, default_protocol=$5, protocol_endpoints=$6, preset_key=$7, channel=$8, models_source=$9, capabilities_source=$10, static_models=$11, api_key=$12, use_proxy=$13, is_active=$14, updated_at=CURRENT_TIMESTAMP WHERE id=$15",
+            "UPDATE providers SET name=$1, vendor=$2, protocol=$3, base_url=$4, default_protocol=$5, protocol_endpoints=$6, preset_key=$7, channel=$8, models_source=$9, capabilities_source=$10, static_models=$11, api_key=$12, auth_mode=$13, access_token=$14, refresh_token=$15, expires_at=$16, use_proxy=$17, is_active=$18, updated_at=CURRENT_TIMESTAMP WHERE id=$19",
         )
         .bind(name.trim())
         .bind(vendor)
@@ -250,6 +265,10 @@ impl ProviderStore for PostgresProviderStore {
         .bind(capabilities_source)
         .bind(static_models)
         .bind(api_key)
+        .bind(auth_mode)
+        .bind(access_token)
+        .bind(refresh_token)
+        .bind(expires_at)
         .bind(use_proxy)
         .bind(is_active)
         .bind(id)
@@ -972,6 +991,34 @@ impl StorageBootstrap for PostgresBootstrap {
         sqlx::query("ALTER TABLE providers ADD COLUMN IF NOT EXISTS use_proxy BOOLEAN NOT NULL DEFAULT FALSE")
             .execute(self.adapter.pool())
             .await?;
+        sqlx::query("ALTER TABLE providers ADD COLUMN IF NOT EXISTS auth_mode TEXT NOT NULL DEFAULT 'api_key'")
+            .execute(self.adapter.pool())
+            .await?;
+        sqlx::query("ALTER TABLE providers ADD COLUMN IF NOT EXISTS access_token TEXT")
+            .execute(self.adapter.pool())
+            .await?;
+        sqlx::query("ALTER TABLE providers ADD COLUMN IF NOT EXISTS refresh_token TEXT")
+            .execute(self.adapter.pool())
+            .await?;
+        sqlx::query("ALTER TABLE providers ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ")
+            .execute(self.adapter.pool())
+            .await?;
+        sqlx::query(
+            r#"DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'providers_auth_mode_check'
+    ) THEN
+        ALTER TABLE providers
+        ADD CONSTRAINT providers_auth_mode_check
+        CHECK (auth_mode IN ('api_key', 'oauth'));
+    END IF;
+END $$;"#,
+        )
+        .execute(self.adapter.pool())
+        .await?;
         sqlx::query("ALTER TABLE providers ADD COLUMN IF NOT EXISTS default_protocol TEXT NOT NULL DEFAULT ''")
             .execute(self.adapter.pool())
             .await?;
@@ -1017,7 +1064,7 @@ impl StorageBootstrap for PostgresBootstrap {
 
 fn provider_select(suffix: Option<&str>) -> String {
     let mut sql = String::from(
-        "SELECT id, name, vendor, protocol, base_url, COALESCE(default_protocol, protocol) AS default_protocol, COALESCE(protocol_endpoints, '{}') AS protocol_endpoints, preset_key, channel, models_source, capabilities_source, static_models, api_key, COALESCE(use_proxy, FALSE) AS use_proxy, last_test_success, to_char(last_test_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS last_test_at, is_active, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS updated_at FROM providers",
+        "SELECT id, name, vendor, protocol, base_url, COALESCE(default_protocol, protocol) AS default_protocol, COALESCE(protocol_endpoints, '{}') AS protocol_endpoints, preset_key, channel, models_source, capabilities_source, static_models, api_key, COALESCE(auth_mode, 'api_key') AS auth_mode, access_token, refresh_token, to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS expires_at, COALESCE(use_proxy, FALSE) AS use_proxy, last_test_success, to_char(last_test_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS last_test_at, is_active, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS updated_at FROM providers",
     );
     if let Some(suffix) = suffix {
         sql.push(' ');
@@ -1130,6 +1177,10 @@ CREATE TABLE IF NOT EXISTS providers (
     capabilities_source TEXT,
     static_models TEXT,
     api_key TEXT NOT NULL,
+    auth_mode TEXT NOT NULL DEFAULT 'api_key' CHECK (auth_mode IN ('api_key', 'oauth')),
+    access_token TEXT,
+    refresh_token TEXT,
+    expires_at TIMESTAMPTZ,
     use_proxy BOOLEAN NOT NULL DEFAULT FALSE,
     last_test_success BOOLEAN,
     last_test_at TIMESTAMPTZ,

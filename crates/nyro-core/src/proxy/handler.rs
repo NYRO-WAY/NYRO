@@ -122,6 +122,13 @@ pub async fn embeddings_proxy(
             obj.insert("model".into(), Value::String(actual_model.clone()));
         }
         let adapter = adapter::get_adapter(&provider, Protocol::OpenAI);
+        let credential = match resolve_provider_credential(&gw, &provider).await {
+            Ok(value) => value,
+            Err(e) => {
+                last_error = Some(error_response(502, &format!("provider credential error: {e}")));
+                continue;
+            }
+        };
         let client = match gw.http_client_for_provider(provider.use_proxy).await {
             Ok(http_client) => ProxyClient::new(http_client),
             Err(e) => {
@@ -134,7 +141,7 @@ pub async fn embeddings_proxy(
                 adapter.as_ref(),
                 &openai_base_url,
                 "/v1/embeddings",
-                &provider.api_key,
+                &credential,
                 body.clone(),
                 reqwest::header::HeaderMap::new(),
             )
@@ -1701,7 +1708,23 @@ fn ensure_tool_index(tool_calls: &mut Vec<Option<ToolCall>>, index: usize) {
 
 async fn resolve_provider_credential(gw: &Gateway, provider: &Provider) -> anyhow::Result<String> {
     let _ = gw;
-    Ok(provider.api_key.clone())
+    let auth_mode = provider.auth_mode.trim();
+    let credential = match auth_mode {
+        "api_key" | "" => provider.api_key.trim(),
+        "oauth" => provider
+            .access_token
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or(""),
+        other => anyhow::bail!("unsupported provider auth_mode: {other}"),
+    };
+
+    if credential.is_empty() {
+        let source = if auth_mode == "oauth" { "access_token" } else { "api_key" };
+        anyhow::bail!("provider credential is empty for auth_mode={} ({source})", if auth_mode.is_empty() { "api_key" } else { auth_mode });
+    }
+
+    Ok(credential.to_string())
 }
 
 fn emit_log(
