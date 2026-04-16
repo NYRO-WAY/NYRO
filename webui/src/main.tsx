@@ -1,12 +1,12 @@
 import { StrictMode, Suspense, lazy } from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter, Outlet, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Outlet, Routes, Route } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import { AuthGate } from "@/components/auth-gate";
 import { IS_TAURI } from "@/lib/backend";
-import { AppErrorBoundary } from "@/components/error-boundary";
 import { AppLayout } from "@/components/layout/app-layout";
+import { AppErrorBoundary } from "@/components/error-boundary";
 import { LocaleProvider } from "@/lib/i18n";
 
 import "./index.css";
@@ -56,5 +56,5 @@ createRoot(document.getElementById("root")!).render(
         </LocaleProvider>
       </QueryClientProvider>
     </AppErrorBoundary>
-  </StrictMode>,
+  </StrictMode>
 );
