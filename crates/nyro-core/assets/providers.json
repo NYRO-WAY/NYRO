@@ -17,8 +17,7 @@
         "capabilitiesSource": "ai://models.dev/",
         "auth_mode": "api_key"
       }
-    ],
-    "auth_mode": "api_key"
+    ]
   },
   {
     "id": "openai",
@@ -55,8 +54,7 @@
         "capabilitiesSource": "ai://models.dev/openai",
         "auth_mode": "oauth"
       }
-    ],
-    "auth_mode": "api_key"
+    ]
   },
   {
     "id": "anthropic",
@@ -80,8 +78,7 @@
         "capabilitiesSource": "ai://models.dev/anthropic",
         "auth_mode": "api_key"
       }
-    ],
-    "auth_mode": "api_key"
+    ]
   },
   {
     "id": "google",
@@ -106,8 +103,7 @@
         "capabilitiesSource": "ai://models.dev/google",
         "auth_mode": "api_key"
       }
-    ],
-    "auth_mode": "api_key"
+    ]
   },
   {
     "id": "xai",
@@ -131,8 +127,7 @@
         "capabilitiesSource": "ai://models.dev/xai",
         "auth_mode": "api_key"
       }
-    ],
-    "auth_mode": "api_key"
+    ]
   },
   {
     "id": "deepseek",
@@ -157,8 +152,7 @@
         "capabilitiesSource": "ai://models.dev/deepseek",
         "auth_mode": "api_key"
       }
-    ],
-    "auth_mode": "api_key"
+    ]
   },
   {
     "id": "moonshotai",
@@ -197,8 +191,7 @@
         "capabilitiesSource": "ai://models.dev/moonshotai",
         "auth_mode": "api_key"
       }
-    ],
-    "auth_mode": "api_key"
+    ]
   },
   {
     "id": "minimax",
@@ -239,8 +232,7 @@
         "staticModels": [],
         "auth_mode": "api_key"
       }
-    ],
-    "auth_mode": "api_key"
+    ]
   },
   {
     "id": "zhipu",
@@ -279,8 +271,7 @@
         "capabilitiesSource": "ai://models.dev/zhipuai",
         "auth_mode": "api_key"
       }
-    ],
-    "auth_mode": "api_key"
+    ]
   },
   {
     "id": "zai",
@@ -319,8 +310,7 @@
         "capabilitiesSource": "ai://models.dev/zai",
         "auth_mode": "api_key"
       }
-    ],
-    "auth_mode": "api_key"
+    ]
   },
   {
     "id": "nvidia",
@@ -344,8 +334,7 @@
         "capabilitiesSource": "ai://models.dev/nvidia",
         "auth_mode": "api_key"
       }
-    ],
-    "auth_mode": "api_key"
+    ]
   },
   {
     "id": "openrouter",
@@ -370,8 +359,7 @@
         "capabilitiesSource": "https://openrouter.ai/api/v1/models",
         "auth_mode": "api_key"
       }
-    ],
-    "auth_mode": "api_key"
+    ]
   },
   {
     "id": "ollama",
@@ -397,7 +385,6 @@
         "capabilitiesSource": "http://127.0.0.1:11434/api/show",
         "auth_mode": "api_key"
       }
-    ],
-    "auth_mode": "api_key"
+    ]
   }
 ]
