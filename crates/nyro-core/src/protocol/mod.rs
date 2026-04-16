@@ -1,14 +1,14 @@
-pub mod types;
-pub mod openai;
 pub mod anthropic;
 pub mod gemini;
+pub mod openai;
 pub mod semantic;
+pub mod types;
 
 use std::collections::HashMap;
 
 use reqwest::header::HeaderMap;
 
-use crate::db::models::{Provider, ProtocolEndpointEntry};
+use crate::db::models::{ProtocolEndpointEntry, Provider};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -79,10 +79,7 @@ pub trait EgressEncoder {
 // ── Provider response → internal ──
 
 pub trait ResponseParser: Send {
-    fn parse_response(
-        &self,
-        resp: serde_json::Value,
-    ) -> anyhow::Result<types::InternalResponse>;
+    fn parse_response(&self, resp: serde_json::Value) -> anyhow::Result<types::InternalResponse>;
 }
 
 // ── Internal → client response ──
@@ -219,13 +216,7 @@ impl ProviderProtocols {
         let default = provider
             .effective_default_protocol()
             .parse::<Protocol>()
-            .unwrap_or_else(|_| {
-                endpoints
-                    .keys()
-                    .next()
-                    .copied()
-                    .unwrap_or(Protocol::OpenAI)
-            });
+            .unwrap_or_else(|_| endpoints.keys().next().copied().unwrap_or(Protocol::OpenAI));
 
         Self { default, endpoints }
     }

@@ -1,3 +1,5 @@
+import { fetchAdminJson } from "@/lib/admin-auth";
+
 const IS_TAURI = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 async function invokeIPC<T>(cmd: string, args?: Record<string, unknown>): Promise<T> {
@@ -9,25 +11,9 @@ async function invokeHTTP<T>(cmd: string, args?: Record<string, unknown>): Promi
   const mapping = resolveHTTP(cmd, args);
   const init: RequestInit = { method: mapping.method };
   if (mapping.body) {
-    init.headers = { "Content-Type": "application/json" };
     init.body = JSON.stringify(mapping.body);
   }
-  const resp = await fetch(mapping.url, init);
-  if (!resp.ok) {
-    const body = await resp.json().catch(() => ({}));
-    throw new Error(body.error || `HTTP ${resp.status}`);
-  }
-  const text = await resp.text();
-  if (!text) return {} as T;
-  const json = JSON.parse(text);
-  if (json && typeof json === "object" && "error" in json) {
-    const errorMessage =
-      typeof json.error === "string" && json.error.trim()
-        ? json.error
-        : `Request failed: ${cmd}`;
-    throw new Error(errorMessage);
-  }
-  return json.data ?? json;
+  return fetchAdminJson<T>(mapping.url, init);
 }
 
 interface HTTPMapping {
@@ -59,6 +45,44 @@ function resolveHTTP(cmd: string, args?: Record<string, unknown>): HTTPMapping {
       return {
         method: "GET",
         url: `${base}/providers/${args?.providerId}/model-capabilities?model=${encodeURIComponent(String(args?.model ?? ""))}`,
+      };
+    case "get_provider_oauth_status":
+      return { method: "GET", url: `${base}/providers/${args?.id}/oauth/status` };
+    case "reconnect_provider_oauth":
+      return { method: "POST", url: `${base}/providers/${args?.id}/oauth/reconnect` };
+    case "logout_provider_oauth":
+      return { method: "POST", url: `${base}/providers/${args?.id}/oauth/logout` };
+    case "init_oauth_session":
+      return {
+        method: "POST",
+        url: `${base}/oauth/sessions/init`,
+        body: {
+          vendor: args?.vendor,
+          use_proxy: args?.useProxy ?? args?.use_proxy,
+        },
+      };
+    case "get_oauth_session_status":
+      return { method: "GET", url: `${base}/oauth/sessions/${args?.sessionId ?? args?.session_id}/status` };
+    case "cancel_oauth_session":
+      return { method: "POST", url: `${base}/oauth/sessions/${args?.sessionId ?? args?.session_id}/cancel` };
+    case "complete_oauth_session":
+      return {
+        method: "POST",
+        url: `${base}/oauth/sessions/${args?.sessionId ?? args?.session_id}/complete`,
+        body: {
+          code: args?.code,
+          callback_url: args?.callbackUrl ?? args?.callback_url,
+          metadata: args?.metadata ?? {},
+        },
+      };
+    case "create_oauth_provider":
+      return {
+        method: "POST",
+        url: `${base}/providers/oauth`,
+        body: {
+          session_id: args?.sessionId ?? args?.session_id,
+          input: args?.input,
+        },
       };
     case "list_routes":
       return { method: "GET", url: `${base}/routes` };

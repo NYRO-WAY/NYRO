@@ -21,14 +21,24 @@ impl ResponseParser for GeminiResponseParser {
         let mut text = String::new();
         let mut tool_calls = Vec::new();
 
-        if let Some(parts) = content_obj.and_then(|c| c.get("parts")).and_then(|p| p.as_array()) {
+        if let Some(parts) = content_obj
+            .and_then(|c| c.get("parts"))
+            .and_then(|p| p.as_array())
+        {
             for part in parts {
                 if let Some(t) = part.get("text").and_then(|t| t.as_str()) {
                     text.push_str(t);
                 }
                 if let Some(fc) = part.get("functionCall") {
-                    let name = fc.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
-                    let args = fc.get("args").cloned().unwrap_or(Value::Object(Default::default()));
+                    let name = fc
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let args = fc
+                        .get("args")
+                        .cloned()
+                        .unwrap_or(Value::Object(Default::default()));
                     tool_calls.push(ToolCall {
                         id: format!("call_{}", uuid::Uuid::new_v4().simple()),
                         name,
@@ -198,10 +208,7 @@ fn parse_gemini_chunk(chunk: &Value, deltas: &mut Vec<StreamDelta>, first: &mut 
                     id,
                     name: name.clone(),
                 });
-                let args = fc
-                    .get("args")
-                    .map(|a| a.to_string())
-                    .unwrap_or_default();
+                let args = fc.get("args").map(|a| a.to_string()).unwrap_or_default();
                 if !args.is_empty() && args != "{}" {
                     deltas.push(StreamDelta::ToolCallDelta {
                         index: 0,

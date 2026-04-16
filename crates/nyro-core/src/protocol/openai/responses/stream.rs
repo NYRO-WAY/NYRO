@@ -128,7 +128,8 @@ impl ResponsesStreamFormatter {
     fn emit_completed(&mut self) -> Vec<SseEvent> {
         let mut events = Vec::new();
 
-        if let (Some(item_id), Some(output_index)) = (&self.reasoning_item_id, self.reasoning_output_index)
+        if let (Some(item_id), Some(output_index)) =
+            (&self.reasoning_item_id, self.reasoning_output_index)
         {
             let reasoning_done = serde_json::json!({
                 "type": "response.output_item.done",

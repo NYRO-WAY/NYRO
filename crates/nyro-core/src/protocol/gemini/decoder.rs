@@ -9,7 +9,12 @@ use super::types::*;
 pub struct GeminiDecoder;
 
 impl GeminiDecoder {
-    pub fn decode_with_model(&self, body: Value, model: &str, stream: bool) -> Result<InternalRequest> {
+    pub fn decode_with_model(
+        &self,
+        body: Value,
+        model: &str,
+        stream: bool,
+    ) -> Result<InternalRequest> {
         let req: GeminiRequest = serde_json::from_value(body)?;
 
         let mut messages = Vec::new();
@@ -45,7 +50,10 @@ impl GeminiDecoder {
                     t.function_declarations.iter().map(|fd| ToolDef {
                         name: fd.name.clone(),
                         description: fd.description.clone(),
-                        parameters: fd.parameters.clone().unwrap_or(Value::Object(Default::default())),
+                        parameters: fd
+                            .parameters
+                            .clone()
+                            .unwrap_or(Value::Object(Default::default())),
                     })
                 })
                 .collect()

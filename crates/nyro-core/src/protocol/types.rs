@@ -138,11 +138,23 @@ pub enum ResponseItem {
 
 #[derive(Debug, Clone)]
 pub enum StreamDelta {
-    MessageStart { id: String, model: String },
+    MessageStart {
+        id: String,
+        model: String,
+    },
     ReasoningDelta(String),
     TextDelta(String),
-    ToolCallStart { index: usize, id: String, name: String },
-    ToolCallDelta { index: usize, arguments: String },
+    ToolCallStart {
+        index: usize,
+        id: String,
+        name: String,
+    },
+    ToolCallDelta {
+        index: usize,
+        arguments: String,
+    },
     Usage(TokenUsage),
-    Done { stop_reason: String },
+    Done {
+        stop_reason: String,
+    },
 }

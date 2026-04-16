@@ -67,10 +67,7 @@ impl ProviderAdapter for AnthropicAdapter {
             "x-api-key",
             HeaderValue::from_str(api_key).unwrap_or_else(|_| HeaderValue::from_static("")),
         );
-        h.insert(
-            "anthropic-version",
-            HeaderValue::from_static("2023-06-01"),
-        );
+        h.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
         h
     }
 

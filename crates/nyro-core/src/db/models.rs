@@ -1,10 +1,12 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sqlx::FromRow;
 
+const PROVIDER_PRESETS_SNAPSHOT: &str = include_str!("../../assets/providers.json");
 
-fn default_provider_auth_mode() -> String {
+pub fn default_provider_auth_mode() -> String {
     "api_key".to_string()
 }
 
@@ -12,6 +14,32 @@ pub fn is_valid_provider_auth_mode(value: &str) -> bool {
     matches!(value.trim(), "api_key" | "oauth")
 }
 
+fn resolve_preset_channel_auth_mode(preset_key: Option<&str>, channel_id: Option<&str>) -> Option<String> {
+    let preset_key = preset_key?.trim();
+    if preset_key.is_empty() {
+        return None;
+    }
+    let requested_channel = channel_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("default");
+    let parsed = serde_json::from_str::<Value>(PROVIDER_PRESETS_SNAPSHOT).ok()?;
+    let items = parsed.as_array()?;
+    let preset = items.iter().find(|item| item.get("id").and_then(Value::as_str) == Some(preset_key))?;
+    let channels = preset.get("channels").and_then(Value::as_array)?;
+    let channel = channels
+        .iter()
+        .find(|item| item.get("id").and_then(Value::as_str) == Some(requested_channel))
+        .or_else(|| channels.iter().find(|item| item.get("id").and_then(Value::as_str) == Some("default")))?;
+    Some(
+        channel
+            .get("auth_mode")
+            .and_then(Value::as_str)
+            .unwrap_or("api_key")
+            .trim()
+            .to_string(),
+    )
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Provider {
@@ -469,6 +497,18 @@ impl Provider {
             .filter(|v| !v.trim().is_empty())
     }
 
+    pub fn effective_auth_mode(&self) -> String {
+        resolve_preset_channel_auth_mode(self.preset_key.as_deref(), self.channel.as_deref())
+            .unwrap_or_else(|| {
+                let mode = self.auth_mode.trim();
+                if mode.is_empty() {
+                    default_provider_auth_mode()
+                } else {
+                    mode.to_string()
+                }
+            })
+    }
+
     /// Resolve effective default_protocol: new field > legacy `protocol`.
     pub fn effective_default_protocol(&self) -> &str {
         let dp = self.default_protocol.trim();
@@ -483,7 +523,9 @@ impl Provider {
     /// Falls back to building a single-entry map from legacy `protocol`/`base_url`.
     pub fn parsed_protocol_endpoints(&self) -> HashMap<String, ProtocolEndpointEntry> {
         if !self.protocol_endpoints.trim().is_empty() && self.protocol_endpoints.trim() != "{}" {
-            if let Ok(map) = serde_json::from_str::<HashMap<String, ProtocolEndpointEntry>>(&self.protocol_endpoints) {
+            if let Ok(map) = serde_json::from_str::<HashMap<String, ProtocolEndpointEntry>>(
+                &self.protocol_endpoints,
+            ) {
                 if !map.is_empty() {
                     return map;
                 }

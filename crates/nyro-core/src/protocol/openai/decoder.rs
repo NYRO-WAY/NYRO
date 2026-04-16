@@ -25,8 +25,14 @@ impl IngressDecoder for OpenAIDecoder {
                     let func = t.get("function")?;
                     Some(ToolDef {
                         name: func.get("name")?.as_str()?.to_string(),
-                        description: func.get("description").and_then(|d| d.as_str()).map(String::from),
-                        parameters: func.get("parameters").cloned().unwrap_or(Value::Object(Default::default())),
+                        description: func
+                            .get("description")
+                            .and_then(|d| d.as_str())
+                            .map(String::from),
+                        parameters: func
+                            .get("parameters")
+                            .cloned()
+                            .unwrap_or(Value::Object(Default::default())),
                     })
                 })
                 .collect()

@@ -1,5 +1,5 @@
-use nyro_core::db::models::*;
 use nyro_core::Gateway;
+use nyro_core::db::models::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Write;
@@ -16,11 +16,16 @@ pub async fn get_providers(gw: State<'_, Gateway>) -> Result<Vec<Provider>, Stri
 
 #[tauri::command]
 pub async fn get_provider(gw: State<'_, Gateway>, id: String) -> Result<Provider, String> {
-    gw.admin().get_provider(&id).await.map_err(|e| e.to_string())
+    gw.admin()
+        .get_provider(&id)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn get_provider_presets(gw: State<'_, Gateway>) -> Result<Vec<serde_json::Value>, String> {
+pub async fn get_provider_presets(
+    gw: State<'_, Gateway>,
+) -> Result<Vec<serde_json::Value>, String> {
     gw.admin()
         .list_provider_presets()
         .await
@@ -32,7 +37,10 @@ pub async fn create_provider(
     gw: State<'_, Gateway>,
     input: CreateProvider,
 ) -> Result<Provider, String> {
-    gw.admin().create_provider(input).await.map_err(|e| e.to_string())
+    gw.admin()
+        .create_provider(input)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -41,21 +49,33 @@ pub async fn update_provider(
     id: String,
     input: UpdateProvider,
 ) -> Result<Provider, String> {
-    gw.admin().update_provider(&id, input).await.map_err(|e| e.to_string())
+    gw.admin()
+        .update_provider(&id, input)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn delete_provider(gw: State<'_, Gateway>, id: String) -> Result<(), String> {
-    gw.admin().delete_provider(&id).await.map_err(|e| e.to_string())
+    gw.admin()
+        .delete_provider(&id)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn test_provider(gw: State<'_, Gateway>, id: String) -> Result<TestResult, String> {
-    gw.admin().test_provider(&id).await.map_err(|e| e.to_string())
+    gw.admin()
+        .test_provider(&id)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn test_provider_models(gw: State<'_, Gateway>, id: String) -> Result<Vec<String>, String> {
+pub async fn test_provider_models(
+    gw: State<'_, Gateway>,
+    id: String,
+) -> Result<Vec<String>, String> {
     gw.admin()
         .test_provider_models(&id)
         .await
@@ -93,11 +113,11 @@ pub async fn list_routes(gw: State<'_, Gateway>) -> Result<Vec<Route>, String> {
 }
 
 #[tauri::command]
-pub async fn create_route(
-    gw: State<'_, Gateway>,
-    input: CreateRoute,
-) -> Result<Route, String> {
-    gw.admin().create_route(input).await.map_err(|e| e.to_string())
+pub async fn create_route(gw: State<'_, Gateway>, input: CreateRoute) -> Result<Route, String> {
+    gw.admin()
+        .create_route(input)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -106,12 +126,18 @@ pub async fn update_route(
     id: String,
     input: UpdateRoute,
 ) -> Result<Route, String> {
-    gw.admin().update_route(&id, input).await.map_err(|e| e.to_string())
+    gw.admin()
+        .update_route(&id, input)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn delete_route(gw: State<'_, Gateway>, id: String) -> Result<(), String> {
-    gw.admin().delete_route(&id).await.map_err(|e| e.to_string())
+    gw.admin()
+        .delete_route(&id)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 // ── API Keys ──
@@ -131,7 +157,10 @@ pub async fn create_api_key(
     gw: State<'_, Gateway>,
     input: CreateApiKey,
 ) -> Result<ApiKeyWithBindings, String> {
-    gw.admin().create_api_key(input).await.map_err(|e| e.to_string())
+    gw.admin()
+        .create_api_key(input)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -140,19 +169,28 @@ pub async fn update_api_key(
     id: String,
     input: UpdateApiKey,
 ) -> Result<ApiKeyWithBindings, String> {
-    gw.admin().update_api_key(&id, input).await.map_err(|e| e.to_string())
+    gw.admin()
+        .update_api_key(&id, input)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn delete_api_key(gw: State<'_, Gateway>, id: String) -> Result<(), String> {
-    gw.admin().delete_api_key(&id).await.map_err(|e| e.to_string())
+    gw.admin()
+        .delete_api_key(&id)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 // ── Logs ──
 
 #[tauri::command]
 pub async fn query_logs(gw: State<'_, Gateway>, query: LogQuery) -> Result<LogPage, String> {
-    gw.admin().query_logs(query).await.map_err(|e| e.to_string())
+    gw.admin()
+        .query_logs(query)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 // ── Stats ──
@@ -205,21 +243,26 @@ pub async fn get_stats_by_provider(
 
 #[tauri::command]
 pub async fn get_setting(gw: State<'_, Gateway>, key: String) -> Result<Option<String>, String> {
-    gw.admin().get_setting(&key).await.map_err(|e| e.to_string())
+    gw.admin()
+        .get_setting(&key)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn set_setting(
-    gw: State<'_, Gateway>,
-    key: String,
-    value: String,
-) -> Result<(), String> {
-    gw.admin().set_setting(&key, &value).await.map_err(|e| e.to_string())
+pub async fn set_setting(gw: State<'_, Gateway>, key: String, value: String) -> Result<(), String> {
+    gw.admin()
+        .set_setting(&key, &value)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn get_cache_settings(gw: State<'_, Gateway>) -> Result<serde_json::Value, String> {
-    gw.admin().get_cache_settings().await.map_err(|e| e.to_string())
+    gw.admin()
+        .get_cache_settings()
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -251,12 +294,18 @@ pub async fn flush_cache(gw: State<'_, Gateway>) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn delete_cache_key(gw: State<'_, Gateway>, key: String) -> Result<(), String> {
-    gw.admin().delete_cache_key(&key).await.map_err(|e| e.to_string())
+    gw.admin()
+        .delete_cache_key(&key)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn get_cache_stats(gw: State<'_, Gateway>) -> Result<serde_json::Value, String> {
-    gw.admin().get_cache_stats().await.map_err(|e| e.to_string())
+    gw.admin()
+        .get_cache_stats()
+        .await
+        .map_err(|e| e.to_string())
 }
 
 // ── Status ──
@@ -281,7 +330,10 @@ pub async fn import_config(
     gw: State<'_, Gateway>,
     data: ExportData,
 ) -> Result<ImportResult, String> {
-    gw.admin().import_config(data).await.map_err(|e| e.to_string())
+    gw.admin()
+        .import_config(data)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 fn resolve_home_dir() -> Option<PathBuf> {
@@ -324,7 +376,10 @@ fn get_gemini_settings_path(home_dir: &Path) -> PathBuf {
 }
 
 fn get_opencode_config_path(home_dir: &Path) -> PathBuf {
-    home_dir.join(".config").join("opencode").join("opencode.json")
+    home_dir
+        .join(".config")
+        .join("opencode")
+        .join("opencode.json")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -510,8 +565,12 @@ fn write_gemini_env_atomic(path: &Path, env_map: &HashMap<String, String>) -> Re
             .map_err(|e| format!("failed reading env file metadata {}: {e}", path.display()))?
             .permissions();
         perms.set_mode(0o600);
-        fs::set_permissions(path, perms)
-            .map_err(|e| format!("failed setting env file permissions {}: {e}", path.display()))?;
+        fs::set_permissions(path, perms).map_err(|e| {
+            format!(
+                "failed setting env file permissions {}: {e}",
+                path.display()
+            )
+        })?;
     }
 
     Ok(())
@@ -574,7 +633,8 @@ pub async fn sync_cli_config(
     model: String,
     _capabilities: Option<CliModelCapabilities>,
 ) -> Result<Vec<String>, String> {
-    let home_dir = resolve_home_dir().ok_or_else(|| "failed to resolve home directory".to_string())?;
+    let home_dir =
+        resolve_home_dir().ok_or_else(|| "failed to resolve home directory".to_string())?;
     let normalized_host = host.trim().trim_end_matches('/').to_string();
     let normalized_model = model.trim().to_string();
     if normalized_host.is_empty() {
@@ -689,10 +749,7 @@ pub async fn sync_cli_config(
                 serde_json::Value::String(api_key.trim().to_string()),
             );
 
-            write_json_file(
-                &auth_path,
-                &auth_json,
-            )?;
+            write_json_file(&auth_path, &auth_json)?;
 
             let config_lines = vec![
                 r#"model_provider = "nyro""#.to_string(),
@@ -715,8 +772,12 @@ pub async fn sync_cli_config(
                 config_path.to_string_lossy().to_string(),
             ];
             if models_path.exists() {
-                fs::remove_file(&models_path)
-                    .map_err(|e| format!("failed removing codex model catalog {}: {e}", models_path.display()))?;
+                fs::remove_file(&models_path).map_err(|e| {
+                    format!(
+                        "failed removing codex model catalog {}: {e}",
+                        models_path.display()
+                    )
+                })?;
                 changed_paths.push(models_path.to_string_lossy().to_string());
             }
             Ok(changed_paths)

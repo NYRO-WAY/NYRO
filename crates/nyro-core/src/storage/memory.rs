@@ -8,9 +8,9 @@ use crate::db::models::{
 use crate::logging::LogEntry;
 
 use super::traits::{
-    ApiKeyStore, AuthAccessStore, LogStore, ProviderStore, ProviderTestResult,
-    RouteSnapshotStore, RouteStore, RouteTargetStore, SettingsStore, Storage, StorageBootstrap,
-    StorageBackend, StorageHealth,
+    ApiKeyStore, AuthAccessStore, LogStore, ProviderStore, ProviderTestResult, RouteSnapshotStore,
+    RouteStore, RouteTargetStore, SettingsStore, Storage, StorageBackend, StorageBootstrap,
+    StorageHealth,
 };
 
 use std::sync::Arc;
@@ -73,7 +73,13 @@ impl ProviderStore for MemoryStorage {
     }
 
     async fn get(&self, id: &str) -> anyhow::Result<Option<Provider>> {
-        Ok(self.providers.read().await.iter().find(|p| p.id == id).cloned())
+        Ok(self
+            .providers
+            .read()
+            .await
+            .iter()
+            .find(|p| p.id == id)
+            .cloned())
     }
 
     async fn create(&self, _input: CreateProvider) -> anyhow::Result<Provider> {
@@ -90,9 +96,9 @@ impl ProviderStore for MemoryStorage {
 
     async fn exists_by_name(&self, name: &str, exclude_id: Option<&str>) -> anyhow::Result<bool> {
         let providers = self.providers.read().await;
-        Ok(providers.iter().any(|p| {
-            p.name == name && exclude_id.map_or(true, |eid| p.id != eid)
-        }))
+        Ok(providers
+            .iter()
+            .any(|p| p.name == name && exclude_id.map_or(true, |eid| p.id != eid)))
     }
 
     async fn record_test_result(
@@ -111,7 +117,13 @@ impl RouteStore for MemoryStorage {
     }
 
     async fn get(&self, id: &str) -> anyhow::Result<Option<Route>> {
-        Ok(self.routes.read().await.iter().find(|r| r.id == id).cloned())
+        Ok(self
+            .routes
+            .read()
+            .await
+            .iter()
+            .find(|r| r.id == id)
+            .cloned())
     }
 
     async fn create(&self, _input: CreateRoute) -> anyhow::Result<Route> {
@@ -128,9 +140,9 @@ impl RouteStore for MemoryStorage {
 
     async fn exists_by_name(&self, name: &str, exclude_id: Option<&str>) -> anyhow::Result<bool> {
         let routes = self.routes.read().await;
-        Ok(routes.iter().any(|r| {
-            r.name == name && exclude_id.map_or(true, |eid| r.id != eid)
-        }))
+        Ok(routes
+            .iter()
+            .any(|r| r.name == name && exclude_id.map_or(true, |eid| r.id != eid)))
     }
 
     async fn exists_by_virtual_model(
@@ -140,8 +152,7 @@ impl RouteStore for MemoryStorage {
     ) -> anyhow::Result<bool> {
         let routes = self.routes.read().await;
         Ok(routes.iter().any(|r| {
-            r.virtual_model == virtual_model
-                && exclude_id.map_or(true, |eid| r.id != eid)
+            r.virtual_model == virtual_model && exclude_id.map_or(true, |eid| r.id != eid)
         }))
     }
 }
@@ -158,7 +169,10 @@ impl RouteSnapshotStore for MemoryStorage {
 impl SettingsStore for MemoryStorage {
     async fn get(&self, key: &str) -> anyhow::Result<Option<String>> {
         let settings = self.settings.read().await;
-        Ok(settings.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone()))
+        Ok(settings
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.clone()))
     }
 
     async fn set(&self, key: &str, value: &str) -> anyhow::Result<()> {
@@ -228,5 +242,4 @@ impl StorageBootstrap for MemoryStorage {
             writable: false,
         })
     }
-
 }

@@ -7,7 +7,12 @@ pub fn populate_response_items(resp: &mut InternalResponse) {
 
     let mut items: Vec<ResponseItem> = Vec::new();
 
-    if let Some(reasoning) = resp.reasoning_content.as_ref().map(|v| v.trim()).filter(|v| !v.is_empty()) {
+    if let Some(reasoning) = resp
+        .reasoning_content
+        .as_ref()
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())
+    {
         items.push(ResponseItem::Reasoning {
             text: reasoning.to_string(),
         });

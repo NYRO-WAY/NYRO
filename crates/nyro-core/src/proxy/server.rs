@@ -1,6 +1,6 @@
-use axum::routing::{get, post};
 use axum::Router;
 use axum::http::{HeaderValue, Method, header};
+use axum::routing::{get, post};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 
@@ -17,13 +17,16 @@ pub fn create_router(gateway: Gateway) -> Router {
         .route("/messages", post(handler::anthropic_proxy))
         .route("/v1/embeddings", post(handler::embeddings_proxy))
         .route("/embeddings", post(handler::embeddings_proxy))
-        .route("/v1beta/models/:model_action",post(handler::gemini_proxy))
+        .route("/v1beta/models/:model_action", post(handler::gemini_proxy))
         .route("/models/:model_action", post(handler::gemini_proxy))
         .route("/v1/models", get(handler::models_list))
         .route("/models", get(handler::models_list))
         .route("/health", get(health));
 
-    let cors = build_proxy_cors_layer(&gateway.config.proxy_cors_origins, gateway.config.proxy_port);
+    let cors = build_proxy_cors_layer(
+        &gateway.config.proxy_cors_origins,
+        gateway.config.proxy_port,
+    );
 
     router
         .layer(cors)

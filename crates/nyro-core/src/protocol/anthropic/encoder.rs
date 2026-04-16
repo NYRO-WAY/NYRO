@@ -2,8 +2,8 @@ use anyhow::Result;
 use reqwest::header::{HeaderMap, HeaderValue};
 use serde_json::Value;
 
-use crate::protocol::types::*;
 use crate::protocol::EgressEncoder;
+use crate::protocol::types::*;
 
 pub struct AnthropicEncoder;
 
@@ -71,10 +71,7 @@ impl EgressEncoder for AnthropicEncoder {
         validate_anthropic_payload(&body)?;
 
         let mut headers = HeaderMap::new();
-        headers.insert(
-            "anthropic-version",
-            HeaderValue::from_static("2023-06-01"),
-        );
+        headers.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
 
         Ok((body, headers))
     }
@@ -162,10 +159,8 @@ fn validate_anthropic_payload(body: &Value) -> Result<()> {
                 Value::String(_) => {}
                 Value::Array(blocks) => {
                     for (bidx, block) in blocks.iter().enumerate() {
-                        let btype = block
-                            .get("type")
-                            .and_then(|v| v.as_str())
-                            .ok_or_else(|| {
+                        let btype =
+                            block.get("type").and_then(|v| v.as_str()).ok_or_else(|| {
                                 anyhow::anyhow!(
                                     "anthropic payload message[{idx}] block[{bidx}] missing type"
                                 )
@@ -174,8 +169,7 @@ fn validate_anthropic_payload(body: &Value) -> Result<()> {
                             "text" => {}
                             "tool_use" => {
                                 let id = block.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                                let name =
-                                    block.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                                let name = block.get("name").and_then(|v| v.as_str()).unwrap_or("");
                                 if id.is_empty() || name.is_empty() {
                                     anyhow::bail!(
                                         "anthropic payload message[{idx}] tool_use block[{bidx}] missing id/name"
@@ -203,7 +197,9 @@ fn validate_anthropic_payload(body: &Value) -> Result<()> {
                     }
                 }
                 _ => {
-                    anyhow::bail!("anthropic payload message[{idx}] content must be string or array");
+                    anyhow::bail!(
+                        "anthropic payload message[{idx}] content must be string or array"
+                    );
                 }
             }
         } else {
@@ -219,7 +215,13 @@ fn validate_anthropic_payload(body: &Value) -> Result<()> {
         if t != "auto" && t != "any" && t != "tool" {
             anyhow::bail!("anthropic tool_choice invalid type: {t}");
         }
-        if t == "tool" && tc.get("name").and_then(|v| v.as_str()).unwrap_or("").is_empty() {
+        if t == "tool"
+            && tc
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .is_empty()
+        {
             anyhow::bail!("anthropic tool_choice=tool missing name");
         }
     }
@@ -261,8 +263,8 @@ fn encode_message(msg: &InternalMessage) -> Result<Value> {
                     blocks.push(serde_json::json!({"type": "text", "text": t}));
                 }
                 for tc in tcs {
-                    let input: Value =
-                        serde_json::from_str(&tc.arguments).unwrap_or(Value::Object(Default::default()));
+                    let input: Value = serde_json::from_str(&tc.arguments)
+                        .unwrap_or(Value::Object(Default::default()));
                     blocks.push(serde_json::json!({
                         "type": "tool_use",
                         "id": normalize_anthropic_tool_id(&tc.id),
@@ -327,7 +329,11 @@ fn anthropic_tool_result_payload(msg: &InternalMessage) -> (Value, Option<String
         MessageContent::Text(t) => (Value::String(t.clone()), None),
         MessageContent::Blocks(blocks) => {
             for block in blocks {
-                if let ContentBlock::ToolResult { tool_use_id, content } = block {
+                if let ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                } = block
+                {
                     return (content.clone(), Some(tool_use_id.clone()));
                 }
             }
@@ -376,9 +382,8 @@ fn normalize_anthropic_messages(messages: Vec<Value>) -> Vec<Value> {
             let same_role = last.get("role").and_then(|v| v.as_str()) == Some(role);
             if same_role {
                 if let Some(last_obj) = last.as_object_mut() {
-                    let mut merged = content_to_blocks(
-                        last_obj.get("content").cloned().unwrap_or(Value::Null),
-                    );
+                    let mut merged =
+                        content_to_blocks(last_obj.get("content").cloned().unwrap_or(Value::Null));
                     merged.extend(blocks);
                     last_obj.insert("content".into(), Value::Array(merged));
                 }

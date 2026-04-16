@@ -2,25 +2,26 @@ use std::collections::{BTreeSet, HashSet};
 use std::convert::Infallible;
 use std::time::Instant;
 
-use chrono::{NaiveDateTime, Utc};
 use async_trait::async_trait;
+use axum::Json;
 use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::Json;
-use futures::StreamExt;
+use chrono::{NaiveDateTime, Utc};
 use dashmap::mapref::entry::Entry as DashEntry;
+use futures::StreamExt;
 use serde_json::Value;
 use tokio::sync::broadcast;
 use tokio::time::{Duration, timeout};
 use tokio_stream::wrappers::ReceiverStream;
 
+use crate::Gateway;
+use crate::cache::entry::CacheEntry;
+use crate::cache::key::{build_cache_key, build_semantic_partition};
 use crate::db::models::{
     Provider, Route, RouteCacheConfig, RouteExactCacheConfig, RouteSemanticCacheConfig, RouteTarget,
 };
-use crate::cache::entry::CacheEntry;
-use crate::cache::key::{build_cache_key, build_semantic_partition};
 use crate::logging::LogEntry;
 use crate::protocol::gemini::decoder::GeminiDecoder;
 use crate::protocol::types::*;
@@ -29,7 +30,6 @@ use crate::proxy::adapter::{self, ProviderAdapter};
 use crate::proxy::client::ProxyClient;
 use crate::router::TargetSelector;
 use crate::storage::traits::{ApiKeyAccessRecord, UsageWindow};
-use crate::Gateway;
 
 // ── OpenAI ingress: POST /v1/chat/completions ──
 
@@ -125,14 +125,20 @@ pub async fn embeddings_proxy(
         let credential = match resolve_provider_credential(&gw, &provider).await {
             Ok(value) => value,
             Err(e) => {
-                last_error = Some(error_response(502, &format!("provider credential error: {e}")));
+                last_error = Some(error_response(
+                    502,
+                    &format!("provider credential error: {e}"),
+                ));
                 continue;
             }
         };
         let client = match gw.http_client_for_provider(provider.use_proxy).await {
             Ok(http_client) => ProxyClient::new(http_client),
             Err(e) => {
-                last_error = Some(error_response(502, &format!("provider transport error: {e}")));
+                last_error = Some(error_response(
+                    502,
+                    &format!("provider transport error: {e}"),
+                ));
                 continue;
             }
         };
@@ -171,10 +177,13 @@ pub async fn embeddings_proxy(
                     .into_response();
             }
             Ok((payload, status)) => {
-                last_error = Some((
-                    StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
-                    Json(payload),
-                ).into_response());
+                last_error = Some(
+                    (
+                        StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
+                        Json(payload),
+                    )
+                        .into_response(),
+                );
             }
             Err(e) => {
                 last_error = Some(error_response(502, &format!("upstream error: {e}")));
@@ -271,7 +280,12 @@ pub async fn models_list(State(gw): State<Gateway>, headers: HeaderMap) -> Respo
 
 // ── Universal proxy pipeline ──
 
-async fn universal_proxy(gw: Gateway, headers: HeaderMap, body: Value, ingress: Protocol) -> Response {
+async fn universal_proxy(
+    gw: Gateway,
+    headers: HeaderMap,
+    body: Value,
+    ingress: Protocol,
+) -> Response {
     let decoder = crate::protocol::get_decoder(ingress);
     let internal = match decoder.decode_request(body) {
         Ok(r) => r,
@@ -349,7 +363,8 @@ async fn proxy_pipeline(
         .as_ref()
         .map(|(system_prompt, _)| build_semantic_partition(&internal.model, system_prompt));
 
-    if let (Some(cache_backend), Some(key)) = (cache_backend.as_ref(), request_cache_key.as_deref()) {
+    if let (Some(cache_backend), Some(key)) = (cache_backend.as_ref(), request_cache_key.as_deref())
+    {
         if exact_enabled_for_route {
             if let Ok(Some(bytes)) = cache_backend.get(key).await {
                 if let Ok(cached_entry) = serde_json::from_slice::<CacheEntry>(&bytes) {
@@ -366,7 +381,10 @@ async fn proxy_pipeline(
                         &ingress_str,
                         &ingress_str,
                         &request_model,
-                        cached_entry.actual_model.as_deref().unwrap_or(&request_model),
+                        cached_entry
+                            .actual_model
+                            .as_deref()
+                            .unwrap_or(&request_model),
                         auth_key.id.as_deref(),
                         &cached_entry.provider_name,
                         cached_entry.status_code as i32,
@@ -406,7 +424,10 @@ async fn proxy_pipeline(
                                     &ingress_str,
                                     &ingress_str,
                                     &request_model,
-                                    cached_entry.actual_model.as_deref().unwrap_or(&request_model),
+                                    cached_entry
+                                        .actual_model
+                                        .as_deref()
+                                        .unwrap_or(&request_model),
                                     auth_key.id.as_deref(),
                                     &cached_entry.provider_name,
                                     cached_entry.status_code as i32,
@@ -440,14 +461,18 @@ async fn proxy_pipeline(
         ) {
             if let Ok(vector) = compute_embedding(&gw, semantic_text).await {
                 semantic_query_vector = Some(vector.clone());
-                if let Ok(Some(hit)) = vector_store.search(partition, &vector, semantic_threshold).await {
+                if let Ok(Some(hit)) = vector_store
+                    .search(partition, &vector, semantic_threshold)
+                    .await
+                {
                     if let Ok(cached_entry) = serde_json::from_slice::<CacheEntry>(&hit.data) {
                         if !is_semantic_entry_expired(&cached_entry, semantic_ttl) {
                             if exact_enabled_for_route {
                                 if let (Some(cache_backend), Some(key)) =
                                     (cache_backend.as_ref(), request_cache_key.as_deref())
                                 {
-                                    let _ = cache_backend.set(key, &hit.data, Some(exact_ttl)).await;
+                                    let _ =
+                                        cache_backend.set(key, &hit.data, Some(exact_ttl)).await;
                                 }
                             }
                             let response = cached_entry_to_response(
@@ -463,7 +488,10 @@ async fn proxy_pipeline(
                                 &ingress_str,
                                 &ingress_str,
                                 &request_model,
-                                cached_entry.actual_model.as_deref().unwrap_or(&request_model),
+                                cached_entry
+                                    .actual_model
+                                    .as_deref()
+                                    .unwrap_or(&request_model),
                                 auth_key.id.as_deref(),
                                 &cached_entry.provider_name,
                                 cached_entry.status_code as i32,
@@ -552,13 +580,16 @@ async fn proxy_pipeline(
                 continue;
             }
         };
-        
+
         let egress_body = override_model(egress_body, &actual_model, egress);
         let egress_path = encoder.egress_path(&actual_model, is_stream);
         let credential = match resolve_provider_credential(&gw, &provider).await {
             Ok(value) => value,
             Err(e) => {
-                last_response = Some(error_response(502, &format!("provider credential error: {e}")));
+                last_response = Some(error_response(
+                    502,
+                    &format!("provider credential error: {e}"),
+                ));
                 continue;
             }
         };
@@ -649,7 +680,6 @@ async fn proxy_pipeline(
     last_response.unwrap_or_else(|| error_response(502, "all route targets failed"))
 }
 
-
 #[allow(clippy::too_many_arguments)]
 async fn handle_non_stream(
     gw: Gateway,
@@ -689,26 +719,46 @@ async fn handle_non_stream(
         Ok(r) => r,
         Err(e) => {
             emit_log(
-                &gw, ingress_str, egress_str, request_model, actual_model,
+                &gw,
+                ingress_str,
+                egress_str,
+                request_model,
+                actual_model,
                 api_key_id,
-                &provider.name, 502, start.elapsed().as_millis() as f64,
-                TokenUsage::default(), false, false,
-                Some(e.to_string()), None,
+                &provider.name,
+                502,
+                start.elapsed().as_millis() as f64,
+                TokenUsage::default(),
+                false,
+                false,
+                Some(e.to_string()),
+                None,
             );
             return error_response(502, &format!("upstream error: {e}"));
         }
     };
-    
+
     let (resp, status) = call_result;
 
     if status >= 400 {
-        let preview = serde_json::to_string(&resp).ok().map(|s| s.chars().take(500).collect());
+        let preview = serde_json::to_string(&resp)
+            .ok()
+            .map(|s| s.chars().take(500).collect());
         emit_log(
-            &gw, ingress_str, egress_str, request_model, actual_model,
+            &gw,
+            ingress_str,
+            egress_str,
+            request_model,
+            actual_model,
             api_key_id,
-            &provider.name, status as i32, start.elapsed().as_millis() as f64,
-            TokenUsage::default(), false, false,
-            preview.clone(), None,
+            &provider.name,
+            status as i32,
+            start.elapsed().as_millis() as f64,
+            TokenUsage::default(),
+            false,
+            false,
+            preview.clone(),
+            None,
         );
         return (
             StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
@@ -736,10 +786,20 @@ async fn handle_non_stream(
         .map(|s| s.chars().take(500).collect());
 
     emit_log(
-        &gw, ingress_str, egress_str, request_model, actual_model,
+        &gw,
+        ingress_str,
+        egress_str,
+        request_model,
+        actual_model,
         api_key_id,
-        &provider.name, status as i32, start.elapsed().as_millis() as f64,
-        usage.clone(), false, is_tool, None, response_preview,
+        &provider.name,
+        status as i32,
+        start.elapsed().as_millis() as f64,
+        usage.clone(),
+        false,
+        is_tool,
+        None,
+        response_preview,
     );
 
     let mut response = (
@@ -767,7 +827,9 @@ async fn handle_non_stream(
                 }
             }
             let vector_store = gw.vector_store.read().await.clone();
-            if let (Some(vector_store), Some(ctx)) = (vector_store.as_ref(), semantic_write_ctx.as_ref()) {
+            if let (Some(vector_store), Some(ctx)) =
+                (vector_store.as_ref(), semantic_write_ctx.as_ref())
+            {
                 let vector = if let Some(existing) = ctx.query_vector.clone() {
                     Some(existing)
                 } else {
@@ -775,12 +837,7 @@ async fn handle_non_stream(
                 };
                 if let Some(vector) = vector {
                     let _ = vector_store
-                        .upsert(
-                            &ctx.partition,
-                            ctx.key.clone(),
-                            vector,
-                            bytes,
-                        )
+                        .upsert(&ctx.partition, ctx.key.clone(), vector, bytes)
                         .await;
                 }
             }
@@ -830,16 +887,25 @@ async fn handle_stream(
         Ok(r) => r,
         Err(e) => {
             emit_log(
-                &gw, ingress_str, egress_str, request_model, actual_model,
+                &gw,
+                ingress_str,
+                egress_str,
+                request_model,
+                actual_model,
                 api_key_id,
-                &provider.name, 502, start.elapsed().as_millis() as f64,
-                TokenUsage::default(), true, false,
-                Some(e.to_string()), None,
+                &provider.name,
+                502,
+                start.elapsed().as_millis() as f64,
+                TokenUsage::default(),
+                true,
+                false,
+                Some(e.to_string()),
+                None,
             );
             return error_response(502, &format!("upstream error: {e}"));
         }
     };
-    
+
     let (resp, status) = call_result;
 
     if status >= 400 {
@@ -848,11 +914,20 @@ async fn handle_stream(
             .await
             .unwrap_or_else(|_| serde_json::json!({"error": {"message": "upstream error"}}));
         emit_log(
-            &gw, ingress_str, egress_str, request_model, actual_model,
+            &gw,
+            ingress_str,
+            egress_str,
+            request_model,
+            actual_model,
             api_key_id,
-            &provider.name, status as i32, start.elapsed().as_millis() as f64,
-            TokenUsage::default(), true, false,
-            Some(err_body.to_string()), None,
+            &provider.name,
+            status as i32,
+            start.elapsed().as_millis() as f64,
+            TokenUsage::default(),
+            true,
+            false,
+            Some(err_body.to_string()),
+            None,
         );
         return (
             StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
@@ -928,16 +1003,28 @@ async fn handle_stream(
         }
 
         emit_log(
-            &gw_log, &ingress_s, &egress_s, &req_model, &act_model,
+            &gw_log,
+            &ingress_s,
+            &egress_s,
+            &req_model,
+            &act_model,
             key_id.as_deref(),
-            &provider_name, 200, start.elapsed().as_millis() as f64,
-            internal.usage.clone(), true, !internal.tool_calls.is_empty(), None, None,
+            &provider_name,
+            200,
+            start.elapsed().as_millis() as f64,
+            internal.usage.clone(),
+            true,
+            !internal.tool_calls.is_empty(),
+            None,
+            None,
         );
 
         let mut singleflight_payload: Option<Vec<u8>> = None;
         if allow_exact_store && internal.tool_calls.is_empty() {
             let cache_backend = gw_log.cache_backend.read().await.clone();
-            if let (Some(cache_backend), Some(cache_key)) = (cache_backend.as_ref(), cache_key_owned.as_deref()) {
+            if let (Some(cache_backend), Some(cache_key)) =
+                (cache_backend.as_ref(), cache_key_owned.as_deref())
+            {
                 let formatter = crate::protocol::get_response_formatter(ingress);
                 let payload = formatter.format_response(&internal);
                 let entry = CacheEntry {
@@ -950,10 +1037,14 @@ async fn handle_stream(
                     internal_response: Some(internal.clone()),
                 };
                 if let Ok(bytes) = serde_json::to_vec(&entry) {
-                    let _ = cache_backend.set(cache_key, &bytes, exact_cache_ttl_owned).await;
+                    let _ = cache_backend
+                        .set(cache_key, &bytes, exact_cache_ttl_owned)
+                        .await;
                     singleflight_payload = Some(bytes.clone());
                     let vector_store = gw_log.vector_store.read().await.clone();
-                    if let (Some(vector_store), Some(ctx)) = (vector_store.as_ref(), semantic_write_ctx_owned.as_ref()) {
+                    if let (Some(vector_store), Some(ctx)) =
+                        (vector_store.as_ref(), semantic_write_ctx_owned.as_ref())
+                    {
                         let vector = if let Some(existing) = ctx.query_vector.clone() {
                             Some(existing)
                         } else {
@@ -961,12 +1052,7 @@ async fn handle_stream(
                         };
                         if let Some(vector) = vector {
                             let _ = vector_store
-                                .upsert(
-                                    &ctx.partition,
-                                    ctx.key.clone(),
-                                    vector,
-                                    bytes,
-                                )
+                                .upsert(&ctx.partition, ctx.key.clone(), vector, bytes)
                                 .await;
                         }
                     }
@@ -974,7 +1060,9 @@ async fn handle_stream(
             }
         } else if internal.tool_calls.is_empty() {
             let vector_store = gw_log.vector_store.read().await.clone();
-            if let (Some(vector_store), Some(ctx)) = (vector_store.as_ref(), semantic_write_ctx_owned.as_ref()) {
+            if let (Some(vector_store), Some(ctx)) =
+                (vector_store.as_ref(), semantic_write_ctx_owned.as_ref())
+            {
                 let formatter = crate::protocol::get_response_formatter(ingress);
                 let payload = formatter.format_response(&internal);
                 let entry = CacheEntry {
@@ -994,12 +1082,7 @@ async fn handle_stream(
                     };
                     if let Some(vector) = vector {
                         let _ = vector_store
-                            .upsert(
-                                &ctx.partition,
-                                ctx.key.clone(),
-                                vector,
-                                bytes,
-                            )
+                            .upsert(&ctx.partition, ctx.key.clone(), vector, bytes)
                             .await;
                     }
                 }
@@ -1037,8 +1120,13 @@ trait ProxyAccessStore {
     async fn get_active_provider(&self, id: &str) -> anyhow::Result<Option<Provider>>;
     async fn find_api_key(&self, raw_key: &str) -> anyhow::Result<Option<ApiKeyAccessRecord>>;
     async fn route_binding_exists(&self, api_key_id: &str, route_id: &str) -> anyhow::Result<bool>;
-    async fn request_count_since(&self, api_key_id: &str, window: UsageWindow) -> anyhow::Result<i64>;
-    async fn token_count_since(&self, api_key_id: &str, window: UsageWindow) -> anyhow::Result<i64>;
+    async fn request_count_since(
+        &self,
+        api_key_id: &str,
+        window: UsageWindow,
+    ) -> anyhow::Result<i64>;
+    async fn token_count_since(&self, api_key_id: &str, window: UsageWindow)
+    -> anyhow::Result<i64>;
 }
 
 struct GatewayProxyAccessStore<'a> {
@@ -1072,14 +1160,22 @@ impl ProxyAccessStore for GatewayProxyAccessStore<'_> {
         }
     }
 
-    async fn request_count_since(&self, api_key_id: &str, window: UsageWindow) -> anyhow::Result<i64> {
+    async fn request_count_since(
+        &self,
+        api_key_id: &str,
+        window: UsageWindow,
+    ) -> anyhow::Result<i64> {
         match self.gw.storage.auth() {
             Some(store) => store.request_count_since(api_key_id, window).await,
             None => Ok(0),
         }
     }
 
-    async fn token_count_since(&self, api_key_id: &str, window: UsageWindow) -> anyhow::Result<i64> {
+    async fn token_count_since(
+        &self,
+        api_key_id: &str,
+        window: UsageWindow,
+    ) -> anyhow::Result<i64> {
         match self.gw.storage.auth() {
             Some(store) => store.token_count_since(api_key_id, window).await,
             None => Ok(0),
@@ -1183,7 +1279,10 @@ fn is_key_expired(expires_at: &str) -> bool {
 }
 
 fn extract_api_key(headers: &HeaderMap) -> Option<String> {
-    if let Some(value) = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()) {
+    if let Some(value) = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+    {
         if let Some(token) = value.strip_prefix("Bearer ") {
             let token = token.trim();
             if !token.is_empty() {
@@ -1200,7 +1299,10 @@ fn extract_api_key(headers: &HeaderMap) -> Option<String> {
         .map(ToString::to_string)
 }
 
-async fn get_provider<S: ProxyAccessStore + ?Sized>(access_store: &S, id: &str) -> anyhow::Result<Provider> {
+async fn get_provider<S: ProxyAccessStore + ?Sized>(
+    access_store: &S,
+    id: &str,
+) -> anyhow::Result<Provider> {
     access_store
         .get_active_provider(id)
         .await?
@@ -1357,11 +1459,7 @@ fn parse_embedding_vector(payload: &Value) -> Option<Vec<f32>> {
     for value in embedding {
         out.push(value.as_f64()? as f32);
     }
-    if out.is_empty() {
-        None
-    } else {
-        Some(out)
-    }
+    if out.is_empty() { None } else { Some(out) }
 }
 
 fn resolve_openai_base_url(provider: &Provider) -> Option<String> {
@@ -1407,10 +1505,12 @@ fn resolve_route_cache(route: &Route) -> RouteCacheConfig {
     let exact = route.cache_exact_ttl.map(|ttl| RouteExactCacheConfig {
         ttl: if ttl > 0 { Some(ttl) } else { None },
     });
-    let semantic = route.cache_semantic_ttl.map(|ttl| RouteSemanticCacheConfig {
-        ttl: if ttl > 0 { Some(ttl) } else { None },
-        threshold: route.cache_semantic_threshold,
-    });
+    let semantic = route
+        .cache_semantic_ttl
+        .map(|ttl| RouteSemanticCacheConfig {
+            ttl: if ttl > 0 { Some(ttl) } else { None },
+            threshold: route.cache_semantic_threshold,
+        });
     RouteCacheConfig { exact, semantic }
 }
 
@@ -1473,7 +1573,12 @@ fn extract_semantic_embedding_input(request: &InternalRequest) -> Option<(String
     Some((system_prompt, embedding_text))
 }
 
-fn set_cache_headers(response: &mut Response, cache_status: &str, key: Option<&str>, score: Option<f64>) {
+fn set_cache_headers(
+    response: &mut Response,
+    cache_status: &str,
+    key: Option<&str>,
+    score: Option<f64>,
+) {
     let headers = response.headers_mut();
     if let Ok(value) = HeaderValue::from_str(cache_status) {
         headers.insert("x-nyro-cache", value);
@@ -1708,7 +1813,8 @@ fn ensure_tool_index(tool_calls: &mut Vec<Option<ToolCall>>, index: usize) {
 
 async fn resolve_provider_credential(gw: &Gateway, provider: &Provider) -> anyhow::Result<String> {
     let _ = gw;
-    let auth_mode = provider.auth_mode.trim();
+    let effective_auth_mode = provider.effective_auth_mode();
+    let auth_mode = effective_auth_mode.trim();
     let credential = match auth_mode {
         "api_key" | "" => provider.api_key.trim(),
         "oauth" => provider
@@ -1720,8 +1826,19 @@ async fn resolve_provider_credential(gw: &Gateway, provider: &Provider) -> anyho
     };
 
     if credential.is_empty() {
-        let source = if auth_mode == "oauth" { "access_token" } else { "api_key" };
-        anyhow::bail!("provider credential is empty for auth_mode={} ({source})", if auth_mode.is_empty() { "api_key" } else { auth_mode });
+        let source = if auth_mode == "oauth" {
+            "access_token"
+        } else {
+            "api_key"
+        };
+        anyhow::bail!(
+            "provider credential is empty for auth_mode={} ({source})",
+            if auth_mode.is_empty() {
+                "api_key"
+            } else {
+                auth_mode
+            }
+        );
     }
 
     Ok(credential.to_string())

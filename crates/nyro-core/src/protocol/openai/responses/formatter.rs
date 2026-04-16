@@ -1,8 +1,8 @@
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::protocol::types::{InternalResponse, ResponseItem};
 use crate::protocol::ResponseFormatter;
+use crate::protocol::types::{InternalResponse, ResponseItem};
 
 pub struct ResponsesResponseFormatter;
 

@@ -4,14 +4,15 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-use crate::protocol::types::*;
 use crate::protocol::EgressEncoder;
+use crate::protocol::types::*;
 
 pub struct OpenAIEncoder;
 
 impl EgressEncoder for OpenAIEncoder {
     fn encode_request(&self, req: &InternalRequest) -> Result<(Value, HeaderMap)> {
-        let normalized_messages = normalize_messages_for_openai(&req.messages, req.tools.as_deref());
+        let normalized_messages =
+            normalize_messages_for_openai(&req.messages, req.tools.as_deref());
         let messages: Vec<Value> = normalized_messages
             .iter()
             .map(encode_message)
@@ -259,7 +260,10 @@ fn remap_duplicate_tool_call_ids(messages: &[InternalMessage]) -> Vec<InternalMe
                         format!("{}_dup{}", original, *count)
                     };
                     tc.id = unique.clone();
-                    pending_by_original.entry(original).or_default().push(unique);
+                    pending_by_original
+                        .entry(original)
+                        .or_default()
+                        .push(unique);
                 }
             }
             continue;
@@ -413,7 +417,10 @@ fn encode_message(msg: &InternalMessage) -> Result<Value> {
                             "function": {"name": name, "arguments": input.to_string()}
                         })
                     }
-                    ContentBlock::ToolResult { tool_use_id, content } => {
+                    ContentBlock::ToolResult {
+                        tool_use_id,
+                        content,
+                    } => {
                         serde_json::json!({
                             "type": "text",
                             "text": content.to_string(),

@@ -496,7 +496,9 @@ fn extract_reasoning_from_message(message: &Value) -> Option<String> {
         return Some(reasoning.to_string());
     }
 
-    let details = message.get("reasoning_details").and_then(|v| v.as_array())?;
+    let details = message
+        .get("reasoning_details")
+        .and_then(|v| v.as_array())?;
     let mut parts: Vec<String> = Vec::new();
     for detail in details {
         if let Some(text) = detail

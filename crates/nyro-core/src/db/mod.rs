@@ -2,9 +2,9 @@ pub mod models;
 
 use std::path::Path;
 
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::Row;
 use sqlx::SqlitePool;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
 pub async fn init_pool(data_dir: &Path) -> anyhow::Result<SqlitePool> {
     std::fs::create_dir_all(data_dir)?;
@@ -61,7 +61,9 @@ pub async fn migrate(pool: &SqlitePool) -> anyhow::Result<()> {
 }
 
 async fn backfill_provider_vendor(pool: &SqlitePool) -> anyhow::Result<()> {
-    if column_exists(pool, "providers", "vendor").await? && column_exists(pool, "providers", "preset_key").await? {
+    if column_exists(pool, "providers", "vendor").await?
+        && column_exists(pool, "providers", "preset_key").await?
+    {
         sqlx::query(
             "UPDATE providers \
              SET vendor = lower(trim(preset_key)) \
@@ -187,9 +189,11 @@ async fn ensure_api_key_tables(pool: &SqlitePool) -> anyhow::Result<()> {
     sqlx::query("CREATE INDEX IF NOT EXISTS idx_api_keys_key ON api_keys(key)")
         .execute(pool)
         .await?;
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_api_key_routes_route_id ON api_key_routes(route_id)")
-        .execute(pool)
-        .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_api_key_routes_route_id ON api_key_routes(route_id)",
+    )
+    .execute(pool)
+    .await?;
 
     Ok(())
 }
@@ -228,9 +232,11 @@ async fn ensure_cache_entries_table(pool: &SqlitePool) -> anyhow::Result<()> {
     .execute(pool)
     .await?;
 
-    sqlx::query("CREATE INDEX IF NOT EXISTS idx_cache_entries_expires_at ON cache_entries(expires_at)")
-        .execute(pool)
-        .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_cache_entries_expires_at ON cache_entries(expires_at)",
+    )
+    .execute(pool)
+    .await?;
 
     Ok(())
 }
@@ -290,12 +296,18 @@ async fn backfill_route_targets(pool: &SqlitePool) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn column_exists(pool: &SqlitePool, table_name: &str, column_name: &str) -> anyhow::Result<bool> {
+async fn column_exists(
+    pool: &SqlitePool,
+    table_name: &str,
+    column_name: &str,
+) -> anyhow::Result<bool> {
     let pragma = format!("PRAGMA table_info({table_name})");
     let rows = sqlx::query(&pragma).fetch_all(pool).await?;
-    Ok(rows
-        .iter()
-        .any(|row| row.try_get::<String, _>("name").map(|name| name == column_name).unwrap_or(false)))
+    Ok(rows.iter().any(|row| {
+        row.try_get::<String, _>("name")
+            .map(|name| name == column_name)
+            .unwrap_or(false)
+    }))
 }
 
 const INIT_SQL: &str = r#"

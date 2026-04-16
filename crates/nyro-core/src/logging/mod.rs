@@ -68,4 +68,4 @@ async fn cleanup_old_logs(storage: DynStorage) {
 async fn flush(storage: DynStorage, buffer: &mut Vec<LogEntry>) {
     let entries = std::mem::take(buffer);
     let _ = storage.logs().append_batch(entries).await;
-    }
+}

@@ -38,7 +38,10 @@ impl ResponseParser for AnthropicResponseParser {
                             block.get("id").and_then(|v| v.as_str()),
                             block.get("name").and_then(|v| v.as_str()),
                         ) {
-                            let input = block.get("input").cloned().unwrap_or(Value::Object(Default::default()));
+                            let input = block
+                                .get("input")
+                                .cloned()
+                                .unwrap_or(Value::Object(Default::default()));
                             tool_calls.push(ToolCall {
                                 id: tc_id.to_string(),
                                 name: name.to_string(),
@@ -83,7 +86,12 @@ impl ResponseFormatter for AnthropicResponseFormatter {
     fn format_response(&self, resp: &InternalResponse) -> Value {
         let mut content = Vec::new();
 
-        if let Some(reasoning) = resp.reasoning_content.as_ref().map(|v| v.trim()).filter(|v| !v.is_empty()) {
+        if let Some(reasoning) = resp
+            .reasoning_content
+            .as_ref()
+            .map(|v| v.trim())
+            .filter(|v| !v.is_empty())
+        {
             content.push(serde_json::json!({
                 "type": "thinking",
                 "thinking": reasoning,
@@ -202,10 +210,7 @@ fn parse_anthropic_event(event_type: Option<&str>, data: &Value, deltas: &mut Ve
             }
         }
         Some("content_block_start") => {
-            let idx = data
-                .get("index")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0) as usize;
+            let idx = data.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
             if let Some(block) = data.get("content_block") {
                 match block.get("type").and_then(|t| t.as_str()) {
                     Some("tool_use") => {
@@ -239,11 +244,8 @@ fn parse_anthropic_event(event_type: Option<&str>, data: &Value, deltas: &mut Ve
                     }
                     Some("input_json_delta") => {
                         if let Some(json) = delta.get("partial_json").and_then(|t| t.as_str()) {
-                            let idx = data
-                                .get("index")
-                                .and_then(|v| v.as_u64())
-                                .unwrap_or(0)
-                                as usize;
+                            let idx =
+                                data.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
                             deltas.push(StreamDelta::ToolCallDelta {
                                 index: idx,
                                 arguments: json.to_string(),
@@ -268,10 +270,7 @@ fn parse_anthropic_event(event_type: Option<&str>, data: &Value, deltas: &mut Ve
                 }
             }
             if let Some(u) = data.get("usage") {
-                let output = u
-                    .get("output_tokens")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0) as u32;
+                let output = u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
                 if output > 0 {
                     deltas.push(StreamDelta::Usage(TokenUsage {
                         input_tokens: 0,
@@ -420,7 +419,10 @@ impl StreamFormatter for AnthropicStreamFormatter {
                     ));
                     self.in_tool_block = true;
                 }
-                StreamDelta::ToolCallDelta { index: _, arguments } => {
+                StreamDelta::ToolCallDelta {
+                    index: _,
+                    arguments,
+                } => {
                     let delta_ev = serde_json::json!({
                         "type": "content_block_delta",
                         "index": self.block_index,
@@ -519,14 +521,8 @@ impl AnthropicStreamFormatter {
 fn extract_anthropic_usage(v: &Value) -> TokenUsage {
     if let Some(u) = v.get("usage") {
         TokenUsage {
-            input_tokens: u
-                .get("input_tokens")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u32,
-            output_tokens: u
-                .get("output_tokens")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u32,
+            input_tokens: u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+            output_tokens: u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
         }
     } else {
         TokenUsage::default()

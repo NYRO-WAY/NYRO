@@ -1,9 +1,9 @@
-use std::collections::HashMap;
-use std::time::Duration;
 use nyro_core::cache::{
     CacheConfig, CacheStorageKind, ExactCacheConfig, SemanticCacheConfig, VectorStorageKind,
 };
 use serde::Deserialize;
+use std::collections::HashMap;
+use std::time::Duration;
 
 #[derive(Debug, Deserialize)]
 pub struct YamlConfig {
@@ -156,7 +156,10 @@ impl YamlConfig {
                 anyhow::bail!("providers[{i}]: name is required");
             }
             if p.endpoints.is_empty() {
-                anyhow::bail!("providers[{i}] ({}): at least one endpoint is required", p.name);
+                anyhow::bail!(
+                    "providers[{i}] ({}): at least one endpoint is required",
+                    p.name
+                );
             }
             if !p.endpoints.contains_key(&p.default_protocol) {
                 anyhow::bail!(
@@ -336,7 +339,9 @@ pub fn build_routes(yaml: &YamlConfig, providers: &[Provider]) -> Vec<Route> {
                 target_provider: primary.map(|t| t.provider_id.clone()).unwrap_or_default(),
                 target_model: primary.map(|t| t.model.clone()).unwrap_or_default(),
                 access_control: yr.access_control,
-                route_type: parse_route_type(&yr.route_type).unwrap_or("chat").to_string(),
+                route_type: parse_route_type(&yr.route_type)
+                    .unwrap_or("chat")
+                    .to_string(),
                 cache_exact_ttl: None,
                 cache_semantic_ttl: None,
                 cache_semantic_threshold: None,

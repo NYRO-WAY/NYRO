@@ -9,10 +9,10 @@ use std::time::Duration;
 use crate::config::GatewayConfig;
 use crate::db;
 use crate::db::models::{
-    is_valid_provider_auth_mode,
     ApiKey, ApiKeyWithBindings, CreateApiKey, CreateProvider, CreateRoute, CreateRouteTarget,
     LogPage, LogQuery, ModelStats, Provider, ProviderStats, RequestLog, Route, RouteTarget,
     StatsHourly, StatsOverview, UpdateApiKey, UpdateProvider, UpdateRoute,
+    is_valid_provider_auth_mode,
 };
 use crate::logging::LogEntry;
 use crate::storage::traits::{
@@ -170,27 +170,27 @@ impl ProviderStore for SqliteProviderStore {
         .bind(input.use_proxy)
         .execute(&self.pool)
         .await?;
-        self.get(&id).await?.context("provider missing after create")
+        self.get(&id)
+            .await?
+            .context("provider missing after create")
     }
 
     async fn update(&self, id: &str, input: UpdateProvider) -> anyhow::Result<Provider> {
-        let current = self.get(id).await?.context("provider not found for update")?;
-        let models_source_input = input
-            .effective_models_source()
-            .map(ToString::to_string);
+        let current = self
+            .get(id)
+            .await?
+            .context("provider not found for update")?;
+        let models_source_input = input.effective_models_source().map(ToString::to_string);
         let name = input.name.unwrap_or(current.name);
         let vendor = if input.vendor.is_some() {
             normalize_provider_vendor(input.vendor.as_deref())
         } else {
             normalize_provider_vendor(current.vendor.as_deref())
         };
-        let models_source = models_source_input
-            .or_else(|| current.models_source.clone());
+        let models_source = models_source_input.or_else(|| current.models_source.clone());
         let protocol = input.protocol.unwrap_or(current.protocol.clone());
         let base_url = input.base_url.unwrap_or(current.base_url);
-        let default_protocol = input
-            .default_protocol
-            .unwrap_or(current.default_protocol);
+        let default_protocol = input.default_protocol.unwrap_or(current.default_protocol);
         let protocol_endpoints = input
             .protocol_endpoints
             .unwrap_or(current.protocol_endpoints);
@@ -265,7 +265,11 @@ impl ProviderStore for SqliteProviderStore {
         Ok(row.is_some())
     }
 
-    async fn record_test_result(&self, provider_id: &str, result: ProviderTestResult) -> anyhow::Result<()> {
+    async fn record_test_result(
+        &self,
+        provider_id: &str,
+        result: ProviderTestResult,
+    ) -> anyhow::Result<()> {
         sqlx::query(
             "UPDATE providers SET last_test_success = ?, last_test_at = datetime('now') WHERE id = ?",
         )
@@ -491,7 +495,6 @@ impl RouteStore for SqliteRouteStore {
         };
         Ok(row.is_some())
     }
-
 }
 
 #[async_trait]
@@ -600,9 +603,11 @@ impl SettingsStore for SqliteSettingsStore {
     }
 
     async fn list_all(&self) -> anyhow::Result<Vec<(String, String)>> {
-        Ok(sqlx::query_as::<_, (String, String)>("SELECT key, value FROM settings")
-            .fetch_all(&self.pool)
-            .await?)
+        Ok(
+            sqlx::query_as::<_, (String, String)>("SELECT key, value FROM settings")
+                .fetch_all(&self.pool)
+                .await?,
+        )
     }
 }
 
@@ -687,9 +692,7 @@ impl ApiKeyStore for SqliteApiKeyStore {
         .await?;
 
         replace_api_key_routes(&self.pool, &id, &input.route_ids).await?;
-        self.get(&id)
-            .await?
-            .context("api key missing after create")
+        self.get(&id).await?.context("api key missing after create")
     }
 
     async fn update(&self, id: &str, input: UpdateApiKey) -> anyhow::Result<ApiKeyWithBindings> {
@@ -727,9 +730,7 @@ impl ApiKeyStore for SqliteApiKeyStore {
             replace_api_key_routes(&self.pool, id, &route_ids).await?;
         }
 
-        self.get(id)
-            .await?
-            .context("api key missing after update")
+        self.get(id).await?.context("api key missing after update")
     }
 
     async fn delete(&self, id: &str) -> anyhow::Result<()> {
@@ -782,7 +783,9 @@ impl AuthAccessStore for SqliteAuthAccessStore {
                 Option<i32>,
                 Option<i32>,
             ),
-        >("SELECT id, status, expires_at, rpm, rpd, tpm, tpd FROM api_keys WHERE key = ?")
+        >(
+            "SELECT id, status, expires_at, rpm, rpd, tpm, tpd FROM api_keys WHERE key = ?"
+        )
         .bind(raw_key)
         .fetch_optional(&self.pool)
         .await?;
@@ -815,7 +818,11 @@ impl AuthAccessStore for SqliteAuthAccessStore {
         list_api_key_route_ids(&self.pool, api_key_id).await
     }
 
-    async fn request_count_since(&self, api_key_id: &str, window: UsageWindow) -> anyhow::Result<i64> {
+    async fn request_count_since(
+        &self,
+        api_key_id: &str,
+        window: UsageWindow,
+    ) -> anyhow::Result<i64> {
         let expr = match window {
             UsageWindow::Minute => "-1 minute",
             UsageWindow::Day => "-1 day",
@@ -829,7 +836,11 @@ impl AuthAccessStore for SqliteAuthAccessStore {
         .await?)
     }
 
-    async fn token_count_since(&self, api_key_id: &str, window: UsageWindow) -> anyhow::Result<i64> {
+    async fn token_count_since(
+        &self,
+        api_key_id: &str,
+        window: UsageWindow,
+    ) -> anyhow::Result<i64> {
         let expr = match window {
             UsageWindow::Minute => "-1 minute",
             UsageWindow::Day => "-1 day",
@@ -844,7 +855,10 @@ impl AuthAccessStore for SqliteAuthAccessStore {
     }
 }
 
-async fn list_api_key_route_ids(pool: &SqlitePool, api_key_id: &str) -> anyhow::Result<Vec<String>> {
+async fn list_api_key_route_ids(
+    pool: &SqlitePool,
+    api_key_id: &str,
+) -> anyhow::Result<Vec<String>> {
     Ok(sqlx::query_scalar::<_, String>(
         "SELECT route_id FROM api_key_routes WHERE api_key_id = ? ORDER BY route_id ASC",
     )
@@ -1068,9 +1082,10 @@ impl CacheStore for SqliteLogStore {
     }
 
     async fn cleanup_expired(&self) -> anyhow::Result<u64> {
-        let result = sqlx::query("DELETE FROM cache_entries WHERE datetime(expires_at) <= datetime('now')")
-            .execute(&self.pool)
-            .await?;
+        let result =
+            sqlx::query("DELETE FROM cache_entries WHERE datetime(expires_at) <= datetime('now')")
+                .execute(&self.pool)
+                .await?;
         Ok(result.rows_affected())
     }
 }
@@ -1099,5 +1114,4 @@ impl StorageBootstrap for SqliteBootstrap {
             writable: true,
         })
     }
-
 }

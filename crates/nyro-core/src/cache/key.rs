@@ -46,7 +46,10 @@ pub fn build_cache_key(request: &InternalRequest) -> String {
                             source.push_str(name);
                             source.push_str(&input.to_string());
                         }
-                        ContentBlock::ToolResult { tool_use_id, content } => {
+                        ContentBlock::ToolResult {
+                            tool_use_id,
+                            content,
+                        } => {
                             source.push_str(tool_use_id);
                             source.push_str(&content.to_string());
                         }

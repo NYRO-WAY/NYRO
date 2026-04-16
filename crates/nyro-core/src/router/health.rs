@@ -50,10 +50,12 @@ impl HealthRegistry {
 
     pub fn record_failure(&self, target_key: &str) {
         let mut states = self.states.write().unwrap();
-        let entry = states.entry(target_key.to_string()).or_insert(TargetHealth {
-            consecutive_failures: 0,
-            last_failure_at: None,
-        });
+        let entry = states
+            .entry(target_key.to_string())
+            .or_insert(TargetHealth {
+                consecutive_failures: 0,
+                last_failure_at: None,
+            });
         entry.consecutive_failures += 1;
         entry.last_failure_at = Some(Instant::now());
     }

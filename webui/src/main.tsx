@@ -1,10 +1,11 @@
 import { StrictMode, Suspense, lazy } from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-import { AppLayout } from "@/components/layout/app-layout";
+import { AuthGate } from "@/components/auth-gate";
 import { AppErrorBoundary } from "@/components/error-boundary";
+import { AppLayout } from "@/components/layout/app-layout";
 import { LocaleProvider } from "@/lib/i18n";
 
 import "./index.css";
@@ -36,15 +37,17 @@ createRoot(document.getElementById("root")!).render(
           <BrowserRouter>
             <Suspense fallback={<div className="p-6 text-sm text-slate-500">Loading...</div>}>
               <Routes>
-                <Route element={<AppLayout />}>
-                  <Route index element={<DashboardPage />} />
-                  <Route path="providers" element={<ProvidersPage />} />
-                  <Route path="routes" element={<RoutesPage />} />
-                  <Route path="api-keys" element={<ApiKeysPage />} />
-                  <Route path="logs" element={<LogsPage />} />
-                  <Route path="stats" element={<StatsPage />} />
-                  <Route path="connect" element={<ConnectPage />} />
-                  <Route path="settings" element={<SettingsPage />} />
+                <Route element={<AuthGate />}>
+                  <Route element={<AppLayout />}>
+                    <Route index element={<DashboardPage />} />
+                    <Route path="providers" element={<ProvidersPage />} />
+                    <Route path="routes" element={<RoutesPage />} />
+                    <Route path="api-keys" element={<ApiKeysPage />} />
+                    <Route path="logs" element={<LogsPage />} />
+                    <Route path="stats" element={<StatsPage />} />
+                    <Route path="connect" element={<ConnectPage />} />
+                    <Route path="settings" element={<SettingsPage />} />
+                  </Route>
                 </Route>
               </Routes>
             </Suspense>
@@ -52,5 +55,5 @@ createRoot(document.getElementById("root")!).render(
         </LocaleProvider>
       </QueryClientProvider>
     </AppErrorBoundary>
-  </StrictMode>
+  </StrictMode>,
 );

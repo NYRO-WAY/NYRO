@@ -1,6 +1,8 @@
 use std::collections::VecDeque;
 
-use crate::protocol::types::{ContentBlock, InternalMessage, InternalRequest, MessageContent, Role, ToolCall};
+use crate::protocol::types::{
+    ContentBlock, InternalMessage, InternalRequest, MessageContent, Role, ToolCall,
+};
 
 pub fn normalize_request_tool_results(req: &mut InternalRequest) {
     let mut pending_calls: VecDeque<(String, String)> = VecDeque::new();

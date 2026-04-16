@@ -96,7 +96,13 @@ impl CacheConfig {
         let semantic = value.get("semantic")?;
 
         let exact_enabled = exact.get("enabled")?.as_bool()?;
-        let exact_storage = match exact.get("storage")?.as_str()?.trim().to_ascii_lowercase().as_str() {
+        let exact_storage = match exact
+            .get("storage")?
+            .as_str()?
+            .trim()
+            .to_ascii_lowercase()
+            .as_str()
+        {
             "database" => CacheStorageKind::Database,
             _ => CacheStorageKind::Memory,
         };
@@ -113,7 +119,11 @@ impl CacheConfig {
         {
             _ => VectorStorageKind::Memory,
         };
-        let embedding_route = semantic.get("embedding_route")?.as_str()?.trim().to_string();
+        let embedding_route = semantic
+            .get("embedding_route")?
+            .as_str()?
+            .trim()
+            .to_string();
         let similarity_threshold = semantic.get("similarity_threshold")?.as_f64()?;
         let vector_dimensions = semantic.get("vector_dimensions")?.as_u64()?.max(1) as usize;
         let semantic_default_ttl = semantic.get("default_ttl")?.as_u64()?.max(1);

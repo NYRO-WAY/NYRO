@@ -1,5 +1,5 @@
 pub mod adapter;
-pub mod server;
-pub mod handler;
-pub mod client;
 pub mod auth;
+pub mod client;
+pub mod handler;
+pub mod server;

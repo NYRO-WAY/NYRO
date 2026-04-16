@@ -194,9 +194,7 @@ fn decode_input_item(item: &Value) -> Result<Option<InternalMessage>> {
                         }
                     }
                     other => {
-                        anyhow::bail!(
-                            "unsupported content block type in responses input: {other}"
-                        );
+                        anyhow::bail!("unsupported content block type in responses input: {other}");
                     }
                 }
             }
@@ -225,10 +223,7 @@ fn parse_tools(raw_tools: Option<&Value>) -> Result<Option<Vec<ToolDef>>> {
 
     let mut tools = Vec::new();
     for item in items {
-        let Some(tool_type) = item
-            .get("type")
-            .and_then(|v| v.as_str())
-        else {
+        let Some(tool_type) = item.get("type").and_then(|v| v.as_str()) else {
             continue;
         };
 
