@@ -1,264 +1,403 @@
 [
   {
     "id": "custom",
-    "label": { "zh": "自定义", "en": "Custom" },
+    "label": {
+      "zh": "自定义",
+      "en": "Custom"
+    },
     "icon": "nyro",
     "defaultProtocol": "openai",
     "channels": [
       {
         "id": "default",
-        "label": { "zh": "默认", "en": "Default" },
-        "capabilitiesSource": "ai://models.dev/"
+        "label": {
+          "zh": "默认",
+          "en": "Default"
+        },
+        "capabilitiesSource": "ai://models.dev/",
+        "auth_mode": "api_key"
       }
-    ]
+    ],
+    "auth_mode": "api_key"
   },
   {
     "id": "openai",
-    "label": { "zh": "OpenAI", "en": "OpenAI" },
+    "label": {
+      "zh": "OpenAI",
+      "en": "OpenAI"
+    },
     "icon": "openai",
     "defaultProtocol": "openai",
     "channels": [
       {
         "id": "default",
-        "label": { "zh": "默认", "en": "Default" },
-        "baseUrls": { "openai": "https://api.openai.com/v1" },
+        "label": {
+          "zh": "默认",
+          "en": "Default"
+        },
+        "baseUrls": {
+          "openai": "https://api.openai.com/v1"
+        },
         "modelsSource": "https://api.openai.com/v1/models",
-        "capabilitiesSource": "ai://models.dev/openai"
+        "capabilitiesSource": "ai://models.dev/openai",
+        "auth_mode": "api_key"
+      },
+      {
+        "id": "codex",
+        "label": {
+          "zh": "Codex",
+          "en": "Codex"
+        },
+        "baseUrls": {
+          "openai": "https://chatgpt.com/backend-api/codex"
+        },
+        "modelsSource": "https://chatgpt.com/backend-api/codex/models",
+        "capabilitiesSource": "ai://models.dev/openai",
+        "auth_mode": "oauth"
       }
-    ]
+    ],
+    "auth_mode": "api_key"
   },
   {
     "id": "anthropic",
-    "label": { "zh": "Anthropic", "en": "Anthropic" },
+    "label": {
+      "zh": "Anthropic",
+      "en": "Anthropic"
+    },
     "icon": "anthropic",
     "defaultProtocol": "anthropic",
     "channels": [
       {
         "id": "default",
-        "label": { "zh": "默认", "en": "Default" },
-        "baseUrls": { "anthropic": "https://api.anthropic.com" },
+        "label": {
+          "zh": "默认",
+          "en": "Default"
+        },
+        "baseUrls": {
+          "anthropic": "https://api.anthropic.com"
+        },
         "modelsSource": "https://api.anthropic.com/v1/models",
-        "capabilitiesSource": "ai://models.dev/anthropic"
+        "capabilitiesSource": "ai://models.dev/anthropic",
+        "auth_mode": "api_key"
       }
-    ]
+    ],
+    "auth_mode": "api_key"
   },
   {
     "id": "google",
-    "label": { "zh": "Google", "en": "Google" },
+    "label": {
+      "zh": "Google",
+      "en": "Google"
+    },
     "icon": "google",
     "defaultProtocol": "gemini",
     "channels": [
       {
         "id": "default",
-        "label": { "zh": "默认", "en": "Default" },
+        "label": {
+          "zh": "默认",
+          "en": "Default"
+        },
         "baseUrls": {
           "openai": "https://generativelanguage.googleapis.com/v1beta/openai",
           "gemini": "https://generativelanguage.googleapis.com"
         },
         "modelsSource": "https://generativelanguage.googleapis.com/v1beta/openai/models",
-        "capabilitiesSource": "ai://models.dev/google"
+        "capabilitiesSource": "ai://models.dev/google",
+        "auth_mode": "api_key"
       }
-    ]
+    ],
+    "auth_mode": "api_key"
   },
   {
     "id": "xai",
-    "label": { "zh": "xAI", "en": "xAI" },
+    "label": {
+      "zh": "xAI",
+      "en": "xAI"
+    },
     "icon": "xai",
     "defaultProtocol": "openai",
     "channels": [
       {
         "id": "default",
-        "label": { "zh": "默认", "en": "Default" },
-        "baseUrls": { "openai": "https://api.x.ai/v1" },
+        "label": {
+          "zh": "默认",
+          "en": "Default"
+        },
+        "baseUrls": {
+          "openai": "https://api.x.ai/v1"
+        },
         "modelsSource": "https://api.x.ai/v1/models",
-        "capabilitiesSource": "ai://models.dev/xai"
+        "capabilitiesSource": "ai://models.dev/xai",
+        "auth_mode": "api_key"
       }
-    ]
+    ],
+    "auth_mode": "api_key"
   },
   {
     "id": "deepseek",
-    "label": { "zh": "DeepSeek", "en": "DeepSeek" },
+    "label": {
+      "zh": "DeepSeek",
+      "en": "DeepSeek"
+    },
     "icon": "deepseek",
     "defaultProtocol": "openai",
     "channels": [
       {
         "id": "default",
-        "label": { "zh": "默认", "en": "Default" },
+        "label": {
+          "zh": "默认",
+          "en": "Default"
+        },
         "baseUrls": {
           "openai": "https://api.deepseek.com/v1",
           "anthropic": "https://api.deepseek.com/anthropic"
         },
         "modelsSource": "https://api.deepseek.com/v1/models",
-        "capabilitiesSource": "ai://models.dev/deepseek"
+        "capabilitiesSource": "ai://models.dev/deepseek",
+        "auth_mode": "api_key"
       }
-    ]
+    ],
+    "auth_mode": "api_key"
   },
   {
     "id": "moonshotai",
-    "label": { "zh": "Moonshot AI", "en": "Moonshot AI" },
+    "label": {
+      "zh": "Moonshot AI",
+      "en": "Moonshot AI"
+    },
     "icon": "kimi",
     "defaultProtocol": "openai",
     "channels": [
       {
         "id": "default",
-        "label": { "zh": "默认", "en": "Default" },
+        "label": {
+          "zh": "默认",
+          "en": "Default"
+        },
         "baseUrls": {
           "openai": "https://api.moonshot.ai/v1",
           "anthropic": "https://api.moonshot.ai/anthropic"
         },
         "modelsSource": "https://api.moonshot.ai/v1/models",
-        "capabilitiesSource": "ai://models.dev/moonshotai"
+        "capabilitiesSource": "ai://models.dev/moonshotai",
+        "auth_mode": "api_key"
       },
       {
         "id": "china",
-        "label": { "zh": "中国站", "en": "China" },
+        "label": {
+          "zh": "中国站",
+          "en": "China"
+        },
         "baseUrls": {
           "openai": "https://api.moonshot.cn/v1",
           "anthropic": "https://api.moonshot.cn/anthropic"
         },
         "modelsSource": "https://api.moonshot.cn/v1/models",
-        "capabilitiesSource": "ai://models.dev/moonshotai"
+        "capabilitiesSource": "ai://models.dev/moonshotai",
+        "auth_mode": "api_key"
       }
-    ]
+    ],
+    "auth_mode": "api_key"
   },
   {
     "id": "minimax",
-    "label": { "zh": "MiniMax", "en": "MiniMax" },
+    "label": {
+      "zh": "MiniMax",
+      "en": "MiniMax"
+    },
     "icon": "minimax",
     "defaultProtocol": "openai",
     "channels": [
       {
         "id": "default",
-        "label": { "zh": "默认", "en": "Default" },
+        "label": {
+          "zh": "默认",
+          "en": "Default"
+        },
         "baseUrls": {
           "openai": "https://api.minimax.io/v1",
           "anthropic": "https://api.minimax.io/anthropic"
         },
         "modelsSource": "ai://models.dev/minimax",
         "capabilitiesSource": "ai://models.dev/minimax",
-        "staticModels": []
+        "staticModels": [],
+        "auth_mode": "api_key"
       },
       {
         "id": "china",
-        "label": { "zh": "中国站", "en": "China" },
+        "label": {
+          "zh": "中国站",
+          "en": "China"
+        },
         "baseUrls": {
           "openai": "https://api.minimaxi.com/v1",
           "anthropic": "https://api.minimaxi.com/anthropic"
         },
         "modelsSource": "ai://models.dev/minimax",
         "capabilitiesSource": "ai://models.dev/minimax",
-        "staticModels": []
+        "staticModels": [],
+        "auth_mode": "api_key"
       }
-    ]
+    ],
+    "auth_mode": "api_key"
   },
   {
     "id": "zhipu",
-    "label": { "zh": "Zhipu AI", "en": "Zhipu AI" },
+    "label": {
+      "zh": "Zhipu AI",
+      "en": "Zhipu AI"
+    },
     "icon": "zhipu",
     "defaultProtocol": "openai",
     "channels": [
       {
         "id": "default",
-        "label": { "zh": "默认", "en": "Default" },
+        "label": {
+          "zh": "默认",
+          "en": "Default"
+        },
         "baseUrls": {
           "openai": "https://open.bigmodel.cn/api/paas/v4",
           "anthropic": "https://open.bigmodel.cn/api/anthropic"
         },
         "modelsSource": "https://open.bigmodel.cn/api/paas/v4/models",
-        "capabilitiesSource": "ai://models.dev/zhipuai"
+        "capabilitiesSource": "ai://models.dev/zhipuai",
+        "auth_mode": "api_key"
       },
       {
         "id": "coding",
-        "label": { "zh": "Coding Plan", "en": "Coding Plan" },
+        "label": {
+          "zh": "Coding Plan",
+          "en": "Coding Plan"
+        },
         "baseUrls": {
           "openai": "https://open.bigmodel.cn/api/coding/paas/v4",
           "anthropic": "https://open.bigmodel.cn/api/anthropic"
         },
         "modelsSource": "https://open.bigmodel.cn/api/coding/paas/v4/models",
-        "capabilitiesSource": "ai://models.dev/zhipuai"
+        "capabilitiesSource": "ai://models.dev/zhipuai",
+        "auth_mode": "api_key"
       }
-    ]
+    ],
+    "auth_mode": "api_key"
   },
   {
     "id": "zai",
-    "label": { "zh": "Z.ai", "en": "Z.ai" },
+    "label": {
+      "zh": "Z.ai",
+      "en": "Z.ai"
+    },
     "icon": "zai",
     "defaultProtocol": "openai",
     "channels": [
       {
         "id": "default",
-        "label": { "zh": "默认", "en": "Default" },
+        "label": {
+          "zh": "默认",
+          "en": "Default"
+        },
         "baseUrls": {
           "openai": "https://api.z.ai/api/paas/v4",
           "anthropic": "https://api.z.ai/api/anthropic"
         },
         "modelsSource": "https://api.z.ai/api/paas/v4/models",
-        "capabilitiesSource": "ai://models.dev/zai"
+        "capabilitiesSource": "ai://models.dev/zai",
+        "auth_mode": "api_key"
       },
       {
         "id": "coding",
-        "label": { "zh": "Coding Plan", "en": "Coding Plan" },
+        "label": {
+          "zh": "Coding Plan",
+          "en": "Coding Plan"
+        },
         "baseUrls": {
           "openai": "https://api.z.ai/api/coding/paas/v4",
           "anthropic": "https://api.z.ai/api/anthropic"
         },
         "modelsSource": "https://api.z.ai/api/coding/paas/v4/models",
-        "capabilitiesSource": "ai://models.dev/zai"
+        "capabilitiesSource": "ai://models.dev/zai",
+        "auth_mode": "api_key"
       }
-    ]
+    ],
+    "auth_mode": "api_key"
   },
   {
     "id": "nvidia",
-    "label": { "zh": "NVIDIA", "en": "NVIDIA" },
+    "label": {
+      "zh": "NVIDIA",
+      "en": "NVIDIA"
+    },
     "icon": "nvidia",
     "defaultProtocol": "openai",
     "channels": [
       {
         "id": "default",
-        "label": { "zh": "默认", "en": "Default" },
+        "label": {
+          "zh": "默认",
+          "en": "Default"
+        },
         "baseUrls": {
           "openai": "https://integrate.api.nvidia.com/v1"
         },
         "modelsSource": "https://integrate.api.nvidia.com/v1/models",
-        "capabilitiesSource": "ai://models.dev/nvidia"
+        "capabilitiesSource": "ai://models.dev/nvidia",
+        "auth_mode": "api_key"
       }
-    ]
+    ],
+    "auth_mode": "api_key"
   },
   {
     "id": "openrouter",
-    "label": { "zh": "OpenRouter", "en": "OpenRouter" },
+    "label": {
+      "zh": "OpenRouter",
+      "en": "OpenRouter"
+    },
     "icon": "openrouter",
     "defaultProtocol": "openai",
     "channels": [
       {
         "id": "default",
-        "label": { "zh": "默认", "en": "Default" },
+        "label": {
+          "zh": "默认",
+          "en": "Default"
+        },
         "baseUrls": {
           "openai": "https://openrouter.ai/api/v1",
           "anthropic": "https://openrouter.ai/api"
         },
         "modelsSource": "https://openrouter.ai/api/v1/models",
-        "capabilitiesSource": "https://openrouter.ai/api/v1/models"
+        "capabilitiesSource": "https://openrouter.ai/api/v1/models",
+        "auth_mode": "api_key"
       }
-    ]
+    ],
+    "auth_mode": "api_key"
   },
   {
     "id": "ollama",
-    "label": { "zh": "Ollama", "en": "Ollama" },
+    "label": {
+      "zh": "Ollama",
+      "en": "Ollama"
+    },
     "icon": "ollama",
     "defaultProtocol": "openai",
     "channels": [
       {
         "id": "default",
-        "label": { "zh": "默认", "en": "Default" },
+        "label": {
+          "zh": "默认",
+          "en": "Default"
+        },
         "baseUrls": {
           "openai": "http://127.0.0.1:11434/v1",
           "anthropic": "http://127.0.0.1:11434"
         },
         "apiKey": "sk-ollama",
         "modelsSource": "http://127.0.0.1:11434/v1/models",
-        "capabilitiesSource": "http://127.0.0.1:11434/api/show"
+        "capabilitiesSource": "http://127.0.0.1:11434/api/show",
+        "auth_mode": "api_key"
       }
-    ]
+    ],
+    "auth_mode": "api_key"
   }
 ]
