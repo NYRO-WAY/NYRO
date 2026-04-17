@@ -96,6 +96,28 @@ routes:
         model: gpt-4o
 ```
 
+### 简化写法（等价）
+
+`default_protocol` / `api_key` 支持别名 `protocol` / `apikey`，单 endpoint 时 `protocol` 可省略（自动取 endpoints 的第一个协议）：
+
+```yaml
+providers:
+  - name: openai
+    endpoints:
+      openai:
+        base_url: https://api.openai.com/v1
+    apikey: sk-xxx
+
+routes:
+  - name: gpt-4o
+    vmodel: gpt-4o
+    targets:
+      - provider: openai
+        model: gpt-4o
+```
+
+> 规范名与别名**不能同时出现**（例如同时写 `default_protocol` 和 `protocol`），否则启动时报错。
+
 ---
 
 ## 配置字段说明
@@ -111,16 +133,18 @@ routes:
 
 ### providers[]
 
-| 字段 | 必填 | 说明 |
-|------|------|------|
-| `name` | 是 | Provider 名称，路由中通过此名称引用 |
-| `default_protocol` | 是 | 默认出口协议，必须在 `endpoints` 中有对应条目 |
-| `endpoints` | 是 | 协议 → 端点映射，key 为协议名（`openai` / `anthropic` / `gemini`） |
-| `api_key` | 是 | API 密钥，支持 `${ENV_VAR}` 环境变量引用 |
-| `use_proxy` | 否 | 是否使用系统 HTTP 代理（默认 `false`） |
-| `models_source` | 否 | 模型发现 URL 或 `ai://models.dev/{vendor}` |
-| `capabilities_source` | 否 | 模型能力发现 URL 或 `ai://models.dev/{vendor}` |
-| `static_models` | 否 | 静态模型列表，无 API 时的硬编码兜底 |
+| 字段 | 别名 | 必填 | 说明 |
+|------|------|------|------|
+| `name` | — | 是 | Provider 名称，路由中通过此名称引用 |
+| `default_protocol` | `protocol` | 否 | 默认出口协议，必须在 `endpoints` 中有对应条目；省略时自动取 `endpoints` 声明顺序的第一个协议（多 endpoint 时会打印 WARN 日志建议显式设置） |
+| `endpoints` | — | 是 | 协议 → 端点映射，key 为协议名（`openai` / `anthropic` / `gemini`），保留 YAML 声明顺序 |
+| `api_key` | `apikey` | 是 | API 密钥，支持 `${ENV_VAR}` 环境变量引用 |
+| `use_proxy` | — | 否 | 是否使用系统 HTTP 代理（默认 `false`） |
+| `models_source` | — | 否 | 模型发现 URL 或 `ai://models.dev/{vendor}` |
+| `capabilities_source` | — | 否 | 模型能力发现 URL 或 `ai://models.dev/{vendor}` |
+| `static_models` | — | 否 | 静态模型列表，无 API 时的硬编码兜底 |
+
+> 规范名与别名互斥：同一 provider 下同时出现 `default_protocol` + `protocol`，或 `api_key` + `apikey`，启动时直接报错。
 
 ### routes[]
 
