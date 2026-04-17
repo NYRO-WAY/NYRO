@@ -497,14 +497,38 @@ impl AdminService {
             return Ok(build_provider_oauth_status(&provider, "", None, None));
         }
 
-        self.delete_provider_auth_binding_record(&provider.id, &driver_key)
-            .await?;
+        let disconnected = if let Some(existing) = self
+            .get_provider_auth_binding_record(&provider.id, &driver_key)
+            .await?
+        {
+            Some(
+                self.upsert_provider_auth_binding_record(UpsertProviderAuthBinding {
+                    provider_id: existing.provider_id.clone(),
+                    driver_key: existing.driver_key.clone(),
+                    scheme: existing.scheme.clone(),
+                    status: AuthBindingStatus::Disconnected.as_str().to_string(),
+                    access_token: existing.access_token.clone(),
+                    refresh_token: existing.refresh_token.clone(),
+                    expires_at: existing.expires_at.clone(),
+                    resource_url: existing.resource_url.clone(),
+                    subject_id: existing.subject_id.clone(),
+                    scopes_json: existing.scopes_json.clone(),
+                    meta_json: existing.meta_json.clone(),
+                    last_error: None,
+                })
+                .await?,
+            )
+        } else {
+            None
+        };
+
         self.gw
             .storage
             .providers()
             .update(
                 &provider.id,
                 UpdateProvider {
+                    auth_mode: Some("api_key".to_string()),
                     api_key: Some(String::new()),
                     access_token: Some(String::new()),
                     refresh_token: Some(String::new()),
@@ -517,9 +541,55 @@ impl AdminService {
         Ok(build_provider_oauth_status(
             &provider,
             &driver_key,
-            None,
+            disconnected.as_ref(),
             None,
         ))
+    }
+
+    pub async fn bind_provider_with_oauth_session(
+        &self,
+        provider_id: &str,
+        session_id: &str,
+    ) -> anyhow::Result<Provider> {
+        let provider = self.get_provider(provider_id).await?;
+        let session = self
+            .get_auth_session_record(session_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("auth session not found: {session_id}"))?;
+        if !session
+            .status
+            .eq_ignore_ascii_case(AuthSessionStatus::Ready.as_str())
+        {
+            anyhow::bail!("auth session is not ready");
+        }
+
+        let bundle = parse_auth_session_bundle(&session)?;
+        bundle
+            .access_token
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| anyhow::anyhow!("auth session missing access token"))?;
+
+        let binding = self
+            .persist_provider_auth_binding(&provider, &session, &bundle)
+            .await?;
+        let provider = self
+            .sync_provider_runtime_fields(&provider, &binding.stored_credential())
+            .await?;
+        self.gw
+            .storage
+            .providers()
+            .update(
+                &provider.id,
+                UpdateProvider {
+                    auth_mode: Some("oauth".to_string()),
+                    ..Default::default()
+                },
+            )
+            .await?;
+
+        self.delete_auth_session_record(session_id).await?;
+        self.get_provider(provider_id).await
     }
 
     pub async fn create_provider(&self, input: CreateProvider) -> anyhow::Result<Provider> {
@@ -1781,19 +1851,22 @@ impl AdminService {
         Ok(binding)
     }
 
-    async fn delete_provider_auth_binding_record(
-        &self,
-        provider_id: &str,
-        driver_key: &str,
-    ) -> anyhow::Result<()> {
-        let key = provider_auth_binding_setting_key(provider_id, driver_key);
-        self.gw.storage.settings().set(&key, "").await
-    }
 
     pub(crate) async fn resolve_provider_runtime(
         &self,
         provider: &Provider,
     ) -> anyhow::Result<ResolvedProviderRuntime> {
+        if provider.effective_auth_mode().trim() != "oauth" {
+            let api_key = provider.api_key.trim().to_string();
+            if api_key.is_empty() {
+                anyhow::bail!("provider api key is empty");
+            }
+            return Ok(ResolvedProviderRuntime {
+                access_token: api_key,
+                binding: RuntimeBinding::default(),
+            });
+        }
+
         let fallback = provider.api_key.trim().to_string();
         let driver_key = provider
             .vendor

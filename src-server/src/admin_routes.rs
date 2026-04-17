@@ -63,6 +63,7 @@ pub fn create_router(gateway: Gateway, admin_token: Option<String>) -> Router {
         .route("/providers/:id/oauth/status", get(get_provider_oauth_status_handler))
         .route("/providers/:id/oauth/reconnect", post(reconnect_provider_oauth_handler))
         .route("/providers/:id/oauth/logout", post(logout_provider_oauth_handler))
+        .route("/providers/:id/oauth/bind", post(bind_provider_oauth_handler))
         .route("/providers/oauth", post(create_oauth_provider_handler))
         .route("/oauth/sessions/init", post(init_oauth_session_handler))
         .route("/oauth/sessions/:id/status", get(get_oauth_session_status_handler))
@@ -291,6 +292,22 @@ async fn logout_provider_oauth_handler(
     Path(id): Path<String>,
 ) -> impl IntoResponse {
     match gw.admin().logout_provider_oauth(&id).await {
+        Ok(v) => Json(serde_json::json!({ "data": v })).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct BindProviderOAuthRequest {
+    session_id: String,
+}
+
+async fn bind_provider_oauth_handler(
+    State(gw): State<Gateway>,
+    Path(id): Path<String>,
+    Json(input): Json<BindProviderOAuthRequest>,
+) -> impl IntoResponse {
+    match gw.admin().bind_provider_with_oauth_session(&id, &input.session_id).await {
         Ok(v) => Json(serde_json::json!({ "data": v })).into_response(),
         Err(e) => err(e),
     }

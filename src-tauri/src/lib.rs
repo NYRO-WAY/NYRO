@@ -77,6 +77,7 @@ pub fn run() {
             commands::get_provider_oauth_status,
             commands::reconnect_provider_oauth,
             commands::logout_provider_oauth,
+            commands::bind_provider_oauth,
             commands::list_routes,
             commands::create_route,
             commands::update_route,

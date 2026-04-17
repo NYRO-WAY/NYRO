@@ -187,6 +187,18 @@ pub async fn logout_provider_oauth(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub async fn bind_provider_oauth(
+    gw: State<'_, Gateway>,
+    id: String,
+    session_id: String,
+) -> Result<nyro_core::db::models::Provider, String> {
+    gw.admin()
+        .bind_provider_with_oauth_session(&id, &session_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
 // ── Routes ──
 
 #[tauri::command]
