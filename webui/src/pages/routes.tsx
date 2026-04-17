@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, GitBranch, Pencil, Plus, Route as RouteIcon, Trash2, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, GitBranch, Pencil, Plus, Route as RouteIcon, Trash2, ToggleRight, ToggleLeft, X } from "lucide-react";
 
 import { backend } from "@/lib/backend";
 import { localizeBackendErrorMessage } from "@/lib/backend-error";
@@ -435,6 +435,17 @@ export default function RoutesPage() {
     },
   });
 
+  const [routeToDisable, setRouteToDisable] = useState<RouteType | null>(null);
+
+  const toggleEnabledMut = useMutation({
+    mutationFn: ({ id, is_enabled }: { id: string; is_enabled: boolean }) =>
+      backend("update_route", { id, input: { is_enabled } }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["routes"] }),
+    onError: (error: unknown) => {
+      showErrorDialog("操作失败", "Operation failed", error);
+    },
+  });
+
   const providerOptions = useMemo(() => providers.map((p) => ({ value: p.id, label: p.name, provider: p })), [providers]);
   const providerMap = useMemo(
     () => new Map(providers.map((p) => [p.id, p])),
@@ -682,40 +693,39 @@ export default function RoutesPage() {
             />
             {createForm.route_type !== "embedding" && (
               <>
-                <RouteToggleControl
-                  title={isZh ? "精确缓存" : "Exact Cache"}
-                  isZh={isZh}
-                  checked={createForm.cache_exact_enabled}
-                  disabled={!globalExactCacheEnabled}
-                  disabledMessage={isZh ? "请在系统设置中开启全局精确缓存" : "Enable global exact cache in settings first"}
-                  onCheckedChange={(checked) => setCreateForm((prev) => ({ ...prev, cache_exact_enabled: checked }))}
-                />
-                <RouteToggleControl
-                  title={isZh ? "向量缓存" : "Semantic Cache"}
-                  isZh={isZh}
-                  checked={createForm.cache_semantic_enabled}
-                  disabled={!globalSemanticCacheEnabled}
-                  disabledMessage={isZh ? "请在系统设置中开启全局向量缓存" : "Enable global semantic cache in settings first"}
-                  onCheckedChange={(checked) => {
-                    if (!globalSemanticCacheEnabled) return;
-                    updateCreateSemanticEnabled(checked);
-                  }}
-                />
-                {globalSemanticCacheEnabled && createForm.cache_semantic_enabled && (
-                  <div className="space-y-2">
-                    <FieldLabel>{isZh ? "语义相似度" : "Semantic Similarity"}</FieldLabel>
-                    <Input
-                      type="number"
-                      step="0.01"
-                      min={0}
-                      max={1}
-                      value={createForm.cache_semantic_threshold}
-                      onChange={(e) =>
-                        setCreateForm((prev) => ({ ...prev, cache_semantic_threshold: e.target.value }))
-                      }
-                      placeholder={defaultThresholdInput(globalSemanticThreshold)}
+                {globalExactCacheEnabled && (
+                  <RouteToggleControl
+                    title={isZh ? "精确匹配缓存" : "Exact Cache"}
+                    isZh={isZh}
+                    checked={createForm.cache_exact_enabled}
+                    onCheckedChange={(checked) => setCreateForm((prev) => ({ ...prev, cache_exact_enabled: checked }))}
+                  />
+                )}
+                {globalSemanticCacheEnabled && (
+                  <>
+                    <RouteToggleControl
+                      title={isZh ? "语义相似缓存" : "Semantic Cache"}
+                      isZh={isZh}
+                      checked={createForm.cache_semantic_enabled}
+                      onCheckedChange={(checked) => updateCreateSemanticEnabled(checked)}
                     />
-                  </div>
+                    {createForm.cache_semantic_enabled && (
+                      <div className="space-y-2">
+                        <FieldLabel>{isZh ? "语义相似度" : "Semantic Threshold"}</FieldLabel>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min={0}
+                          max={1}
+                          value={createForm.cache_semantic_threshold}
+                          onChange={(e) =>
+                            setCreateForm((prev) => ({ ...prev, cache_semantic_threshold: e.target.value }))
+                          }
+                          placeholder={defaultThresholdInput(globalSemanticThreshold)}
+                        />
+                      </div>
+                    )}
+                  </>
                 )}
               </>
             )}
@@ -886,44 +896,43 @@ export default function RoutesPage() {
                     />
                     {editForm.route_type !== "embedding" && (
                       <>
-                        <RouteToggleControl
-                          title={isZh ? "精确缓存" : "Exact Cache"}
-                          isZh={isZh}
-                          checked={editForm.cache_exact_enabled}
-                          disabled={!globalExactCacheEnabled}
-                          disabledMessage={isZh ? "请在系统设置中开启全局精确缓存" : "Enable global exact cache in settings first"}
-                          onCheckedChange={(checked) =>
-                            setEditForm((prev) => (prev ? { ...prev, cache_exact_enabled: checked } : prev))
-                          }
-                        />
-                        <RouteToggleControl
-                          title={isZh ? "向量缓存" : "Semantic Cache"}
-                          isZh={isZh}
-                          checked={editForm.cache_semantic_enabled}
-                          disabled={!globalSemanticCacheEnabled}
-                          disabledMessage={isZh ? "请在系统设置中开启全局向量缓存" : "Enable global semantic cache in settings first"}
-                          onCheckedChange={(checked) => {
-                            if (!globalSemanticCacheEnabled) return;
-                            updateEditSemanticEnabled(checked);
-                          }}
-                        />
-                        {globalSemanticCacheEnabled && editForm.cache_semantic_enabled && (
-                          <div className="space-y-2">
-                            <FieldLabel>{isZh ? "语义相似度" : "Semantic Similarity"}</FieldLabel>
-                            <Input
-                              type="number"
-                              step="0.01"
-                              min={0}
-                              max={1}
-                              value={editForm.cache_semantic_threshold}
-                              onChange={(e) =>
-                                setEditForm((prev) =>
-                                  prev ? { ...prev, cache_semantic_threshold: e.target.value } : prev
-                                )
-                              }
-                              placeholder={defaultThresholdInput(globalSemanticThreshold)}
+                        {globalExactCacheEnabled && (
+                          <RouteToggleControl
+                            title={isZh ? "精确匹配缓存" : "Exact Cache"}
+                            isZh={isZh}
+                            checked={editForm.cache_exact_enabled}
+                            onCheckedChange={(checked) =>
+                              setEditForm((prev) => (prev ? { ...prev, cache_exact_enabled: checked } : prev))
+                            }
+                          />
+                        )}
+                        {globalSemanticCacheEnabled && (
+                          <>
+                            <RouteToggleControl
+                              title={isZh ? "语义相似缓存" : "Semantic Cache"}
+                              isZh={isZh}
+                              checked={editForm.cache_semantic_enabled}
+                              onCheckedChange={(checked) => updateEditSemanticEnabled(checked)}
                             />
-                          </div>
+                            {editForm.cache_semantic_enabled && (
+                              <div className="space-y-2">
+                                <FieldLabel>{isZh ? "语义相似度" : "Semantic Threshold"}</FieldLabel>
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  min={0}
+                                  max={1}
+                                  value={editForm.cache_semantic_threshold}
+                                  onChange={(e) =>
+                                    setEditForm((prev) =>
+                                      prev ? { ...prev, cache_semantic_threshold: e.target.value } : prev
+                                    )
+                                  }
+                                  placeholder={defaultThresholdInput(globalSemanticThreshold)}
+                                />
+                              </div>
+                            )}
+                          </>
                         )}
                       </>
                     )}
@@ -996,19 +1005,19 @@ export default function RoutesPage() {
                         {isZh ? "鉴权" : "Auth"}
                       </Badge>
                     )}
-                    {route.cache?.exact && (
+                    {globalExactCacheEnabled && route.cache?.exact && (
                       <Badge variant="success" className="connect-label-badge">
-                        {isZh ? "精确缓存" : "Exact"}
+                        {isZh ? "精确匹配缓存" : "Exact Cache"}
                       </Badge>
                     )}
-                    {route.cache?.semantic && (
+                    {globalSemanticCacheEnabled && route.cache?.semantic && (
                       <Badge variant="success" className="connect-label-badge">
-                        {isZh ? "语义缓存" : "Semantic"}
+                        {isZh ? "语义相似缓存" : "Semantic Cache"}
                       </Badge>
                     )}
-                    {!route.is_active && (
+                    {!route.is_enabled && (
                       <Badge variant="danger" className="connect-label-badge">
-                        {isZh ? "停用" : "Inactive"}
+                        {isZh ? "已禁用" : "Disabled"}
                       </Badge>
                     )}
                   </div>
@@ -1016,13 +1025,45 @@ export default function RoutesPage() {
                 </div>
                 <div className="flex items-center gap-0.5">
                   <button
+                    onClick={() => {
+                      if (route.is_enabled) {
+                        setRouteToDisable(route);
+                      } else {
+                        toggleEnabledMut.mutate({ id: route.id, is_enabled: true });
+                      }
+                    }}
+                    title={route.is_enabled ? (isZh ? "禁用" : "Disable") : (isZh ? "启用" : "Enable")}
+                    className="cursor-pointer rounded-lg p-2 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600"
+                  >
+                    {route.is_enabled ? (
+                      <ToggleRight className="h-4 w-4 text-green-500" />
+                    ) : (
+                      <ToggleLeft className="h-4 w-4 text-slate-400" />
+                    )}
+                  </button>
+                  <button
                     onClick={() => startEdit(route)}
                     className="cursor-pointer rounded-lg p-2 text-slate-400 transition-colors hover:bg-blue-50 hover:text-blue-500"
                   >
                     <Pencil className="h-4 w-4" />
                   </button>
                   <button
-                    onClick={() => setRouteToDelete(route)}
+                    onClick={() => {
+                      if (
+                        route.route_type === "embedding" &&
+                        cacheSettings?.semantic?.enabled &&
+                        cacheSettings.semantic.embedding_route === route.virtual_model
+                      ) {
+                        setErrorDialog({
+                          title: isZh ? "无法删除该路由" : "Cannot delete this route",
+                          description: isZh
+                            ? `该 Embedding 路由「${route.name}」正被系统设置中的语义相似缓存引用，请先在系统设置中关闭语义相似缓存或更换 Embedding 路由后再删除。`
+                            : `The embedding route "${route.name}" is referenced by semantic cache in system settings. Please disable semantic cache or change the embedding route in settings before deleting.`,
+                        });
+                        return;
+                      }
+                      setRouteToDelete(route);
+                    }}
                     className="cursor-pointer rounded-lg p-2 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500"
                   >
                     <Trash2 className="h-4 w-4" />
@@ -1060,6 +1101,21 @@ export default function RoutesPage() {
         </div>
       )}
 
+      <ConfirmDialog
+        open={Boolean(routeToDisable)}
+        onOpenChange={(open) => {
+          if (!open) setRouteToDisable(null);
+        }}
+        title={isZh ? "确认禁用路由" : "Confirm route disable"}
+        description={isZh ? "禁用后，该虚拟模型将不可用，确认禁用？" : "After disabling, the virtual model will be unavailable. Confirm disable?"}
+        cancelText={isZh ? "取消" : "Cancel"}
+        confirmText={isZh ? "禁用" : "Disable"}
+        onConfirm={() => {
+          if (!routeToDisable) return;
+          toggleEnabledMut.mutate({ id: routeToDisable.id, is_enabled: false });
+          setRouteToDisable(null);
+        }}
+      />
       <ConfirmDialog
         open={Boolean(routeToDelete)}
         onOpenChange={(open) => {

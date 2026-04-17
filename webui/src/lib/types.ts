@@ -18,7 +18,7 @@ export interface Provider {
   models_source?: string | null;
   capabilities_source?: string | null;
   static_models?: string | null;
-  is_active: boolean;
+  is_enabled: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -33,7 +33,7 @@ export interface Route {
   access_control: boolean;
   route_type?: "chat" | "embedding";
   cache?: RouteCacheConfig;
-  is_active: boolean;
+  is_enabled: boolean;
   created_at: string;
   targets: RouteTarget[];
 }
@@ -58,7 +58,8 @@ export interface ApiKey {
   rpd?: number | null;
   tpm?: number | null;
   tpd?: number | null;
-  status: "active" | "revoked";
+  status?: "active" | "revoked";
+  is_enabled: boolean;
   expires_at?: string | null;
   created_at: string;
   updated_at: string;
@@ -202,7 +203,7 @@ export interface UpdateProvider {
   capabilities_source?: string;
   static_models?: string;
   api_key?: string;
-  is_active?: boolean;
+  is_enabled?: boolean;
 }
 
 export interface CreateRoute {
@@ -227,7 +228,7 @@ export interface UpdateRoute {
   access_control?: boolean;
   route_type?: "chat" | "embedding";
   cache?: RouteCacheConfig | null;
-  is_active?: boolean;
+  is_enabled?: boolean;
 }
 
 export interface RouteCacheConfig {
@@ -247,18 +248,20 @@ export interface RouteSemanticCacheConfig {
 export interface CacheSettings {
   exact: {
     enabled: boolean;
-    storage: "memory" | "database";
     default_ttl: number;
     max_entries: number;
+    stream_replay_tps: number;
+    expose_headers: boolean;
   };
   semantic: {
     enabled: boolean;
-    storage: "memory";
     embedding_route: string;
     similarity_threshold: number;
     vector_dimensions: number;
     default_ttl: number;
     max_entries: number;
+    stream_replay_tps: number;
+    expose_headers: boolean;
   };
 }
 
@@ -293,7 +296,7 @@ export interface UpdateApiKey {
   rpd?: number;
   tpm?: number;
   tpd?: number;
-  status?: "active" | "revoked";
+  is_enabled?: boolean;
   expires_at?: string;
   route_ids?: string[];
 }
@@ -327,7 +330,7 @@ export interface ExportProvider {
   capabilities_source?: string | null;
   static_models?: string | null;
   api_key: string;
-  is_active: boolean;
+  is_enabled: boolean;
 }
 
 export interface ExportRoute {
@@ -335,7 +338,7 @@ export interface ExportRoute {
   virtual_model: string;
   target_model: string;
   access_control: boolean;
-  is_active: boolean;
+  is_enabled: boolean;
 }
 
 export interface ImportResult {
