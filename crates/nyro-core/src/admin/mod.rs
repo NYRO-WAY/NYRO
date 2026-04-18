@@ -14,7 +14,6 @@ use crate::auth::types::{
     AuthBindingStatus, AuthPollState, AuthScheme, AuthSession, AuthSessionInitData,
     AuthSessionStatus, AuthSessionStatusData, CredentialBundle, ExchangeAuthContext,
     RefreshAuthContext, RuntimeBinding, StartAuthContext, StoredCredential, UpdateAuthSession,
-    UpsertProviderAuthBinding,
 };
 use crate::db::models::*;
 use crate::protocol::{Protocol, ProviderProtocols};
@@ -321,11 +320,9 @@ impl AdminService {
 
         let provider = self.create_provider(input).await?;
         let provisioned = async {
-            let binding = self
-                .persist_provider_auth_binding(&provider, &session, &bundle)
-                .await?;
-            self.sync_provider_runtime_fields(&provider, &binding.stored_credential())
-                .await
+            let credential =
+                stored_credential_from_bundle(&session.driver_key, &session.scheme, &bundle);
+            self.sync_provider_runtime_fields(&provider, &credential).await
         }
         .await;
 
@@ -362,20 +359,16 @@ impl AdminService {
             return Ok(build_provider_oauth_status(&provider, "", None, None));
         }
 
-        let unavailable = auth::build_driver(&driver_key).is_none();
-        let binding = self
-            .get_provider_auth_binding_record(&provider.id, &driver_key)
-            .await?;
-        let reason = if unavailable {
+        let reason = if auth::build_driver(&driver_key).is_none() {
             Some(format!("auth vendor not implemented: {driver_key}"))
         } else {
             None
         };
+        let status = reason
+            .as_ref()
+            .map(|_| AuthBindingStatus::Error.as_str().to_string());
         Ok(build_provider_oauth_status(
-            &provider,
-            &driver_key,
-            binding.as_ref(),
-            reason,
+            &provider, &driver_key, status, reason,
         ))
     }
 
@@ -399,12 +392,7 @@ impl AdminService {
             anyhow::bail!("auth vendor does not support reconnect: {driver_key}");
         }
 
-        let binding = self
-            .get_provider_auth_binding_record(&provider.id, &driver_key)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("provider oauth binding not found"))?;
-
-        let credential = binding.stored_credential();
+        let credential = stored_credential_from_provider(&provider, &driver_key);
         let refresh_token = credential
             .refresh_token
             .as_deref()
@@ -412,7 +400,7 @@ impl AdminService {
             .trim()
             .to_string();
         if refresh_token.is_empty() {
-            anyhow::bail!("provider oauth binding missing refresh token");
+            anyhow::bail!("provider oauth refresh token is missing");
         }
 
         let client = self.gw.http_client_for_provider(provider.use_proxy).await?;
@@ -429,55 +417,28 @@ impl AdminService {
         {
             Ok(bundle) => bundle,
             Err(error) => {
-                let failed = self
-                    .upsert_provider_auth_binding_record(UpsertProviderAuthBinding {
-                        provider_id: provider.id.clone(),
-                        driver_key: binding.driver_key.clone(),
-                        scheme: binding.scheme.clone(),
-                        status: AuthBindingStatus::Error.as_str().to_string(),
-                        access_token: binding.access_token.clone(),
-                        refresh_token: binding.refresh_token.clone(),
-                        expires_at: binding.expires_at.clone(),
-                        resource_url: binding.resource_url.clone(),
-                        subject_id: binding.subject_id.clone(),
-                        scopes_json: binding.scopes_json.clone(),
-                        meta_json: binding.meta_json.clone(),
-                        last_error: Some(error.to_string()),
-                    })
-                    .await?;
                 return Ok(build_provider_oauth_status(
                     &provider,
                     &driver_key,
-                    Some(&failed),
-                    None,
-                ));
+                    Some(AuthBindingStatus::Error.as_str().to_string()),
+                    Some(error.to_string()),
+                ))
             }
         };
 
-        let refreshed_binding = self
-            .upsert_provider_auth_binding_record(UpsertProviderAuthBinding {
-                provider_id: provider.id.clone(),
-                driver_key: binding.driver_key.clone(),
-                scheme: binding.scheme.clone(),
-                status: AuthBindingStatus::Connected.as_str().to_string(),
-                access_token: bundle.access_token.clone(),
-                refresh_token: bundle.refresh_token.clone(),
-                expires_at: bundle.expires_at.clone(),
-                resource_url: bundle.resource_url.clone(),
-                subject_id: bundle.subject_id.clone(),
-                scopes_json: Some(serde_json::to_string(&bundle.scopes)?),
-                meta_json: Some(serde_json::to_string(&bundle.raw)?),
-                last_error: None,
-            })
-            .await?;
-
-        self.sync_provider_runtime_fields(&provider, &refreshed_binding.stored_credential())
+        let refreshed_credential = stored_credential_from_bundle(
+            &driver_key,
+            driver.metadata().scheme.as_str(),
+            &bundle,
+        );
+        let refreshed_provider = self
+            .sync_provider_runtime_fields(&provider, &refreshed_credential)
             .await?;
 
         Ok(build_provider_oauth_status(
-            &provider,
+            &refreshed_provider,
             &driver_key,
-            Some(&refreshed_binding),
+            Some(AuthBindingStatus::Connected.as_str().to_string()),
             None,
         ))
     }
@@ -497,32 +458,8 @@ impl AdminService {
             return Ok(build_provider_oauth_status(&provider, "", None, None));
         }
 
-        let disconnected = if let Some(existing) = self
-            .get_provider_auth_binding_record(&provider.id, &driver_key)
-            .await?
-        {
-            Some(
-                self.upsert_provider_auth_binding_record(UpsertProviderAuthBinding {
-                    provider_id: existing.provider_id.clone(),
-                    driver_key: existing.driver_key.clone(),
-                    scheme: existing.scheme.clone(),
-                    status: AuthBindingStatus::Disconnected.as_str().to_string(),
-                    access_token: existing.access_token.clone(),
-                    refresh_token: existing.refresh_token.clone(),
-                    expires_at: existing.expires_at.clone(),
-                    resource_url: existing.resource_url.clone(),
-                    subject_id: existing.subject_id.clone(),
-                    scopes_json: existing.scopes_json.clone(),
-                    meta_json: existing.meta_json.clone(),
-                    last_error: None,
-                })
-                .await?,
-            )
-        } else {
-            None
-        };
-
-        self.gw
+        let updated = self
+            .gw
             .storage
             .providers()
             .update(
@@ -539,9 +476,9 @@ impl AdminService {
             .await?;
 
         Ok(build_provider_oauth_status(
-            &provider,
+            &updated,
             &driver_key,
-            disconnected.as_ref(),
+            Some(AuthBindingStatus::Disconnected.as_str().to_string()),
             None,
         ))
     }
@@ -570,26 +507,11 @@ impl AdminService {
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| anyhow::anyhow!("auth session missing access token"))?;
 
-        let binding = self
-            .persist_provider_auth_binding(&provider, &session, &bundle)
-            .await?;
-        let provider = self
-            .sync_provider_runtime_fields(&provider, &binding.stored_credential())
-            .await?;
-        self.gw
-            .storage
-            .providers()
-            .update(
-                &provider.id,
-                UpdateProvider {
-                    auth_mode: Some("oauth".to_string()),
-                    ..Default::default()
-                },
-            )
-            .await?;
+        let credential = stored_credential_from_bundle(&session.driver_key, &session.scheme, &bundle);
+        let provider = self.sync_provider_runtime_fields(&provider, &credential).await?;
 
         self.delete_auth_session_record(session_id).await?;
-        self.get_provider(provider_id).await
+        Ok(provider)
     }
 
     pub async fn create_provider(&self, input: CreateProvider) -> anyhow::Result<Provider> {
@@ -1719,24 +1641,16 @@ impl AdminService {
             created_at: now.clone(),
             updated_at: now,
         };
-        let key = auth_session_setting_key(&session.id);
         self.gw
-            .storage
-            .settings()
-            .set(&key, &serde_json::to_string(&session)?)
-            .await?;
+            .auth_sessions
+            .write()
+            .await
+            .insert(session.id.clone(), session.clone());
         Ok(session)
     }
 
     async fn get_auth_session_record(&self, id: &str) -> anyhow::Result<Option<AuthSession>> {
-        let key = auth_session_setting_key(id);
-        let Some(raw) = self.gw.storage.settings().get(&key).await? else {
-            return Ok(None);
-        };
-        if raw.trim().is_empty() {
-            return Ok(None);
-        }
-        Ok(Some(serde_json::from_str(&raw).context("parse auth session")?))
+        Ok(self.gw.auth_sessions.read().await.get(id).cloned())
     }
 
     async fn update_auth_session_record(
@@ -1744,9 +1658,9 @@ impl AdminService {
         id: &str,
         input: UpdateAuthSession,
     ) -> anyhow::Result<AuthSession> {
-        let mut current = self
-            .get_auth_session_record(id)
-            .await?
+        let mut sessions = self.gw.auth_sessions.write().await;
+        let current = sessions
+            .get_mut(id)
             .ok_or_else(|| anyhow::anyhow!("auth session not found: {id}"))?;
         if let Some(value) = input.status {
             current.status = value;
@@ -1779,76 +1693,12 @@ impl AdminService {
             current.last_error = Some(value);
         }
         current.updated_at = now_rfc3339();
-
-        let key = auth_session_setting_key(id);
-        self.gw
-            .storage
-            .settings()
-            .set(&key, &serde_json::to_string(&current)?)
-            .await?;
-        Ok(current)
+        Ok(current.clone())
     }
 
     async fn delete_auth_session_record(&self, id: &str) -> anyhow::Result<()> {
-        let key = auth_session_setting_key(id);
-        self.gw.storage.settings().set(&key, "").await
-    }
-
-    async fn get_provider_auth_binding_record(
-        &self,
-        provider_id: &str,
-        driver_key: &str,
-    ) -> anyhow::Result<Option<auth::ProviderAuthBinding>> {
-        let key = provider_auth_binding_setting_key(provider_id, driver_key);
-        let Some(raw) = self.gw.storage.settings().get(&key).await? else {
-            return Ok(None);
-        };
-        if raw.trim().is_empty() {
-            return Ok(None);
-        }
-        Ok(Some(
-            serde_json::from_str(&raw).context("parse provider auth binding")?,
-        ))
-    }
-
-    async fn upsert_provider_auth_binding_record(
-        &self,
-        input: UpsertProviderAuthBinding,
-    ) -> anyhow::Result<auth::ProviderAuthBinding> {
-        let existing = self
-            .get_provider_auth_binding_record(&input.provider_id, &input.driver_key)
-            .await?;
-        let now = now_rfc3339();
-        let binding = auth::ProviderAuthBinding {
-            id: existing
-                .as_ref()
-                .map(|value| value.id.clone())
-                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
-            provider_id: input.provider_id.clone(),
-            driver_key: input.driver_key.clone(),
-            scheme: input.scheme,
-            status: input.status,
-            access_token: input.access_token,
-            refresh_token: input.refresh_token,
-            expires_at: input.expires_at,
-            resource_url: input.resource_url,
-            subject_id: input.subject_id,
-            scopes_json: input.scopes_json,
-            meta_json: input.meta_json,
-            last_error: input.last_error,
-            created_at: existing
-                .as_ref()
-                .map(|value| value.created_at.clone())
-                .unwrap_or_else(|| now.clone()),
-            updated_at: now,
-        };
-        let key = provider_auth_binding_setting_key(&input.provider_id, &input.driver_key);
-        self.gw
-            .storage
-            .settings()
-            .set(&key, &serde_json::to_string(&binding)?)
-            .await?;
-        Ok(binding)
+        self.gw.auth_sessions.write().await.remove(id);
+        Ok(())
     }
 
 
@@ -1867,46 +1717,35 @@ impl AdminService {
             });
         }
 
-        let fallback = provider.api_key.trim().to_string();
+        let access_token = normalized_optional(provider.access_token.as_deref());
+        let fallback = normalized_optional(Some(provider.api_key.as_str()))
+            .filter(|value| Some(value.as_str()) != access_token.as_deref());
         let driver_key = provider
             .vendor
             .as_deref()
             .map(auth::normalize_driver_key)
             .unwrap_or_default();
         if driver_key.is_empty() {
-            if fallback.is_empty() {
-                anyhow::bail!("provider api key is empty");
+            if let Some(access_token) = access_token.or(fallback) {
+                return Ok(ResolvedProviderRuntime {
+                    access_token,
+                    binding: RuntimeBinding::default(),
+                });
             }
-            return Ok(ResolvedProviderRuntime {
-                access_token: provider.api_key.clone(),
-                binding: RuntimeBinding::default(),
-            });
+            anyhow::bail!("provider credential is empty");
         }
 
         let Some(driver) = auth::build_driver(&driver_key) else {
-            if fallback.is_empty() {
-                anyhow::bail!("provider api key is empty");
+            if let Some(access_token) = access_token.or(fallback) {
+                return Ok(ResolvedProviderRuntime {
+                    access_token,
+                    binding: RuntimeBinding::default(),
+                });
             }
-            return Ok(ResolvedProviderRuntime {
-                access_token: provider.api_key.clone(),
-                binding: RuntimeBinding::default(),
-            });
+            anyhow::bail!("provider credential is empty");
         };
 
-        let Some(binding) = self
-            .get_provider_auth_binding_record(&provider.id, &driver_key)
-            .await?
-        else {
-            if fallback.is_empty() {
-                anyhow::bail!("provider api key is empty");
-            }
-            return Ok(ResolvedProviderRuntime {
-                access_token: provider.api_key.clone(),
-                binding: RuntimeBinding::default(),
-            });
-        };
-
-        let credential = binding.stored_credential();
+        let credential = stored_credential_from_provider(provider, &driver_key);
         let access_token = credential
             .access_token
             .as_deref()
@@ -1934,11 +1773,11 @@ impl AdminService {
                     binding: driver.bind_runtime(provider, &credential)?,
                 });
             }
-            if fallback.is_empty() {
+            let Some(fallback) = fallback else {
                 anyhow::bail!("provider credential is empty");
-            }
+            };
             return Ok(ResolvedProviderRuntime {
-                access_token: provider.api_key.clone(),
+                access_token: fallback,
                 binding: driver.bind_runtime(provider, &credential)?,
             });
         }
@@ -1957,85 +1796,44 @@ impl AdminService {
         {
             Ok(bundle) => bundle,
             Err(error) => {
-                self.upsert_provider_auth_binding_record(UpsertProviderAuthBinding {
-                    provider_id: provider.id.clone(),
-                    driver_key: binding.driver_key.clone(),
-                    scheme: binding.scheme.clone(),
-                    status: AuthBindingStatus::Error.as_str().to_string(),
-                    access_token: binding.access_token.clone(),
-                    refresh_token: binding.refresh_token.clone(),
-                    expires_at: binding.expires_at.clone(),
-                    resource_url: binding.resource_url.clone(),
-                    subject_id: binding.subject_id.clone(),
-                    scopes_json: binding.scopes_json.clone(),
-                    meta_json: binding.meta_json.clone(),
-                    last_error: Some(error.to_string()),
-                })
-                .await?;
-                if fallback.is_empty() {
-                    return Err(error.context("refresh oauth access token"));
+                if let Some(fallback) = fallback {
+                    return Ok(ResolvedProviderRuntime {
+                        access_token: fallback,
+                        binding: driver.bind_runtime(provider, &credential)?,
+                    });
                 }
-                return Ok(ResolvedProviderRuntime {
-                    access_token: provider.api_key.clone(),
-                    binding: driver.bind_runtime(provider, &credential)?,
-                });
+                return Err(error.context("refresh oauth access token"));
             }
         };
 
-        let refreshed_binding = self
-            .upsert_provider_auth_binding_record(UpsertProviderAuthBinding {
-                provider_id: provider.id.clone(),
-                driver_key: binding.driver_key.clone(),
-                scheme: binding.scheme.clone(),
-                status: AuthBindingStatus::Connected.as_str().to_string(),
-                access_token: bundle.access_token.clone(),
-                refresh_token: bundle.refresh_token.clone(),
-                expires_at: bundle.expires_at.clone(),
-                resource_url: bundle.resource_url.clone(),
-                subject_id: bundle.subject_id.clone(),
-                scopes_json: Some(serde_json::to_string(&bundle.scopes)?),
-                meta_json: Some(serde_json::to_string(&bundle.raw)?),
-                last_error: None,
-            })
+        let refreshed_credential = stored_credential_from_bundle(
+            &driver_key,
+            driver.metadata().scheme.as_str(),
+            &bundle,
+        );
+        let refreshed_provider = self
+            .sync_provider_runtime_fields(provider, &refreshed_credential)
             .await?;
-
-        let refreshed_credential = refreshed_binding.stored_credential();
-        self.sync_provider_runtime_fields(provider, &refreshed_credential)
-            .await?;
-
-        let access_token = refreshed_credential
+        let access_token = refreshed_provider
             .access_token
-            .clone()
-            .filter(|value| !value.trim().is_empty())
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+            .or_else(|| {
+                let fallback = refreshed_provider.api_key.trim();
+                if fallback.is_empty() {
+                    None
+                } else {
+                    Some(fallback.to_string())
+                }
+            })
             .ok_or_else(|| anyhow::anyhow!("provider credential refresh returned empty access token"))?;
 
         Ok(ResolvedProviderRuntime {
             access_token,
-            binding: driver.bind_runtime(provider, &refreshed_credential)?,
+            binding: driver.bind_runtime(&refreshed_provider, &refreshed_credential)?,
         })
-    }
-
-    async fn persist_provider_auth_binding(
-        &self,
-        provider: &Provider,
-        session: &AuthSession,
-        bundle: &CredentialBundle,
-    ) -> anyhow::Result<auth::ProviderAuthBinding> {
-        self.upsert_provider_auth_binding_record(UpsertProviderAuthBinding {
-            provider_id: provider.id.clone(),
-            driver_key: session.driver_key.clone(),
-            scheme: session.scheme.clone(),
-            status: AuthBindingStatus::Connected.as_str().to_string(),
-            access_token: bundle.access_token.clone(),
-            refresh_token: bundle.refresh_token.clone(),
-            expires_at: bundle.expires_at.clone(),
-            resource_url: bundle.resource_url.clone(),
-            subject_id: bundle.subject_id.clone(),
-            scopes_json: Some(serde_json::to_string(&bundle.scopes)?),
-            meta_json: Some(serde_json::to_string(&bundle.raw)?),
-            last_error: None,
-        })
-        .await
     }
 
     async fn sync_provider_runtime_fields(
@@ -2154,17 +1952,57 @@ fn parse_auth_session_bundle(session: &AuthSession) -> anyhow::Result<Credential
     serde_json::from_str(raw).context("parse auth session credential bundle")
 }
 
+fn stored_credential_from_provider(provider: &Provider, driver_key: &str) -> StoredCredential {
+    StoredCredential {
+        driver_key: driver_key.to_string(),
+        scheme: AuthScheme::OAuthAuthCodePkce.as_str().to_string(),
+        access_token: normalized_optional(provider.access_token.as_deref()),
+        refresh_token: normalized_optional(provider.refresh_token.as_deref()),
+        expires_at: normalized_optional(provider.expires_at.as_deref()),
+        resource_url: normalized_optional(Some(provider.base_url.as_str())),
+        subject_id: None,
+        scopes: Vec::new(),
+        meta: Value::Null,
+    }
+}
+
+fn stored_credential_from_bundle(
+    driver_key: &str,
+    scheme: &str,
+    bundle: &CredentialBundle,
+) -> StoredCredential {
+    StoredCredential {
+        driver_key: driver_key.to_string(),
+        scheme: scheme.to_string(),
+        access_token: normalized_optional(bundle.access_token.as_deref()),
+        refresh_token: normalized_optional(bundle.refresh_token.as_deref()),
+        expires_at: normalized_optional(bundle.expires_at.as_deref()),
+        resource_url: normalized_optional(bundle.resource_url.as_deref()),
+        subject_id: normalized_optional(bundle.subject_id.as_deref()),
+        scopes: bundle.scopes.clone(),
+        meta: bundle.raw.clone(),
+    }
+}
+
 fn build_provider_oauth_status(
     provider: &Provider,
     driver_key: &str,
-    binding: Option<&auth::ProviderAuthBinding>,
+    status_override: Option<String>,
     fallback_error: Option<String>,
 ) -> ProviderOAuthStatusData {
-    let status = binding
-        .map(|value| value.status.clone())
-        .unwrap_or_else(|| AuthBindingStatus::Disconnected.as_str().to_string());
-    let has_refresh_token = binding
-        .and_then(|value| value.refresh_token.as_deref())
+    let access_token = normalized_optional(provider.access_token.as_deref());
+    let fallback_api_key = normalized_optional(Some(provider.api_key.as_str()));
+    let has_access_token = access_token.is_some() || fallback_api_key.is_some();
+    let status = status_override.unwrap_or_else(|| {
+        if provider.effective_auth_mode().trim() == "oauth" && has_access_token {
+            AuthBindingStatus::Connected.as_str().to_string()
+        } else {
+            AuthBindingStatus::Disconnected.as_str().to_string()
+        }
+    });
+    let has_refresh_token = provider
+        .refresh_token
+        .as_deref()
         .map(str::trim)
         .is_some_and(|value| !value.is_empty());
 
@@ -2173,14 +2011,11 @@ fn build_provider_oauth_status(
         provider_name: provider.name.clone(),
         driver_key: driver_key.to_string(),
         status,
-        expires_at: binding.and_then(|value| value.expires_at.clone()),
-        resource_url: binding.and_then(|value| value.resource_url.clone()),
-        subject_id: binding.and_then(|value| value.subject_id.clone()),
-        last_error: binding
-            .and_then(|value| value.last_error.clone())
-            .filter(|value| !value.trim().is_empty())
-            .or(fallback_error),
-        updated_at: binding.map(|value| value.updated_at.clone()),
+        expires_at: normalized_optional(provider.expires_at.as_deref()),
+        resource_url: normalized_optional(Some(provider.base_url.as_str())),
+        subject_id: None,
+        last_error: fallback_error.filter(|value| !value.trim().is_empty()),
+        updated_at: Some(provider.updated_at.clone()),
         has_refresh_token,
     }
 }
@@ -2274,12 +2109,11 @@ fn now_rfc3339() -> String {
     Utc::now().to_rfc3339()
 }
 
-fn auth_session_setting_key(id: &str) -> String {
-    format!("oauth.session.{id}")
-}
-
-fn provider_auth_binding_setting_key(provider_id: &str, driver_key: &str) -> String {
-    format!("oauth.binding.{provider_id}.{driver_key}")
+fn normalized_optional(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
 }
 
 fn flatten_route_cache_columns(

@@ -325,6 +325,21 @@ function normalizeAuthMode(mode?: string | null): "api_key" | "oauth" {
   return mode.trim().toLowerCase() === "oauth" ? "oauth" : "api_key";
 }
 
+function mergeProviderOAuthStatus(provider: Provider, status: ProviderOAuthStatusData): Provider {
+  if (provider.id !== status.provider_id) return provider;
+
+  const resourceUrl = toGatewayBaseUrl(status.resource_url ?? "");
+  return {
+    ...provider,
+    base_url: resourceUrl || provider.base_url,
+    oauth_status: status.status,
+    oauth_expires_at: status.expires_at ?? null,
+    oauth_last_error: status.last_error ?? null,
+    oauth_updated_at: status.updated_at ?? null,
+    updated_at: status.updated_at ?? provider.updated_at,
+  };
+}
+
 function resolvePresetConfig(
   preset: ProviderPreset,
   protocol: ProviderProtocol,
@@ -471,11 +486,6 @@ export default function ProvidersPage() {
     () => providers.find((provider) => provider.id === editingId) ?? null,
     [providers, editingId],
   );
-  const editOAuthStatusQuery = useQuery<ProviderOAuthStatusData>({
-    queryKey: ["provider-oauth-status", editingProvider?.id],
-    queryFn: () => backend("get_provider_oauth_status", { id: editingProvider?.id }),
-    enabled: Boolean(editingProvider && normalizeAuthMode(editingProvider.auth_mode) === "oauth"),
-  });
   const isGlobalProxyEnabled = useMemo(() => {
     const normalized = (proxyEnabledSetting ?? "").trim().toLowerCase();
     return ["1", "true", "yes", "on"].includes(normalized);
@@ -511,6 +521,25 @@ export default function ProvidersPage() {
   const [editEndpointRows, setEditEndpointRows] = useState<ProtocolEndpointRow[]>([
     { protocol: "openai", base_url: "https://api.openai.com" },
   ]);
+  const isEditingOAuthProvider = Boolean(
+    editingProvider
+      && (
+        normalizeAuthMode(editingProvider.auth_mode) === "oauth"
+        || normalizeAuthMode(editForm.auth_mode) === "oauth"
+      ),
+  );
+  const editOAuthStatusQuery = useQuery<ProviderOAuthStatusData>({
+    queryKey: ["provider-oauth-status", editingProvider?.id],
+    queryFn: () => backend("get_provider_oauth_status", { id: editingProvider?.id }),
+    enabled: isEditingOAuthProvider,
+  });
+
+  function syncProviderOAuthStatus(status: ProviderOAuthStatusData) {
+    qc.setQueryData<ProviderOAuthStatusData>(["provider-oauth-status", status.provider_id], status);
+    qc.setQueryData<Provider[]>(["providers"], (current) =>
+      current?.map((provider) => mergeProviderOAuthStatus(provider, status)) ?? current,
+    );
+  }
 
   const createMut = useMutation({
     mutationFn: (input: CreateProvider) => backend<Provider>("create_provider", { input }),
@@ -541,10 +570,10 @@ export default function ProvidersPage() {
 
   const reconnectOAuthMut = useMutation({
     mutationFn: (id: string) => backend<ProviderOAuthStatusData>("reconnect_provider_oauth", { id }),
-    onSuccess: () => {
+    onSuccess: (status) => {
       setEditError(null);
-      qc.invalidateQueries({ queryKey: ["providers"] });
-      qc.invalidateQueries({ queryKey: ["provider-oauth-status", editingProvider?.id] });
+      syncProviderOAuthStatus(status);
+      qc.invalidateQueries({ queryKey: ["providers"], refetchType: "none" });
     },
     onError: (error: unknown) => {
       showErrorDialog("刷新 OAuth 凭证失败", "Failed to refresh OAuth credential", error);
@@ -553,10 +582,10 @@ export default function ProvidersPage() {
 
   const logoutOAuthMut = useMutation({
     mutationFn: (id: string) => backend<ProviderOAuthStatusData>("logout_provider_oauth", { id }),
-    onSuccess: () => {
+    onSuccess: (status) => {
       setEditError(null);
-      qc.invalidateQueries({ queryKey: ["providers"] });
-      qc.invalidateQueries({ queryKey: ["provider-oauth-status", editingProvider?.id] });
+      syncProviderOAuthStatus(status);
+      qc.invalidateQueries({ queryKey: ["providers"], refetchType: "none" });
     },
     onError: (error: unknown) => {
       showErrorDialog("断开 OAuth 失败", "Failed to disconnect OAuth", error);
@@ -1679,7 +1708,9 @@ export default function ProvidersPage() {
                 availableProtocolsForPreset(editingPreset, editingChannelValue).includes(option.value),
               );
               const editingResolvedAuthMode = presetChannelAuthMode(editingPreset, editingChannelValue);
-              const currentProviderIsOAuth = normalizeAuthMode(p.auth_mode) === "oauth";
+              const currentProviderIsOAuth =
+                normalizeAuthMode(p.auth_mode) === "oauth"
+                || normalizeAuthMode(editForm.auth_mode) === "oauth";
               const editRequiresNewOAuthProvider = editingResolvedAuthMode === "oauth" && !currentProviderIsOAuth;
               const editOAuthStatus = editOAuthStatusQuery.data;
               return (

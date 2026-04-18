@@ -274,67 +274,6 @@ pub struct UpdateAuthSession {
     pub last_error: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProviderAuthBinding {
-    pub id: String,
-    pub provider_id: String,
-    pub driver_key: String,
-    pub scheme: String,
-    pub status: String,
-    pub access_token: Option<String>,
-    pub refresh_token: Option<String>,
-    pub expires_at: Option<String>,
-    pub resource_url: Option<String>,
-    pub subject_id: Option<String>,
-    pub scopes_json: Option<String>,
-    pub meta_json: Option<String>,
-    pub last_error: Option<String>,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpsertProviderAuthBinding {
-    pub provider_id: String,
-    pub driver_key: String,
-    pub scheme: String,
-    pub status: String,
-    pub access_token: Option<String>,
-    pub refresh_token: Option<String>,
-    pub expires_at: Option<String>,
-    pub resource_url: Option<String>,
-    pub subject_id: Option<String>,
-    pub scopes_json: Option<String>,
-    pub meta_json: Option<String>,
-    pub last_error: Option<String>,
-}
-
-impl ProviderAuthBinding {
-    pub fn stored_credential(&self) -> StoredCredential {
-        let scopes = self
-            .scopes_json
-            .as_deref()
-            .and_then(|value| serde_json::from_str::<Vec<String>>(value).ok())
-            .unwrap_or_default();
-        let meta = self
-            .meta_json
-            .as_deref()
-            .and_then(|value| serde_json::from_str::<Value>(value).ok())
-            .unwrap_or(Value::Null);
-        StoredCredential {
-            driver_key: self.driver_key.clone(),
-            scheme: self.scheme.clone(),
-            access_token: self.access_token.clone(),
-            refresh_token: self.refresh_token.clone(),
-            expires_at: self.expires_at.clone(),
-            resource_url: self.resource_url.clone(),
-            subject_id: self.subject_id.clone(),
-            scopes,
-            meta,
-        }
-    }
-}
-
 #[async_trait]
 pub trait AuthDriver: Send + Sync {
     fn metadata(&self) -> AuthDriverMetadata;
