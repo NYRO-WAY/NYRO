@@ -200,6 +200,9 @@ impl Gateway {
                     if let Err(error) = gw_refresh.admin().refresh_oauth_bindings().await {
                         tracing::warn!("background oauth refresh skipped: {error}");
                     }
+                    if let Err(error) = gw_refresh.admin().cleanup_auth_sessions().await {
+                        tracing::warn!("auth session cleanup skipped: {error}");
+                    }
                 }
             });
         }

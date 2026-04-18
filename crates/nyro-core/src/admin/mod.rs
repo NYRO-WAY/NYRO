@@ -123,46 +123,38 @@ impl AdminService {
             .await?
             .ok_or_else(|| anyhow::anyhow!("auth session not found: {session_id}"))?;
 
+        if is_expired_at(session.expires_at.as_deref()) {
+            self.delete_auth_session_record(&session.id).await?;
+            return Ok(AuthSessionStatusData::Error {
+                code: "AUTH_TIMEOUT".to_string(),
+                message: "auth session expired".to_string(),
+            });
+        }
+
         match session.status.as_str() {
             "ready" => {
                 let bundle = parse_auth_session_bundle(&session)?;
                 return Ok(build_auth_session_ready_data(&session, &bundle));
             }
             "error" => {
+                let message = session
+                    .last_error
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or_else(|| "auth session failed".to_string());
+                self.delete_auth_session_record(&session.id).await?;
                 return Ok(AuthSessionStatusData::Error {
                     code: "AUTH_SESSION_ERROR".to_string(),
-                    message: session
-                        .last_error
-                        .filter(|value| !value.trim().is_empty())
-                        .unwrap_or_else(|| "auth session failed".to_string()),
+                    message,
                 });
             }
             "cancelled" => {
+                self.delete_auth_session_record(&session.id).await?;
                 return Ok(AuthSessionStatusData::Error {
                     code: "AUTH_SESSION_CANCELLED".to_string(),
                     message: "auth session cancelled".to_string(),
                 });
             }
             _ => {}
-        }
-
-        if is_expired_at(session.expires_at.as_deref()) {
-            let updated = self
-                .update_auth_session_record(
-                    &session.id,
-                    UpdateAuthSession {
-                        status: Some(AuthSessionStatus::Error.as_str().to_string()),
-                        last_error: Some("auth session expired".to_string()),
-                        ..Default::default()
-                    },
-                )
-                .await?;
-            return Ok(AuthSessionStatusData::Error {
-                code: "AUTH_TIMEOUT".to_string(),
-                message: updated
-                    .last_error
-                    .unwrap_or_else(|| "auth session expired".to_string()),
-            });
         }
 
         if session.scheme == AuthScheme::OAuthAuthCodePkce.as_str()
@@ -219,19 +211,10 @@ impl AdminService {
                 Ok(build_auth_session_ready_data(&updated, &bundle))
             }
             AuthPollState::Error { code, message } => {
-                let updated = self
-                    .update_auth_session_record(
-                        &session.id,
-                        UpdateAuthSession {
-                            status: Some(AuthSessionStatus::Error.as_str().to_string()),
-                            last_error: Some(format!("{code}: {message}")),
-                            ..Default::default()
-                        },
-                    )
-                    .await?;
+                self.delete_auth_session_record(&session.id).await?;
                 Ok(AuthSessionStatusData::Error {
                     code,
-                    message: updated.last_error.unwrap_or(message),
+                    message,
                 })
             }
         }
@@ -256,13 +239,17 @@ impl AdminService {
         {
             anyhow::bail!("auth session is not pending");
         }
+        if is_expired_at(session.expires_at.as_deref()) {
+            self.delete_auth_session_record(&session.id).await?;
+            anyhow::bail!("auth session expired");
+        }
 
         let driver = auth::build_driver(&session.driver_key).ok_or_else(|| {
             anyhow::anyhow!("auth vendor not implemented: {}", session.driver_key)
         })?;
 
         let client = self.gw.http_client_for_provider(session.use_proxy).await?;
-        let bundle = driver
+        let bundle = match driver
             .exchange(
                 &session,
                 input,
@@ -272,7 +259,14 @@ impl AdminService {
                     ..Default::default()
                 },
             )
-            .await?;
+            .await
+        {
+            Ok(bundle) => bundle,
+            Err(error) => {
+                self.delete_auth_session_record(&session.id).await?;
+                return Err(error);
+            }
+        };
         let updated = self
             .update_auth_session_record(
                 &session.id,
@@ -295,14 +289,10 @@ impl AdminService {
         mut input: CreateProvider,
     ) -> anyhow::Result<Provider> {
         let session = self
-            .get_auth_session_record(session_id)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("auth session not found: {session_id}"))?;
-        if !session
-            .status
-            .eq_ignore_ascii_case(AuthSessionStatus::Ready.as_str())
-        {
-            anyhow::bail!("auth session is not ready");
+            .take_ready_auth_session_record(session_id)
+            .await?;
+        if is_expired_at(session.expires_at.as_deref()) {
+            anyhow::bail!("auth session expired");
         }
 
         let bundle = parse_auth_session_bundle(&session)?;
@@ -318,7 +308,13 @@ impl AdminService {
         input.api_key = access_token.clone();
         input.auth_mode = "oauth".to_string();
 
-        let provider = self.create_provider(input).await?;
+        let provider = match self.create_provider(input).await {
+            Ok(provider) => provider,
+            Err(error) => {
+                self.restore_auth_session_record(session).await?;
+                return Err(error);
+            }
+        };
         let provisioned = async {
             let credential =
                 stored_credential_from_bundle(&session.driver_key, &session.scheme, &bundle);
@@ -336,11 +332,11 @@ impl AdminService {
                         cleanup_error
                     );
                 }
+                self.restore_auth_session_record(session).await?;
                 return Err(error.context("create oauth provider"));
             }
         };
 
-        self.delete_auth_session_record(session_id).await?;
         Ok(provider)
     }
 
@@ -490,14 +486,10 @@ impl AdminService {
     ) -> anyhow::Result<Provider> {
         let provider = self.get_provider(provider_id).await?;
         let session = self
-            .get_auth_session_record(session_id)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("auth session not found: {session_id}"))?;
-        if !session
-            .status
-            .eq_ignore_ascii_case(AuthSessionStatus::Ready.as_str())
-        {
-            anyhow::bail!("auth session is not ready");
+            .take_ready_auth_session_record(session_id)
+            .await?;
+        if is_expired_at(session.expires_at.as_deref()) {
+            anyhow::bail!("auth session expired");
         }
 
         let bundle = parse_auth_session_bundle(&session)?;
@@ -508,9 +500,14 @@ impl AdminService {
             .ok_or_else(|| anyhow::anyhow!("auth session missing access token"))?;
 
         let credential = stored_credential_from_bundle(&session.driver_key, &session.scheme, &bundle);
-        let provider = self.sync_provider_runtime_fields(&provider, &credential).await?;
+        let provider = match self.sync_provider_runtime_fields(&provider, &credential).await {
+            Ok(provider) => provider,
+            Err(error) => {
+                self.restore_auth_session_record(session).await?;
+                return Err(error);
+            }
+        };
 
-        self.delete_auth_session_record(session_id).await?;
         Ok(provider)
     }
 
@@ -1653,6 +1650,21 @@ impl AdminService {
         Ok(self.gw.auth_sessions.read().await.get(id).cloned())
     }
 
+    async fn take_ready_auth_session_record(&self, id: &str) -> anyhow::Result<AuthSession> {
+        let mut sessions = self.gw.auth_sessions.write().await;
+        let session = sessions
+            .remove(id)
+            .ok_or_else(|| anyhow::anyhow!("auth session not found: {id}"))?;
+        if !session
+            .status
+            .eq_ignore_ascii_case(AuthSessionStatus::Ready.as_str())
+        {
+            sessions.insert(id.to_string(), session);
+            anyhow::bail!("auth session is not ready");
+        }
+        Ok(session)
+    }
+
     async fn update_auth_session_record(
         &self,
         id: &str,
@@ -1698,6 +1710,16 @@ impl AdminService {
 
     async fn delete_auth_session_record(&self, id: &str) -> anyhow::Result<()> {
         self.gw.auth_sessions.write().await.remove(id);
+        Ok(())
+    }
+
+    async fn restore_auth_session_record(&self, mut session: AuthSession) -> anyhow::Result<()> {
+        session.updated_at = now_rfc3339();
+        self.gw
+            .auth_sessions
+            .write()
+            .await
+            .insert(session.id.clone(), session);
         Ok(())
     }
 
@@ -1919,6 +1941,16 @@ impl AdminService {
         }
 
         Ok(refreshed)
+    }
+
+    pub(crate) async fn cleanup_auth_sessions(&self) -> anyhow::Result<usize> {
+        let mut sessions = self.gw.auth_sessions.write().await;
+        let before = sessions.len();
+        sessions.retain(|_, session| {
+            let terminal = matches!(session.status.as_str(), "error" | "cancelled");
+            !terminal && !is_expired_at(session.expires_at.as_deref())
+        });
+        Ok(before.saturating_sub(sessions.len()))
     }
 
     async fn ensure_embedding_route_targets_openai(
@@ -3036,5 +3068,210 @@ fn to_models_dev_capability(vendor_key: &str, model: &ModelsDevModelEntry) -> Mo
         output_modalities,
         input_cost: model.cost.input,
         output_cost: model.cost.output,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::AuthExchangeInput;
+    use crate::config::GatewayConfig;
+    use serde_json::json;
+    use std::path::PathBuf;
+    use uuid::Uuid;
+
+    const FAR_FUTURE_RFC3339: &str = "2099-01-01T00:00:00Z";
+    const PAST_RFC3339: &str = "2000-01-01T00:00:00Z";
+    const CODEX_RUNTIME_URL: &str = "https://chatgpt.com/backend-api/codex";
+
+    #[tokio::test]
+    async fn oauth_session_is_shared_across_admin_instances_and_cancel_deletes_it() -> anyhow::Result<()> {
+        let gw = build_gateway().await?;
+
+        let init = gw.admin().init_oauth_session("codex", false).await?;
+        let status = gw.admin().get_oauth_session_status(&init.session_id).await?;
+        assert!(matches!(status, AuthSessionStatusData::Pending { .. }));
+
+        gw.admin().cancel_oauth_session(&init.session_id).await?;
+        assert!(gw.admin().get_auth_session_record(&init.session_id).await?.is_none());
+
+        let err = gw
+            .admin()
+            .get_oauth_session_status(&init.session_id)
+            .await
+            .expect_err("cancelled session should be removed");
+        assert!(err.to_string().contains("auth session not found"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn failed_complete_deletes_session() -> anyhow::Result<()> {
+        let gw = build_gateway().await?;
+
+        let init = gw.admin().init_oauth_session("codex", false).await?;
+        let err = gw
+            .admin()
+            .complete_oauth_session(
+                &init.session_id,
+                AuthExchangeInput {
+                    code: None,
+                    callback_url: Some(
+                        "https://app.example/callback?code=test-code&state=wrong-state".to_string(),
+                    ),
+                    metadata: Value::Null,
+                },
+            )
+            .await
+            .expect_err("invalid callback state should fail the exchange");
+
+        assert!(
+            err.to_string().contains("state"),
+            "unexpected complete error: {err:#}"
+        );
+        assert!(gw.admin().get_auth_session_record(&init.session_id).await?.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn timeout_and_cleanup_remove_expired_sessions() -> anyhow::Result<()> {
+        let gw = build_gateway().await?;
+
+        let timed_out = gw.admin().init_oauth_session("codex", false).await?;
+        gw.admin()
+            .update_auth_session_record(
+                &timed_out.session_id,
+                UpdateAuthSession {
+                    expires_at: Some(PAST_RFC3339.to_string()),
+                    ..Default::default()
+                },
+            )
+            .await?;
+
+        let status = gw.admin().get_oauth_session_status(&timed_out.session_id).await?;
+        assert!(matches!(
+            status,
+            AuthSessionStatusData::Error { ref code, .. } if code == "AUTH_TIMEOUT"
+        ));
+        assert!(gw.admin().get_auth_session_record(&timed_out.session_id).await?.is_none());
+
+        let stale_ready = gw.admin().init_oauth_session("codex", false).await?;
+        seed_ready_session(
+            &gw.admin(),
+            &stale_ready.session_id,
+            CredentialBundle {
+                access_token: Some("stale-access-token".to_string()),
+                refresh_token: Some("stale-refresh-token".to_string()),
+                expires_at: Some(PAST_RFC3339.to_string()),
+                resource_url: None,
+                subject_id: None,
+                scopes: vec![],
+                raw: json!({ "access_token": "stale-access-token" }),
+            },
+        )
+        .await?;
+
+        let removed = gw.admin().cleanup_auth_sessions().await?;
+        assert_eq!(removed, 1);
+        assert!(gw.admin().get_auth_session_record(&stale_ready.session_id).await?.is_none());
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn ready_session_is_single_use_and_provider_status_exposes_runtime_url() -> anyhow::Result<()> {
+        let gw = build_gateway().await?;
+
+        let init = gw.admin().init_oauth_session("codex", false).await?;
+        seed_ready_session(
+            &gw.admin(),
+            &init.session_id,
+            CredentialBundle {
+                access_token: Some("test-access-token".to_string()),
+                refresh_token: Some("test-refresh-token".to_string()),
+                expires_at: Some(FAR_FUTURE_RFC3339.to_string()),
+                resource_url: None,
+                subject_id: Some("acct_test".to_string()),
+                scopes: vec!["openid".to_string(), "offline_access".to_string()],
+                raw: json!({ "access_token": "test-access-token" }),
+            },
+        )
+        .await?;
+
+        let provider = gw
+            .admin()
+            .create_provider_with_oauth_session(&init.session_id, oauth_provider_input())
+            .await?;
+
+        assert_eq!(provider.effective_auth_mode(), "oauth");
+        assert_eq!(provider.base_url, CODEX_RUNTIME_URL);
+        assert!(gw.admin().get_auth_session_record(&init.session_id).await?.is_none());
+
+        let err = gw
+            .admin()
+            .create_provider_with_oauth_session(&init.session_id, oauth_provider_input())
+            .await
+            .expect_err("consumed ready session should not be reusable");
+        assert!(err.to_string().contains("auth session not found"));
+
+        let status = gw.admin().get_provider_oauth_status(&provider.id).await?;
+        assert_eq!(status.status, AuthBindingStatus::Connected.as_str());
+        assert_eq!(status.resource_url.as_deref(), Some(CODEX_RUNTIME_URL));
+
+        Ok(())
+    }
+
+    async fn build_gateway() -> anyhow::Result<Gateway> {
+        let mut config = GatewayConfig::default();
+        config.data_dir = test_data_dir();
+        let (gw, _log_rx) = Gateway::new(config).await?;
+        Ok(gw)
+    }
+
+    fn test_data_dir() -> PathBuf {
+        std::env::temp_dir().join(format!("nyro-oauth-admin-tests-{}", Uuid::new_v4()))
+    }
+
+    fn oauth_provider_input() -> CreateProvider {
+        CreateProvider {
+            name: format!("oauth-provider-{}", Uuid::new_v4()),
+            vendor: None,
+            protocol: "openai".to_string(),
+            base_url: "https://placeholder.invalid".to_string(),
+            default_protocol: Some("openai".to_string()),
+            protocol_endpoints: None,
+            preset_key: Some("openai".to_string()),
+            channel: Some("codex".to_string()),
+            models_source: None,
+            capabilities_source: Some("ai://models.dev/openai".to_string()),
+            static_models: None,
+            api_key: String::new(),
+            auth_mode: "oauth".to_string(),
+            access_token: None,
+            refresh_token: None,
+            expires_at: None,
+            use_proxy: false,
+        }
+    }
+
+    async fn seed_ready_session(
+        admin: &AdminService,
+        session_id: &str,
+        bundle: CredentialBundle,
+    ) -> anyhow::Result<()> {
+        admin
+            .update_auth_session_record(
+                session_id,
+                UpdateAuthSession {
+                    status: Some(AuthSessionStatus::Ready.as_str().to_string()),
+                    result_json: Some(serde_json::to_string(&bundle)?),
+                    expires_at: bundle.expires_at.clone(),
+                    last_error: Some(String::new()),
+                    ..Default::default()
+                },
+            )
+            .await?;
+        Ok(())
     }
 }
