@@ -160,6 +160,16 @@ pub struct RequestLog {
     pub is_tool_call: bool,
     pub error_message: Option<String>,
     pub response_preview: Option<String>,
+    pub method: Option<String>,
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_headers: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_body: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_headers: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response_body: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

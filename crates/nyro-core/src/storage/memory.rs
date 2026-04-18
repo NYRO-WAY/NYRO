@@ -2,8 +2,8 @@ use async_trait::async_trait;
 use tokio::sync::RwLock;
 
 use crate::db::models::{
-    CreateProvider, CreateRoute, LogPage, LogQuery, ModelStats, Provider, ProviderStats, Route,
-    StatsHourly, StatsOverview, UpdateProvider, UpdateRoute,
+    CreateProvider, CreateRoute, LogPage, LogQuery, ModelStats, Provider, ProviderStats,
+    RequestLog, Route, StatsHourly, StatsOverview, UpdateProvider, UpdateRoute,
 };
 use crate::logging::LogEntry;
 
@@ -187,6 +187,10 @@ impl LogStore for MemoryStorage {
             items: vec![],
             total: 0,
         })
+    }
+
+    async fn find_by_id(&self, _id: &str) -> anyhow::Result<Option<RequestLog>> {
+        Ok(None)
     }
 
     async fn cleanup_before(&self, _cutoff: &str) -> anyhow::Result<u64> {

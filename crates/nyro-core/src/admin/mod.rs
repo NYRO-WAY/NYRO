@@ -751,6 +751,10 @@ impl AdminService {
         self.gw.storage.logs().query(q).await
     }
 
+    pub async fn get_log(&self, id: &str) -> anyhow::Result<Option<RequestLog>> {
+        self.gw.storage.logs().find_by_id(id).await
+    }
+
     // ── Stats ──
 
     fn normalize_hours(hours: Option<i32>) -> Option<i32> {

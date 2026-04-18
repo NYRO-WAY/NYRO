@@ -75,6 +75,17 @@ export interface RequestLog {
   is_stream: boolean;
   is_tool_call: boolean;
   error_message?: string;
+  response_preview?: string;
+  method?: string;
+  path?: string;
+  request_headers?: string;
+  request_body?: string;
+  response_headers?: string;
+  response_body?: string;
+}
+
+export function getRouteType(log: Pick<RequestLog, "path">): "chat" | "embedding" {
+  return log.path === "/v1/embeddings" ? "embedding" : "chat";
 }
 
 export interface LogPage {

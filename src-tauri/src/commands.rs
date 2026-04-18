@@ -155,6 +155,11 @@ pub async fn query_logs(gw: State<'_, Gateway>, query: LogQuery) -> Result<LogPa
     gw.admin().query_logs(query).await.map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+pub async fn get_log(gw: State<'_, Gateway>, id: String) -> Result<Option<RequestLog>, String> {
+    gw.admin().get_log(&id).await.map_err(|e| e.to_string())
+}
+
 // ── Stats ──
 
 #[tauri::command]

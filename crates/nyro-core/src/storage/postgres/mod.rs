@@ -837,8 +837,9 @@ impl LogStore for PostgresLogStore {
                 r#"INSERT INTO request_logs
                     (id, api_key_id, ingress_protocol, egress_protocol, request_model, actual_model,
                      provider_name, status_code, duration_ms, input_tokens, output_tokens,
-                     is_stream, is_tool_call, error_message, response_preview)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)"#,
+                     is_stream, is_tool_call, error_message, response_preview,
+                     method, path, request_headers, request_body, response_headers, response_body)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)"#,
             )
             .bind(&id)
             .bind(&entry.api_key_id)
@@ -855,6 +856,12 @@ impl LogStore for PostgresLogStore {
             .bind(entry.is_tool_call)
             .bind(&entry.error_message)
             .bind(&entry.response_preview)
+            .bind(&entry.method)
+            .bind(&entry.path)
+            .bind(&entry.request_headers)
+            .bind(&entry.request_body)
+            .bind(&entry.response_headers)
+            .bind(&entry.response_body)
             .execute(&self.pool)
             .await?;
         }
@@ -863,8 +870,9 @@ impl LogStore for PostgresLogStore {
 
     async fn query(&self, query: LogQuery) -> anyhow::Result<LogPage> {
         let mut count_sql = String::from("SELECT COUNT(*) AS total FROM request_logs WHERE 1=1");
+        // List query skips heavy body/header columns (NULL placeholders preserve struct layout).
         let mut data_sql = String::from(
-            "SELECT id, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at, api_key_id, ingress_protocol, egress_protocol, request_model, actual_model, provider_name, status_code, duration_ms, input_tokens, output_tokens, is_stream, is_tool_call, error_message, response_preview FROM request_logs WHERE 1=1",
+            "SELECT id, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at, api_key_id, ingress_protocol, egress_protocol, request_model, actual_model, provider_name, status_code, duration_ms, input_tokens, output_tokens, is_stream, is_tool_call, error_message, response_preview, method, path, NULL::text AS request_headers, NULL::text AS request_body, NULL::text AS response_headers, NULL::text AS response_body FROM request_logs WHERE 1=1",
         );
         let mut idx = 1;
         let mut bind_values: Vec<String> = Vec::new();
@@ -913,6 +921,16 @@ impl LogStore for PostgresLogStore {
             .fetch_all(&self.pool)
             .await?;
         Ok(LogPage { items, total })
+    }
+
+    async fn find_by_id(&self, id: &str) -> anyhow::Result<Option<RequestLog>> {
+        let row = sqlx::query_as::<_, RequestLog>(
+            "SELECT id, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at, api_key_id, ingress_protocol, egress_protocol, request_model, actual_model, provider_name, status_code, duration_ms, input_tokens, output_tokens, is_stream, is_tool_call, error_message, response_preview, method, path, request_headers, request_body, response_headers, response_body FROM request_logs WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
     }
 
     async fn cleanup_before(&self, cutoff_expression: &str) -> anyhow::Result<u64> {
@@ -1402,8 +1420,21 @@ CREATE TABLE IF NOT EXISTS request_logs (
     is_stream BOOLEAN DEFAULT FALSE,
     is_tool_call BOOLEAN DEFAULT FALSE,
     error_message TEXT,
-    response_preview TEXT
+    response_preview TEXT,
+    method TEXT,
+    path TEXT,
+    request_headers TEXT,
+    request_body TEXT,
+    response_headers TEXT,
+    response_body TEXT
 );
+
+ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS method TEXT;
+ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS path TEXT;
+ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS request_headers TEXT;
+ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS request_body TEXT;
+ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS response_headers TEXT;
+ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS response_body TEXT;
 
 CREATE INDEX IF NOT EXISTS idx_logs_created_at ON request_logs(created_at);
 CREATE INDEX IF NOT EXISTS idx_logs_provider ON request_logs(provider_name);

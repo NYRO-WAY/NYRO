@@ -878,8 +878,9 @@ impl LogStore for SqliteLogStore {
                 r#"INSERT INTO request_logs
                     (id, api_key_id, ingress_protocol, egress_protocol, request_model, actual_model,
                      provider_name, status_code, duration_ms, input_tokens, output_tokens,
-                     is_stream, is_tool_call, error_message, response_preview)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+                     is_stream, is_tool_call, error_message, response_preview,
+                     method, path, request_headers, request_body, response_headers, response_body)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
             )
             .bind(&id)
             .bind(&entry.api_key_id)
@@ -896,6 +897,12 @@ impl LogStore for SqliteLogStore {
             .bind(entry.is_tool_call as i32)
             .bind(&entry.error_message)
             .bind(&entry.response_preview)
+            .bind(&entry.method)
+            .bind(&entry.path)
+            .bind(&entry.request_headers)
+            .bind(&entry.request_body)
+            .bind(&entry.response_headers)
+            .bind(&entry.response_body)
             .execute(&self.pool)
             .await?;
         }
@@ -904,8 +911,9 @@ impl LogStore for SqliteLogStore {
 
     async fn query(&self, query: LogQuery) -> anyhow::Result<LogPage> {
         let mut count_sql = String::from("SELECT COUNT(*) AS total FROM request_logs WHERE 1=1");
+        // List query skips the heavy body/header columns (NULL placeholders preserve struct layout).
         let mut data_sql = String::from(
-            "SELECT id, created_at, api_key_id, ingress_protocol, egress_protocol, request_model, actual_model, provider_name, status_code, duration_ms, input_tokens, output_tokens, is_stream, is_tool_call, error_message, response_preview FROM request_logs WHERE 1=1",
+            "SELECT id, created_at, api_key_id, ingress_protocol, egress_protocol, request_model, actual_model, provider_name, status_code, duration_ms, input_tokens, output_tokens, is_stream, is_tool_call, error_message, response_preview, method, path, NULL AS request_headers, NULL AS request_body, NULL AS response_headers, NULL AS response_body FROM request_logs WHERE 1=1",
         );
         let mut bind_values: Vec<String> = Vec::new();
         if let Some(provider) = query.provider.filter(|v| !v.is_empty()) {
@@ -943,6 +951,16 @@ impl LogStore for SqliteLogStore {
             .fetch_all(&self.pool)
             .await?;
         Ok(LogPage { items, total })
+    }
+
+    async fn find_by_id(&self, id: &str) -> anyhow::Result<Option<RequestLog>> {
+        let row = sqlx::query_as::<_, RequestLog>(
+            "SELECT id, created_at, api_key_id, ingress_protocol, egress_protocol, request_model, actual_model, provider_name, status_code, duration_ms, input_tokens, output_tokens, is_stream, is_tool_call, error_message, response_preview, method, path, request_headers, request_body, response_headers, response_body FROM request_logs WHERE id = ?",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
     }
 
     async fn cleanup_before(&self, cutoff_expression: &str) -> anyhow::Result<u64> {

@@ -58,6 +58,12 @@ pub async fn migrate(pool: &SqlitePool, vector_dimensions: usize) -> anyhow::Res
     ensure_route_column(pool, "cache_semantic_ttl", "INTEGER").await?;
     ensure_route_column(pool, "cache_semantic_threshold", "REAL").await?;
     ensure_request_log_column(pool, "api_key_id", "TEXT").await?;
+    ensure_request_log_column(pool, "method", "TEXT").await?;
+    ensure_request_log_column(pool, "path", "TEXT").await?;
+    ensure_request_log_column(pool, "request_headers", "TEXT").await?;
+    ensure_request_log_column(pool, "request_body", "TEXT").await?;
+    ensure_request_log_column(pool, "response_headers", "TEXT").await?;
+    ensure_request_log_column(pool, "response_body", "TEXT").await?;
     ensure_api_key_tables(pool).await?;
     ensure_api_key_column(pool, "rpd", "INTEGER").await?;
     // Migrate: providers/routes is_active -> is_enabled
@@ -478,7 +484,13 @@ CREATE TABLE IF NOT EXISTS request_logs (
     is_stream         INTEGER DEFAULT 0,
     is_tool_call      INTEGER DEFAULT 0,
     error_message     TEXT,
-    response_preview  TEXT
+    response_preview  TEXT,
+    method            TEXT,
+    path              TEXT,
+    request_headers   TEXT,
+    request_body      TEXT,
+    response_headers  TEXT,
+    response_body     TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_logs_created_at ON request_logs(created_at);

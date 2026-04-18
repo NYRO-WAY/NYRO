@@ -38,7 +38,7 @@ pub async fn openai_proxy(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
-    universal_proxy(gw, headers, body, Protocol::OpenAI).await
+    universal_proxy(gw, headers, body, Protocol::OpenAI, "/v1/chat/completions").await
 }
 
 // ── OpenAI Responses API ingress: POST /v1/responses ──
@@ -48,7 +48,7 @@ pub async fn responses_proxy(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
-    universal_proxy(gw, headers, body, Protocol::ResponsesAPI).await
+    universal_proxy(gw, headers, body, Protocol::ResponsesAPI, "/v1/responses").await
 }
 
 // ── OpenAI embeddings ingress: POST /v1/embeddings ──
@@ -57,6 +57,21 @@ pub async fn embeddings_proxy(
     headers: HeaderMap,
     Json(mut body): Json<Value>,
 ) -> Response {
+    const EMB_PATH: &str = "/v1/embeddings";
+    const EMB_METHOD: &str = "POST";
+    let start = Instant::now();
+    let request_headers = headers_to_json(&headers);
+    let request_body = serde_json::to_string(&body).ok();
+
+    let base_extras = |response_body: Option<String>, request_body_override: Option<String>| LogExtras {
+        method: Some(EMB_METHOD.to_string()),
+        path: Some(EMB_PATH.to_string()),
+        request_headers: request_headers.clone(),
+        request_body: request_body_override.or_else(|| request_body.clone()),
+        response_headers: None,
+        response_body,
+    };
+
     let request_model = body
         .get("model")
         .and_then(|v| v.as_str())
@@ -64,7 +79,19 @@ pub async fn embeddings_proxy(
         .filter(|v| !v.is_empty())
         .map(ToString::to_string);
     let Some(request_model) = request_model else {
-        return error_response(400, "model is required");
+        let msg = "model is required";
+        emit_log(
+            &gw, "openai", "openai", "", "",
+            None, "",
+            400, start.elapsed().as_millis() as f64,
+            TokenUsage::default(), false, false,
+            Some(msg.to_string()), None,
+            base_extras(
+                Some(serde_json::json!({ "error": { "message": msg } }).to_string()),
+                None,
+            ),
+        );
+        return error_response(400, msg);
     };
 
     let route = {
@@ -72,45 +99,92 @@ pub async fn embeddings_proxy(
         cache.match_route(&request_model).cloned()
     };
     let Some(route) = route else {
-        return error_response(404, &format!("no route for model: {request_model}"));
-    };
-    if !route.is_embedding_route() {
-        return error_response(
-            400,
-            &format!(
-                "route '{}' is type='{}', embeddings endpoint requires type='embedding'",
-                route.virtual_model,
-                route.normalized_route_type()
+        let msg = format!("no route for model: {request_model}");
+        emit_log(
+            &gw, "openai", "openai", &request_model, "",
+            None, "",
+            404, start.elapsed().as_millis() as f64,
+            TokenUsage::default(), false, false,
+            Some(msg.clone()), None,
+            base_extras(
+                Some(serde_json::json!({ "error": { "message": msg.clone() } }).to_string()),
+                None,
             ),
         );
+        return error_response(404, &msg);
+    };
+    if !route.is_embedding_route() {
+        let msg = format!(
+            "route '{}' is type='{}', embeddings endpoint requires type='embedding'",
+            route.virtual_model,
+            route.normalized_route_type()
+        );
+        emit_log(
+            &gw, "openai", "openai", &request_model, "",
+            None, "",
+            400, start.elapsed().as_millis() as f64,
+            TokenUsage::default(), false, false,
+            Some(msg.clone()), None,
+            base_extras(
+                Some(serde_json::json!({ "error": { "message": msg.clone() } }).to_string()),
+                None,
+            ),
+        );
+        return error_response(400, &msg);
     }
 
     let access_store = GatewayProxyAccessStore::new(&gw);
     let auth_key = match authorize_route_access(&access_store, &route, &headers).await {
         Ok(v) => v,
-        Err(resp) => return resp,
+        Err(resp) => {
+            let status = resp.status().as_u16() as i32;
+            emit_log(
+                &gw, "openai", "openai", &request_model, "",
+                None, "",
+                status, start.elapsed().as_millis() as f64,
+                TokenUsage::default(), false, false,
+                Some(format!("authorization failed: {status}")), None,
+                base_extras(None, None),
+            );
+            return resp;
+        }
     };
 
     let targets = load_route_targets(&gw, &route).await;
     if targets.is_empty() {
-        return error_response(503, "no route targets configured");
+        let msg = "no route targets configured";
+        emit_log(
+            &gw, "openai", "openai", &request_model, "",
+            auth_key.id.as_deref(), "",
+            503, start.elapsed().as_millis() as f64,
+            TokenUsage::default(), false, false,
+            Some(msg.to_string()), None,
+            base_extras(None, None),
+        );
+        return error_response(503, msg);
     }
     let ordered_targets = TargetSelector::select_ordered(&route.strategy, &targets);
-    let start = Instant::now();
     let mut last_error: Option<Response> = None;
+    let mut last_error_message: Option<String> = None;
+    let mut last_error_status: i32 = 502;
+    let mut last_error_body: Option<String> = None;
+    let mut last_error_provider: String = String::new();
+    let mut last_actual_model: String = request_model.clone();
     for target in ordered_targets {
         let provider = match get_provider(&access_store, &target.provider_id).await {
             Ok(p) => p,
             Err(_) => continue,
         };
         let Some(openai_base_url) = resolve_openai_base_url(&provider) else {
-            last_error = Some(error_response(
-                400,
-                &format!(
-                    "embedding route target provider '{}' does not expose an openai endpoint",
-                    provider.name
-                ),
-            ));
+            let msg = format!(
+                "embedding route target provider '{}' does not expose an openai endpoint",
+                provider.name
+            );
+            last_error_message = Some(msg.clone());
+            last_error_status = 400;
+            last_error_body = Some(serde_json::json!({ "error": { "message": msg.clone() } }).to_string());
+            last_error_provider = provider.name.clone();
+            last_error = Some(error_response(400, &msg));
             continue;
         };
         let actual_model = if target.model.is_empty() || target.model == "*" {
@@ -118,14 +192,31 @@ pub async fn embeddings_proxy(
         } else {
             target.model.clone()
         };
+        last_actual_model = actual_model.clone();
         if let Some(obj) = body.as_object_mut() {
             obj.insert("model".into(), Value::String(actual_model.clone()));
         }
+        let forwarded_body_str = serde_json::to_string(&body).ok();
         let adapter = adapter::get_adapter(&provider, Protocol::OpenAI);
         let client = match gw.http_client_for_provider(provider.use_proxy).await {
             Ok(http_client) => ProxyClient::new(http_client),
             Err(e) => {
-                last_error = Some(error_response(502, &format!("provider transport error: {e}")));
+                let msg = format!("provider transport error: {e}");
+                emit_log(
+                    &gw, "openai", "openai", &request_model, &actual_model,
+                    auth_key.id.as_deref(), &provider.name,
+                    502, start.elapsed().as_millis() as f64,
+                    TokenUsage::default(), false, false,
+                    Some(msg.clone()), None,
+                    base_extras(
+                        Some(serde_json::json!({ "error": { "message": msg.clone() } }).to_string()),
+                        forwarded_body_str.clone(),
+                    ),
+                );
+                last_error = Some(error_response(502, &msg));
+                last_error_message = Some(msg);
+                last_error_status = 502;
+                last_error_provider = provider.name.clone();
                 continue;
             }
         };
@@ -133,7 +224,7 @@ pub async fn embeddings_proxy(
             .call_non_stream(
                 adapter.as_ref(),
                 &openai_base_url,
-                "/v1/embeddings",
+                EMB_PATH,
                 &provider.api_key,
                 body.clone(),
                 reqwest::header::HeaderMap::new(),
@@ -141,6 +232,8 @@ pub async fn embeddings_proxy(
             .await;
         match call {
             Ok((payload, status)) if status < 400 => {
+                let usage = parse_embedding_usage(&payload);
+                let payload_str = serde_json::to_string(&payload).ok();
                 emit_log(
                     &gw,
                     "openai",
@@ -151,11 +244,12 @@ pub async fn embeddings_proxy(
                     &provider.name,
                     status as i32,
                     start.elapsed().as_millis() as f64,
-                    TokenUsage::default(),
+                    usage,
                     false,
                     false,
                     None,
                     None,
+                    base_extras(payload_str, forwarded_body_str),
                 );
                 return (
                     StatusCode::from_u16(status).unwrap_or(StatusCode::OK),
@@ -164,17 +258,71 @@ pub async fn embeddings_proxy(
                     .into_response();
             }
             Ok((payload, status)) => {
+                let payload_str = serde_json::to_string(&payload).ok();
+                emit_log(
+                    &gw, "openai", "openai", &request_model, &actual_model,
+                    auth_key.id.as_deref(), &provider.name,
+                    status as i32, start.elapsed().as_millis() as f64,
+                    TokenUsage::default(), false, false,
+                    Some(format!("upstream {status}")), None,
+                    base_extras(payload_str.clone(), forwarded_body_str.clone()),
+                );
+                last_error_status = status as i32;
+                last_error_message = Some(format!("upstream {status}"));
+                last_error_body = payload_str;
+                last_error_provider = provider.name.clone();
                 last_error = Some((
                     StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
                     Json(payload),
                 ).into_response());
             }
             Err(e) => {
+                let msg = format!("upstream error: {e}");
+                emit_log(
+                    &gw, "openai", "openai", &request_model, &actual_model,
+                    auth_key.id.as_deref(), &provider.name,
+                    502, start.elapsed().as_millis() as f64,
+                    TokenUsage::default(), false, false,
+                    Some(msg.clone()), None,
+                    base_extras(
+                        Some(serde_json::json!({ "error": { "message": msg.clone() } }).to_string()),
+                        forwarded_body_str.clone(),
+                    ),
+                );
+                last_error_status = 502;
+                last_error_message = Some(msg.clone());
+                last_error_body = Some(serde_json::json!({ "error": { "message": msg } }).to_string());
+                last_error_provider = provider.name.clone();
                 last_error = Some(error_response(502, &format!("upstream error: {e}")));
             }
         }
     }
-    last_error.unwrap_or_else(|| error_response(502, "all route targets failed"))
+    // Fallthrough: all targets failed.
+    if last_error.is_none() {
+        let msg = "all route targets failed";
+        emit_log(
+            &gw, "openai", "openai", &request_model, &last_actual_model,
+            auth_key.id.as_deref(), &last_error_provider,
+            last_error_status, start.elapsed().as_millis() as f64,
+            TokenUsage::default(), false, false,
+            last_error_message.or(Some(msg.to_string())), None,
+            base_extras(last_error_body, None),
+        );
+        return error_response(502, msg);
+    }
+    last_error.unwrap()
+}
+
+fn parse_embedding_usage(payload: &Value) -> TokenUsage {
+    let prompt = payload
+        .get("usage")
+        .and_then(|u| u.get("prompt_tokens"))
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    TokenUsage {
+        input_tokens: prompt.max(0) as u32,
+        output_tokens: 0,
+    }
 }
 
 // ── Anthropic ingress: POST /v1/messages ──
@@ -184,7 +332,7 @@ pub async fn anthropic_proxy(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
-    universal_proxy(gw, headers, body, Protocol::Anthropic).await
+    universal_proxy(gw, headers, body, Protocol::Anthropic, "/v1/messages").await
 }
 
 // ── Gemini ingress: POST /v1beta/models/:model_action ──
@@ -200,14 +348,56 @@ pub async fn gemini_proxy(
         None => (model_action.clone(), "generateContent".to_string()),
     };
     let is_stream = action == "streamGenerateContent";
+    let path = format!("/v1beta/models/{model_action}");
 
+    let request_headers = headers_to_json(&headers);
+    let request_body = serde_json::to_string(&body).ok();
     let decoder = GeminiDecoder;
     let internal = match decoder.decode_with_model(body, &model, is_stream) {
         Ok(r) => r,
-        Err(e) => return error_response(400, &format!("invalid Gemini request: {e}")),
+        Err(e) => {
+            emit_log(
+                &gw,
+                "gemini",
+                "gemini",
+                &model,
+                &model,
+                None,
+                "",
+                400,
+                0.0,
+                TokenUsage::default(),
+                false,
+                false,
+                Some(format!("invalid Gemini request: {e}")),
+                None,
+                LogExtras {
+                    method: Some("POST".to_string()),
+                    path: Some(path.clone()),
+                    request_headers: request_headers.clone(),
+                    request_body: request_body.clone(),
+                    response_headers: None,
+                    response_body: Some(
+                        serde_json::json!({ "error": { "message": format!("invalid Gemini request: {e}") } })
+                            .to_string(),
+                    ),
+                },
+            );
+            return error_response(400, &format!("invalid Gemini request: {e}"));
+        }
     };
 
-    proxy_pipeline(gw, headers, internal, Protocol::Gemini).await
+    proxy_pipeline(
+        gw,
+        headers,
+        internal,
+        Protocol::Gemini,
+        "POST",
+        &path,
+        request_headers,
+        request_body,
+    )
+    .await
 }
 
 // ── OpenAI models list ingress: GET /v1/models ──
@@ -264,14 +454,60 @@ pub async fn models_list(State(gw): State<Gateway>, headers: HeaderMap) -> Respo
 
 // ── Universal proxy pipeline ──
 
-async fn universal_proxy(gw: Gateway, headers: HeaderMap, body: Value, ingress: Protocol) -> Response {
+async fn universal_proxy(
+    gw: Gateway,
+    headers: HeaderMap,
+    body: Value,
+    ingress: Protocol,
+    path: &'static str,
+) -> Response {
+    let request_headers = headers_to_json(&headers);
+    let request_body = serde_json::to_string(&body).ok();
     let decoder = crate::protocol::get_decoder(ingress);
     let internal = match decoder.decode_request(body) {
         Ok(r) => r,
-        Err(e) => return error_response(400, &format!("invalid request: {e}")),
+        Err(e) => {
+            let ingress_str = ingress.to_string();
+            let error_body = serde_json::json!({ "error": { "message": format!("invalid request: {e}") } }).to_string();
+            emit_log(
+                &gw,
+                &ingress_str,
+                &ingress_str,
+                "",
+                "",
+                None,
+                "",
+                400,
+                0.0,
+                TokenUsage::default(),
+                false,
+                false,
+                Some(format!("invalid request: {e}")),
+                None,
+                LogExtras {
+                    method: Some("POST".into()),
+                    path: Some(path.to_string()),
+                    request_headers: request_headers.clone(),
+                    request_body: request_body.clone(),
+                    response_headers: None,
+                    response_body: Some(error_body),
+                },
+            );
+            return error_response(400, &format!("invalid request: {e}"));
+        }
     };
 
-    proxy_pipeline(gw, headers, internal, ingress).await
+    proxy_pipeline(
+        gw,
+        headers,
+        internal,
+        ingress,
+        "POST",
+        path,
+        request_headers,
+        request_body,
+    )
+    .await
 }
 
 async fn proxy_pipeline(
@@ -279,7 +515,13 @@ async fn proxy_pipeline(
     headers: HeaderMap,
     internal: InternalRequest,
     ingress: Protocol,
+    method: &str,
+    path: &str,
+    request_headers_str: Option<String>,
+    request_body_str: Option<String>,
 ) -> Response {
+    let method_owned = method.to_string();
+    let path_owned = path.to_string();
     let start = Instant::now();
     let request_model = internal.model.clone();
     let is_stream = internal.stream;
@@ -291,23 +533,103 @@ async fn proxy_pipeline(
     };
     let route = match route {
         Some(r) => r,
-        None => return error_response(404, &format!("no route for model: {request_model}")),
+        None => {
+            let msg = format!("no route for model: {request_model}");
+            emit_log(
+                &gw,
+                &ingress_str,
+                &ingress_str,
+                &request_model,
+                "",
+                None,
+                "",
+                404,
+                start.elapsed().as_millis() as f64,
+                TokenUsage::default(),
+                is_stream,
+                false,
+                Some(msg.clone()),
+                None,
+                LogExtras {
+                    method: Some(method_owned.clone()),
+                    path: Some(path_owned.clone()),
+                    request_headers: request_headers_str.clone(),
+                    request_body: request_body_str.clone(),
+                    response_headers: None,
+                    response_body: Some(
+                        serde_json::json!({ "error": { "message": msg.clone() } }).to_string(),
+                    ),
+                },
+            );
+            return error_response(404, &msg);
+        }
     };
     if route.is_embedding_route() {
-        return error_response(
-            400,
-            &format!(
-                "route '{}' is type='embedding', use /v1/embeddings",
-                route.virtual_model
-            ),
+        let msg = format!(
+            "route '{}' is type='embedding', use /v1/embeddings",
+            route.virtual_model
         );
+        emit_log(
+            &gw,
+            &ingress_str,
+            &ingress_str,
+            &request_model,
+            "",
+            None,
+            "",
+            400,
+            start.elapsed().as_millis() as f64,
+            TokenUsage::default(),
+            is_stream,
+            false,
+            Some(msg.clone()),
+            None,
+            LogExtras {
+                method: Some(method_owned.clone()),
+                path: Some(path_owned.clone()),
+                request_headers: request_headers_str.clone(),
+                request_body: request_body_str.clone(),
+                response_headers: None,
+                response_body: Some(
+                    serde_json::json!({ "error": { "message": msg.clone() } }).to_string(),
+                ),
+            },
+        );
+        return error_response(400, &msg);
     }
 
     let access_store = GatewayProxyAccessStore::new(&gw);
 
     let auth_key = match authorize_route_access(&access_store, &route, &headers).await {
         Ok(v) => v,
-        Err(resp) => return resp,
+        Err(resp) => {
+            let status = resp.status().as_u16() as i32;
+            emit_log(
+                &gw,
+                &ingress_str,
+                &ingress_str,
+                &request_model,
+                "",
+                None,
+                "",
+                status,
+                start.elapsed().as_millis() as f64,
+                TokenUsage::default(),
+                is_stream,
+                false,
+                Some(format!("authorization failed: {status}")),
+                None,
+                LogExtras {
+                    method: Some(method_owned.clone()),
+                    path: Some(path_owned.clone()),
+                    request_headers: request_headers_str.clone(),
+                    request_body: request_body_str.clone(),
+                    response_headers: None,
+                    response_body: None,
+                },
+            );
+            return resp;
+        }
     };
 
     let cache_config = gw.effective_cache_config().await;
@@ -356,6 +678,7 @@ async fn proxy_pipeline(
                         cache_config.exact.stream_replay_tps,
                         cache_config.exact.expose_headers,
                     );
+                    let cached_usage = cached_entry.usage.clone();
                     emit_log(
                         &gw,
                         &ingress_str,
@@ -366,11 +689,19 @@ async fn proxy_pipeline(
                         &cached_entry.provider_name,
                         cached_entry.status_code as i32,
                         start.elapsed().as_millis() as f64,
-                        cached_entry.usage,
+                        cached_usage,
                         is_stream,
                         false,
                         None,
                         None,
+                        LogExtras {
+                            method: Some(method_owned.clone()),
+                            path: Some(path_owned.clone()),
+                            request_headers: request_headers_str.clone(),
+                            request_body: request_body_str.clone(),
+                            response_headers: None,
+                            response_body: serde_json::to_string(&cached_entry.payload).ok(),
+                        },
                     );
                     return response;
                 }
@@ -398,6 +729,7 @@ async fn proxy_pipeline(
                                     cache_config.exact.stream_replay_tps,
                                     cache_config.exact.expose_headers,
                                 );
+                                let cached_usage = cached_entry.usage.clone();
                                 emit_log(
                                     &gw,
                                     &ingress_str,
@@ -408,11 +740,19 @@ async fn proxy_pipeline(
                                     &cached_entry.provider_name,
                                     cached_entry.status_code as i32,
                                     start.elapsed().as_millis() as f64,
-                                    cached_entry.usage,
+                                    cached_usage,
                                     is_stream,
                                     false,
                                     None,
                                     None,
+                                    LogExtras {
+                                        method: Some(method_owned.clone()),
+                                        path: Some(path_owned.clone()),
+                                        request_headers: request_headers_str.clone(),
+                                        request_body: request_body_str.clone(),
+                                        response_headers: None,
+                                        response_body: serde_json::to_string(&cached_entry.payload).ok(),
+                                    },
                                 );
                                 return response;
                             }
@@ -457,6 +797,7 @@ async fn proxy_pipeline(
                                 cache_config.semantic.stream_replay_tps,
                                 cache_config.semantic.expose_headers,
                             );
+                            let cached_usage = cached_entry.usage.clone();
                             emit_log(
                                 &gw,
                                 &ingress_str,
@@ -467,11 +808,19 @@ async fn proxy_pipeline(
                                 &cached_entry.provider_name,
                                 cached_entry.status_code as i32,
                                 start.elapsed().as_millis() as f64,
-                                cached_entry.usage,
+                                cached_usage,
                                 is_stream,
                                 false,
                                 None,
                                 None,
+                                LogExtras {
+                                    method: Some(method_owned.clone()),
+                                    path: Some(path_owned.clone()),
+                                    request_headers: request_headers_str.clone(),
+                                    request_body: request_body_str.clone(),
+                                    response_headers: None,
+                                    response_body: serde_json::to_string(&cached_entry.payload).ok(),
+                                },
                             );
                             return response;
                         }
@@ -500,10 +849,58 @@ async fn proxy_pipeline(
 
     let targets = load_route_targets(&gw, &route).await;
     if targets.is_empty() {
+        emit_log(
+            &gw,
+            &ingress_str,
+            &ingress_str,
+            &request_model,
+            "",
+            auth_key.id.as_deref(),
+            "",
+            503,
+            start.elapsed().as_millis() as f64,
+            TokenUsage::default(),
+            is_stream,
+            false,
+            Some("no route targets configured".to_string()),
+            None,
+            LogExtras {
+                method: Some(method_owned.clone()),
+                path: Some(path_owned.clone()),
+                request_headers: request_headers_str.clone(),
+                request_body: request_body_str.clone(),
+                response_headers: None,
+                response_body: None,
+            },
+        );
         return error_response(503, "no route targets configured");
     }
     let ordered_targets = TargetSelector::select_ordered(&route.strategy, &targets);
     if ordered_targets.is_empty() {
+        emit_log(
+            &gw,
+            &ingress_str,
+            &ingress_str,
+            &request_model,
+            "",
+            auth_key.id.as_deref(),
+            "",
+            503,
+            start.elapsed().as_millis() as f64,
+            TokenUsage::default(),
+            is_stream,
+            false,
+            Some("no route targets configured".to_string()),
+            None,
+            LogExtras {
+                method: Some(method_owned.clone()),
+                path: Some(path_owned.clone()),
+                request_headers: request_headers_str.clone(),
+                request_body: request_body_str.clone(),
+                response_headers: None,
+                response_body: None,
+            },
+        );
         return error_response(503, "no route targets configured");
     }
 
@@ -601,6 +998,10 @@ async fn proxy_pipeline(
                 singleflight_leader.as_ref().map(|(k, _)| k.as_str()),
                 singleflight_leader.as_ref().map(|(_, tx)| tx.clone()),
                 miss_expose_headers,
+                &method_owned,
+                &path_owned,
+                request_headers_str.clone(),
+                request_body_str.clone(),
             )
             .await
         } else {
@@ -627,6 +1028,10 @@ async fn proxy_pipeline(
                 Some(exact_ttl),
                 semantic_write_ctx.clone(),
                 miss_expose_headers,
+                &method_owned,
+                &path_owned,
+                request_headers_str.clone(),
+                request_body_str.clone(),
             )
             .await
         };
@@ -649,7 +1054,33 @@ async fn proxy_pipeline(
     }
 
     finalize_singleflight(&gw, singleflight_leader.as_ref(), false).await;
-    last_response.unwrap_or_else(|| error_response(502, "all route targets failed"))
+    last_response.unwrap_or_else(|| {
+        emit_log(
+            &gw,
+            &ingress_str,
+            &ingress_str,
+            &request_model,
+            "",
+            auth_key.id.as_deref(),
+            "",
+            502,
+            start.elapsed().as_millis() as f64,
+            TokenUsage::default(),
+            is_stream,
+            false,
+            Some("all route targets failed".to_string()),
+            None,
+            LogExtras {
+                method: Some(method_owned.clone()),
+                path: Some(path_owned.clone()),
+                request_headers: request_headers_str.clone(),
+                request_body: request_body_str.clone(),
+                response_headers: None,
+                response_body: None,
+            },
+        );
+        error_response(502, "all route targets failed")
+    })
 }
 
 
@@ -677,8 +1108,20 @@ async fn handle_non_stream(
     exact_cache_ttl: Option<Duration>,
     semantic_write_ctx: Option<SemanticWriteContext>,
     expose_headers: bool,
+    ingress_method: &str,
+    ingress_path: &str,
+    request_headers_str: Option<String>,
+    request_body_str: Option<String>,
 ) -> Response {
     let credential_to_use = credential.to_string();
+    let make_extras = |response_body: Option<String>| LogExtras {
+        method: Some(ingress_method.to_string()),
+        path: Some(ingress_path.to_string()),
+        request_headers: request_headers_str.clone(),
+        request_body: request_body_str.clone(),
+        response_headers: None,
+        response_body,
+    };
     let call_result = match client
         .call_non_stream(
             adapter,
@@ -698,6 +1141,9 @@ async fn handle_non_stream(
                 &provider.name, 502, start.elapsed().as_millis() as f64,
                 TokenUsage::default(), false, false,
                 Some(e.to_string()), None,
+                make_extras(Some(
+                    serde_json::json!({ "error": { "message": format!("upstream error: {e}") } }).to_string(),
+                )),
             );
             return error_response(502, &format!("upstream error: {e}"));
         }
@@ -706,13 +1152,15 @@ async fn handle_non_stream(
     let (resp, status) = call_result;
 
     if status >= 400 {
-        let preview = serde_json::to_string(&resp).ok().map(|s| s.chars().take(500).collect());
+        let body_str = serde_json::to_string(&resp).ok();
+        let preview = body_str.as_ref().map(|s| s.chars().take(500).collect());
         emit_log(
             &gw, ingress_str, egress_str, request_model, actual_model,
             api_key_id,
             &provider.name, status as i32, start.elapsed().as_millis() as f64,
             TokenUsage::default(), false, false,
-            preview.clone(), None,
+            preview, None,
+            make_extras(body_str),
         );
         return (
             StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
@@ -726,7 +1174,19 @@ async fn handle_non_stream(
 
     let mut internal_resp = match parser.parse_response(resp) {
         Ok(r) => r,
-        Err(e) => return error_response(500, &format!("parse error: {e}")),
+        Err(e) => {
+            emit_log(
+                &gw, ingress_str, egress_str, request_model, actual_model,
+                api_key_id,
+                &provider.name, 500, start.elapsed().as_millis() as f64,
+                TokenUsage::default(), false, false,
+                Some(format!("parse error: {e}")), None,
+                make_extras(Some(
+                    serde_json::json!({ "error": { "message": format!("parse error: {e}") } }).to_string(),
+                )),
+            );
+            return error_response(500, &format!("parse error: {e}"));
+        }
     };
     crate::protocol::semantic::reasoning::normalize_response_reasoning(&mut internal_resp);
     crate::protocol::semantic::response_items::populate_response_items(&mut internal_resp);
@@ -735,8 +1195,9 @@ async fn handle_non_stream(
     let usage = internal_resp.usage.clone();
     let output = formatter.format_response(&internal_resp);
 
-    let response_preview = serde_json::to_string(&output)
-        .ok()
+    let response_body_full = serde_json::to_string(&output).ok();
+    let response_preview = response_body_full
+        .as_ref()
         .map(|s| s.chars().take(500).collect());
 
     emit_log(
@@ -744,6 +1205,7 @@ async fn handle_non_stream(
         api_key_id,
         &provider.name, status as i32, start.elapsed().as_millis() as f64,
         usage.clone(), false, is_tool, None, response_preview,
+        make_extras(response_body_full),
     );
 
     let mut response = (
@@ -819,8 +1281,26 @@ async fn handle_stream(
     singleflight_key: Option<&str>,
     singleflight_tx: Option<broadcast::Sender<Vec<u8>>>,
     expose_headers: bool,
+    ingress_method: &str,
+    ingress_path: &str,
+    request_headers_str: Option<String>,
+    request_body_str: Option<String>,
 ) -> Response {
     let credential_to_use = credential.to_string();
+    let make_extras_owned = {
+        let method = ingress_method.to_string();
+        let path_s = ingress_path.to_string();
+        let rh = request_headers_str.clone();
+        let rb = request_body_str.clone();
+        move |response_body: Option<String>| LogExtras {
+            method: Some(method.clone()),
+            path: Some(path_s.clone()),
+            request_headers: rh.clone(),
+            request_body: rb.clone(),
+            response_headers: None,
+            response_body,
+        }
+    };
     let call_result = match client
         .call_stream(
             adapter,
@@ -840,6 +1320,9 @@ async fn handle_stream(
                 &provider.name, 502, start.elapsed().as_millis() as f64,
                 TokenUsage::default(), true, false,
                 Some(e.to_string()), None,
+                make_extras_owned(Some(
+                    serde_json::json!({ "error": { "message": format!("upstream error: {e}") } }).to_string(),
+                )),
             );
             return error_response(502, &format!("upstream error: {e}"));
         }
@@ -852,12 +1335,14 @@ async fn handle_stream(
             .json()
             .await
             .unwrap_or_else(|_| serde_json::json!({"error": {"message": "upstream error"}}));
+        let err_body_str = serde_json::to_string(&err_body).ok();
         emit_log(
             &gw, ingress_str, egress_str, request_model, actual_model,
             api_key_id,
             &provider.name, status as i32, start.elapsed().as_millis() as f64,
             TokenUsage::default(), true, false,
             Some(err_body.to_string()), None,
+            make_extras_owned(err_body_str),
         );
         return (
             StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
@@ -884,6 +1369,10 @@ async fn handle_stream(
     let leader_tx_owned = singleflight_tx.clone();
     let exact_cache_ttl_owned = exact_cache_ttl;
     let semantic_write_ctx_owned = semantic_write_ctx.clone();
+    let ingress_method_owned = ingress_method.to_string();
+    let ingress_path_owned = ingress_path.to_string();
+    let request_headers_owned = request_headers_str.clone();
+    let request_body_owned = request_body_str.clone();
 
     tokio::spawn(async move {
         let mut accumulator = StreamResponseAccumulator::default();
@@ -932,11 +1421,24 @@ async fn handle_stream(
             internal.stop_reason = Some("stop".to_string());
         }
 
+        // For streaming responses, aggregate the final internal response and render
+        // an equivalent non-streaming JSON for response_body logging.
+        let aggregated_formatter = crate::protocol::get_response_formatter(ingress);
+        let aggregated_output = aggregated_formatter.format_response(&internal);
+        let aggregated_body_str = serde_json::to_string(&aggregated_output).ok();
         emit_log(
             &gw_log, &ingress_s, &egress_s, &req_model, &act_model,
             key_id.as_deref(),
             &provider_name, 200, start.elapsed().as_millis() as f64,
             internal.usage.clone(), true, !internal.tool_calls.is_empty(), None, None,
+            LogExtras {
+                method: Some(ingress_method_owned.clone()),
+                path: Some(ingress_path_owned.clone()),
+                request_headers: request_headers_owned.clone(),
+                request_body: request_body_owned.clone(),
+                response_headers: None,
+                response_body: aggregated_body_str,
+            },
         );
 
         let mut singleflight_payload: Option<Vec<u8>> = None;
@@ -1786,6 +2288,17 @@ async fn resolve_provider_credential(gw: &Gateway, provider: &Provider) -> anyho
     Ok(provider.api_key.clone())
 }
 
+#[derive(Default, Clone)]
+pub(crate) struct LogExtras {
+    pub method: Option<String>,
+    pub path: Option<String>,
+    pub request_headers: Option<String>,
+    pub request_body: Option<String>,
+    pub response_headers: Option<String>,
+    pub response_body: Option<String>,
+}
+
+#[allow(clippy::too_many_arguments)]
 fn emit_log(
     gw: &Gateway,
     ingress: &str,
@@ -1801,6 +2314,7 @@ fn emit_log(
     is_tool_call: bool,
     error_message: Option<String>,
     response_preview: Option<String>,
+    extras: LogExtras,
 ) {
     let _ = gw.log_tx.try_send(LogEntry {
         api_key_id: api_key_id.map(ToString::to_string),
@@ -1816,5 +2330,32 @@ fn emit_log(
         is_tool_call,
         error_message,
         response_preview,
+        method: extras.method,
+        path: extras.path,
+        request_headers: extras.request_headers,
+        request_body: extras.request_body,
+        response_headers: extras.response_headers,
+        response_body: extras.response_body,
     });
+}
+
+/// Serialize an axum HeaderMap to a flat JSON object string.
+fn headers_to_json(headers: &HeaderMap) -> Option<String> {
+    let mut map = serde_json::Map::with_capacity(headers.len());
+    for (name, value) in headers.iter() {
+        let val = value
+            .to_str()
+            .map(|s| Value::String(s.to_string()))
+            .unwrap_or_else(|_| Value::String(format!("0x{}", hex_encode(value.as_bytes()))));
+        map.insert(name.as_str().to_ascii_lowercase(), val);
+    }
+    serde_json::to_string(&Value::Object(map)).ok()
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push_str(&format!("{b:02x}"));
+    }
+    s
 }

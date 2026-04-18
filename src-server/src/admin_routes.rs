@@ -64,6 +64,7 @@ pub fn create_router(gateway: Gateway, admin_token: Option<String>) -> Router {
         .route("/api-keys", get(list_api_keys_handler).post(create_api_key_handler))
         .route("/api-keys/:id", api_keys_item)
         .route("/logs", get(query_logs_handler))
+        .route("/logs/:id", get(get_log_handler))
         .route("/stats/overview", get(stats_overview))
         .route("/stats/hourly", get(stats_hourly))
         .route("/stats/models", get(stats_by_model))
@@ -293,6 +294,17 @@ struct LogQueryParams {
     model: Option<String>,
     status_min: Option<i32>,
     status_max: Option<i32>,
+}
+
+async fn get_log_handler(
+    State(gw): State<Gateway>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> impl IntoResponse {
+    match gw.admin().get_log(&id).await {
+        Ok(Some(v)) => Json(serde_json::json!({ "data": v })).into_response(),
+        Ok(None) => (axum::http::StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "not found" }))).into_response(),
+        Err(e) => err(e),
+    }
 }
 
 async fn query_logs_handler(
