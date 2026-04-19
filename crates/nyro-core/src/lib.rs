@@ -197,7 +197,7 @@ impl Gateway {
                 let mut interval = tokio::time::interval(Duration::from_secs(120));
                 loop {
                     interval.tick().await;
-                    if let Err(error) = gw_refresh.admin().refresh_oauth_bindings().await {
+                    if let Err(error) = gw_refresh.admin().refresh_oauth_providers().await {
                         tracing::warn!("background oauth refresh skipped: {error}");
                     }
                     if let Err(error) = gw_refresh.admin().cleanup_auth_sessions().await {

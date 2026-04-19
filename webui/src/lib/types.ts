@@ -9,7 +9,7 @@ export interface Provider {
   api_key?: string;
   use_proxy: boolean;
   auth_mode?: "api_key" | "oauth";
-  oauth_status?: ProviderOAuthBindingStatus;
+  oauth_status?: ProviderOAuthStatus;
   oauth_expires_at?: string | null;
   oauth_last_error?: string | null;
   oauth_updated_at?: string | null;
@@ -382,7 +382,7 @@ export type OAuthSessionStatusData =
       message: string;
     };
 
-export type ProviderOAuthBindingStatus =
+export type ProviderOAuthStatus =
   | "not_connected"
   | "pending"
   | "connected"
@@ -395,7 +395,7 @@ export interface ProviderOAuthStatusData {
   provider_id: string;
   provider_name: string;
   driver_key: string;
-  status: ProviderOAuthBindingStatus;
+  status: ProviderOAuthStatus;
   expires_at?: string | null;
   resource_url?: string | null;
   subject_id?: string | null;
