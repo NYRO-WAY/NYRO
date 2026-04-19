@@ -461,7 +461,7 @@ impl AdminService {
             .update(
                 &provider.id,
                 UpdateProvider {
-                    auth_mode: Some("api_key".to_string()),
+                    auth_mode: Some("oauth".to_string()),
                     api_key: Some(String::new()),
                     access_token: Some(String::new()),
                     refresh_token: Some(String::new()),
@@ -3236,6 +3236,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn logout_provider_oauth_preserves_oauth_mode_and_disconnects_binding() -> anyhow::Result<()> {
+        let gw = build_gateway().await?;
+
+        let init = gw.admin().init_oauth_session("codex", false).await?;
+        seed_ready_session(
+            &gw.admin(),
+            &init.session_id,
+            CredentialBundle {
+                access_token: Some("test-access-token".to_string()),
+                refresh_token: Some("test-refresh-token".to_string()),
+                expires_at: Some(FAR_FUTURE_RFC3339.to_string()),
+                resource_url: None,
+                subject_id: Some("acct_test".to_string()),
+                scopes: vec!["openid".to_string(), "offline_access".to_string()],
+                raw: json!({ "access_token": "test-access-token" }),
+            },
+        )
+        .await?;
+
+        let provider = gw
+            .admin()
+            .create_provider_with_oauth_session(&init.session_id, oauth_provider_input())
+            .await?;
+
+        let status = gw.admin().logout_provider_oauth(&provider.id).await?;
+        assert_eq!(status.status, AuthBindingStatus::Disconnected.as_str());
+
+        let updated = gw.admin().get_provider(&provider.id).await?;
+        assert_eq!(updated.effective_auth_mode(), "oauth");
+        assert!(updated.access_token.as_deref().unwrap_or("").is_empty());
+        assert!(updated.refresh_token.as_deref().unwrap_or("").is_empty());
+        assert!(updated.expires_at.as_deref().unwrap_or("").is_empty());
+
+        let runtime_err = match gw.admin().resolve_provider_runtime(&updated).await {
+            Ok(_) => anyhow::bail!("logged out oauth provider should not resolve runtime credentials"),
+            Err(err) => err,
+        };
+        assert!(runtime_err.to_string().contains("provider credential is empty"));
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn ready_session_is_single_use_and_provider_status_exposes_runtime_url() -> anyhow::Result<()> {
         let gw = build_gateway().await?;
 
@@ -3277,6 +3320,7 @@ mod tests {
 
         Ok(())
     }
+
 
     async fn build_gateway() -> anyhow::Result<Gateway> {
         let mut config = GatewayConfig::default();
