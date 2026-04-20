@@ -8,7 +8,7 @@ export interface Provider {
   protocol_endpoints: string;
   api_key?: string;
   use_proxy: boolean;
-  auth_mode?: "api_key" | "oauth";
+  auth_mode?: "apikey" | "oauth";
   oauth_status?: ProviderOAuthStatus;
   oauth_expires_at?: string | null;
   oauth_last_error?: string | null;
@@ -165,7 +165,7 @@ export interface ProviderChannelPreset {
     zh: string;
     en: string;
   };
-  auth_mode?: "api_key" | "oauth";
+  authMode?: "apikey" | "oauth";
   baseUrls: Partial<Record<ProviderProtocol, string>>;
   modelsSource?: string;
   capabilitiesSource?: string;
@@ -193,7 +193,7 @@ export interface CreateProvider {
   default_protocol?: string;
   protocol_endpoints?: string;
   use_proxy?: boolean;
-  auth_mode?: "api_key" | "oauth";
+  auth_mode?: "apikey" | "oauth";
   preset_key?: string;
   channel?: string;
   models_source?: string;
@@ -210,7 +210,7 @@ export interface UpdateProvider {
   default_protocol?: string;
   protocol_endpoints?: string;
   use_proxy?: boolean;
-  auth_mode?: "api_key" | "oauth";
+  auth_mode?: "apikey" | "oauth";
   preset_key?: string;
   channel?: string;
   models_source?: string;

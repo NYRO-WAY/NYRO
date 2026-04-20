@@ -7,11 +7,11 @@ use sqlx::FromRow;
 const PROVIDER_PRESETS_SNAPSHOT: &str = include_str!("../../assets/providers.json");
 
 pub fn default_provider_auth_mode() -> String {
-    "api_key".to_string()
+    "apikey".to_string()
 }
 
 pub fn is_valid_provider_auth_mode(value: &str) -> bool {
-    matches!(value.trim(), "api_key" | "oauth")
+    matches!(value.trim(), "apikey" | "oauth")
 }
 
 fn resolve_preset_channel_auth_mode(preset_key: Option<&str>, channel_id: Option<&str>) -> Option<String> {
@@ -33,9 +33,9 @@ fn resolve_preset_channel_auth_mode(preset_key: Option<&str>, channel_id: Option
         .or_else(|| channels.iter().find(|item| item.get("id").and_then(Value::as_str) == Some("default")))?;
     Some(
         channel
-            .get("auth_mode")
+            .get("authMode")
             .and_then(Value::as_str)
-            .unwrap_or("api_key")
+            .unwrap_or("apikey")
             .trim()
             .to_string(),
     )

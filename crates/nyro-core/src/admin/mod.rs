@@ -38,7 +38,7 @@ struct ProviderPresetSnapshot {
 #[derive(Debug, Deserialize)]
 struct ProviderChannelPresetSnapshot {
     id: String,
-    #[serde(default = "default_provider_auth_mode")]
+    #[serde(default = "default_provider_auth_mode", rename = "authMode")]
     auth_mode: String,
 }
 
@@ -2419,7 +2419,7 @@ fn resolve_provider_credential(provider: &Provider) -> anyhow::Result<String> {
     let effective_auth_mode = provider.effective_auth_mode();
     let auth_mode = effective_auth_mode.trim();
     let credential = match auth_mode {
-        "api_key" | "" => provider.api_key.trim(),
+        "apikey" | "" => provider.api_key.trim(),
         "oauth" => provider
             .access_token
             .as_deref()
@@ -2437,7 +2437,7 @@ fn resolve_provider_credential(provider: &Provider) -> anyhow::Result<String> {
         anyhow::bail!(
             "provider credential is empty for auth_mode={} ({source})",
             if auth_mode.is_empty() {
-                "api_key"
+                "apikey"
             } else {
                 auth_mode
             }
@@ -2756,7 +2756,7 @@ fn parse_provider_presets_snapshot() -> anyhow::Result<Vec<Value>> {
                     for channel in channels {
                         if let Some(channel_obj) = channel.as_object_mut() {
                             channel_obj
-                                .entry("auth_mode".to_string())
+                                .entry("authMode".to_string())
                                 .or_insert_with(|| Value::String(default_provider_auth_mode()));
                         }
                     }

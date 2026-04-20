@@ -341,7 +341,7 @@ pub fn build_providers(yaml: &YamlConfig) -> Vec<Provider> {
                 capabilities_source: yp.capabilities_source.clone(),
                 static_models: yp.static_models.as_ref().map(|v| v.join("\n")),
                 api_key: yp.api_key.clone(),
-                auth_mode: "api_key".to_string(),
+                auth_mode: "apikey".to_string(),
                 access_token: None,
                 refresh_token: None,
                 expires_at: None,

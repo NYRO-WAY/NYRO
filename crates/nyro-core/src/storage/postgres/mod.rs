@@ -1117,7 +1117,7 @@ impl StorageBootstrap for PostgresBootstrap {
         sqlx::query("ALTER TABLE providers ADD COLUMN IF NOT EXISTS use_proxy BOOLEAN NOT NULL DEFAULT FALSE")
             .execute(self.adapter.pool())
             .await?;
-        sqlx::query("ALTER TABLE providers ADD COLUMN IF NOT EXISTS auth_mode TEXT NOT NULL DEFAULT 'api_key'")
+        sqlx::query("ALTER TABLE providers ADD COLUMN IF NOT EXISTS auth_mode TEXT NOT NULL DEFAULT 'apikey'")
             .execute(self.adapter.pool())
             .await?;
         sqlx::query("ALTER TABLE providers ADD COLUMN IF NOT EXISTS access_token TEXT")
@@ -1127,6 +1127,12 @@ impl StorageBootstrap for PostgresBootstrap {
             .execute(self.adapter.pool())
             .await?;
         sqlx::query("ALTER TABLE providers ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ")
+            .execute(self.adapter.pool())
+            .await?;
+        sqlx::query("ALTER TABLE providers DROP CONSTRAINT IF EXISTS providers_auth_mode_check")
+            .execute(self.adapter.pool())
+            .await?;
+        sqlx::query("UPDATE providers SET auth_mode = 'apikey' WHERE auth_mode = 'api_key'")
             .execute(self.adapter.pool())
             .await?;
         sqlx::query(
@@ -1139,7 +1145,7 @@ BEGIN
     ) THEN
         ALTER TABLE providers
         ADD CONSTRAINT providers_auth_mode_check
-        CHECK (auth_mode IN ('api_key', 'oauth'));
+        CHECK (auth_mode IN ('apikey', 'oauth'));
     END IF;
 END $$;"#,
         )
@@ -1297,7 +1303,7 @@ fn is_pg_permission_error(error: &anyhow::Error) -> bool {
 
 fn provider_select(suffix: Option<&str>) -> String {
     let mut sql = String::from(
-        "SELECT id, name, vendor, protocol, base_url, COALESCE(default_protocol, protocol) AS default_protocol, COALESCE(protocol_endpoints, '{}') AS protocol_endpoints, preset_key, channel, models_source, capabilities_source, static_models, api_key, COALESCE(auth_mode, 'api_key') AS auth_mode, access_token, refresh_token, to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS expires_at, COALESCE(use_proxy, FALSE) AS use_proxy, last_test_success, to_char(last_test_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS last_test_at, COALESCE(is_enabled, TRUE) AS is_enabled, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS updated_at FROM providers",
+        "SELECT id, name, vendor, protocol, base_url, COALESCE(default_protocol, protocol) AS default_protocol, COALESCE(protocol_endpoints, '{}') AS protocol_endpoints, preset_key, channel, models_source, capabilities_source, static_models, api_key, COALESCE(auth_mode, 'apikey') AS auth_mode, access_token, refresh_token, to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS expires_at, COALESCE(use_proxy, FALSE) AS use_proxy, last_test_success, to_char(last_test_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS last_test_at, COALESCE(is_enabled, TRUE) AS is_enabled, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS updated_at FROM providers",
     );
     if let Some(suffix) = suffix {
         sql.push(' ');
@@ -1413,7 +1419,7 @@ CREATE TABLE IF NOT EXISTS providers (
     capabilities_source TEXT,
     static_models TEXT,
     api_key TEXT NOT NULL,
-    auth_mode TEXT NOT NULL DEFAULT 'api_key' CHECK (auth_mode IN ('api_key', 'oauth')),
+    auth_mode TEXT NOT NULL DEFAULT 'apikey' CHECK (auth_mode IN ('apikey', 'oauth')),
     access_token TEXT,
     refresh_token TEXT,
     expires_at TIMESTAMPTZ,

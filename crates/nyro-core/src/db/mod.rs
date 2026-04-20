@@ -76,7 +76,10 @@ pub async fn migrate(pool: &SqlitePool, vector_dimensions: usize) -> anyhow::Res
     migrate_api_key_status_to_is_enabled(pool).await?;
     ensure_route_targets_table(pool).await?;
     ensure_cache_entries_table(pool).await?;
-    ensure_provider_column(pool, "auth_mode", "TEXT NOT NULL DEFAULT 'api_key'").await?;
+    ensure_provider_column(pool, "auth_mode", "TEXT NOT NULL DEFAULT 'apikey'").await?;
+    sqlx::query("UPDATE providers SET auth_mode = 'apikey' WHERE auth_mode = 'api_key'")
+        .execute(pool)
+        .await?;
     ensure_provider_column(pool, "access_token", "TEXT").await?;
     ensure_provider_column(pool, "refresh_token", "TEXT").await?;
     ensure_provider_column(pool, "expires_at", "TEXT").await?;
@@ -434,7 +437,7 @@ CREATE TABLE IF NOT EXISTS providers (
     capabilities_source TEXT,
     static_models TEXT,
     api_key     TEXT NOT NULL,
-    auth_mode   TEXT NOT NULL DEFAULT 'api_key' CHECK (auth_mode IN ('api_key', 'oauth')),
+    auth_mode   TEXT NOT NULL DEFAULT 'apikey' CHECK (auth_mode IN ('apikey', 'oauth')),
     access_token TEXT,
     refresh_token TEXT,
     expires_at  TEXT,
