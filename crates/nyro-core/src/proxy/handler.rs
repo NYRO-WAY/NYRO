@@ -11,6 +11,7 @@ use axum::response::{IntoResponse, Response};
 use axum::Json;
 use futures::StreamExt;
 use dashmap::mapref::entry::Entry as DashEntry;
+use reqwest::header::{HeaderMap as ReqwestHeaderMap, HeaderValue as ReqwestHeaderValue};
 use serde_json::Value;
 use tokio::sync::broadcast;
 use tokio::time::{Duration, timeout};
@@ -175,7 +176,24 @@ pub async fn embeddings_proxy(
             Ok(p) => p,
             Err(_) => continue,
         };
-        let Some(openai_base_url) = resolve_openai_base_url(&provider) else {
+        let provider_runtime = match gw.admin().resolve_provider_runtime(&provider).await {
+            Ok(runtime) => runtime,
+            Err(e) => {
+                let msg = format!("provider credential error: {e}");
+                last_error_message = Some(msg.clone());
+                last_error_status = 502;
+                last_error_provider = provider.name.clone();
+                last_error = Some(error_response(502, &msg));
+                continue;
+            }
+        };
+        let openai_base_url = provider_runtime
+            .binding
+            .base_url_override
+            .clone()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| resolve_openai_base_url(&provider));
+        let Some(openai_base_url) = openai_base_url else {
             let msg = format!(
                 "embedding route target provider '{}' does not expose an openai endpoint",
                 provider.name
@@ -198,6 +216,7 @@ pub async fn embeddings_proxy(
         }
         let forwarded_body_str = serde_json::to_string(&body).ok();
         let adapter = adapter::get_adapter(&provider, Protocol::OpenAI);
+        let credential = provider_runtime.access_token.clone();
         let client = match gw.http_client_for_provider(provider.use_proxy).await {
             Ok(http_client) => ProxyClient::new(http_client),
             Err(e) => {
@@ -225,9 +244,15 @@ pub async fn embeddings_proxy(
                 adapter.as_ref(),
                 &openai_base_url,
                 EMB_PATH,
-                &provider.api_key,
+                &credential,
                 body.clone(),
-                reqwest::header::HeaderMap::new(),
+                match runtime_binding_headers(&provider_runtime.binding) {
+                    Ok(headers) => headers,
+                    Err(e) => {
+                        last_error = Some(error_response(502, &format!("provider runtime binding error: {e}")));
+                        continue;
+                    }
+                },
             )
             .await;
         match call {
@@ -926,10 +951,24 @@ async fn proxy_pipeline(
             &mut internal_for_target,
         );
 
+        let provider_runtime = match gw.admin().resolve_provider_runtime(&provider).await {
+            Ok(runtime) => runtime,
+            Err(e) => {
+                last_response = Some(error_response(502, &format!("provider credential error: {e}")));
+                continue;
+            }
+        };
         let provider_protocols = ProviderProtocols::from_provider(&provider);
         let resolved = provider_protocols.resolve_egress(ingress);
         let egress = resolved.protocol;
-        let egress_base_url = if resolved.base_url.is_empty() {
+        let egress_base_url = if let Some(base_url_override) = provider_runtime
+            .binding
+            .base_url_override
+            .clone()
+            .filter(|value| !value.trim().is_empty())
+        {
+            base_url_override
+        } else if resolved.base_url.is_empty() {
             provider.base_url.clone()
         } else {
             resolved.base_url
@@ -951,13 +990,7 @@ async fn proxy_pipeline(
         
         let egress_body = override_model(egress_body, &actual_model, egress);
         let egress_path = encoder.egress_path(&actual_model, is_stream);
-        let credential = match resolve_provider_credential(&gw, &provider).await {
-            Ok(value) => value,
-            Err(e) => {
-                last_response = Some(error_response(502, &format!("provider credential error: {e}")));
-                continue;
-            }
-        };
+        let credential = provider_runtime.access_token.clone();
         let client = match gw.http_client_for_provider(provider.use_proxy).await {
             Ok(http_client) => ProxyClient::new(http_client),
             Err(e) => {
@@ -966,12 +999,19 @@ async fn proxy_pipeline(
                 continue;
             }
         };
-        let mut forward_headers = adapter.auth_headers(&credential);
-        forward_headers.extend(extra_headers.clone());
+        let mut request_headers = match runtime_binding_headers(&provider_runtime.binding) {
+            Ok(headers) => headers,
+            Err(e) => {
+                last_response = Some(error_response(502, &format!("provider runtime binding error: {e}")));
+                continue;
+            }
+        };
+        request_headers.extend(extra_headers.clone());
         let egress_str = egress.to_string();
 
         let miss_expose_headers =
             cache_config.exact.expose_headers || cache_config.semantic.expose_headers;
+        let upstream_forces_stream = matches!(egress, Protocol::ResponsesAPI);
         let response = if is_stream {
             handle_stream(
                 gw.clone(),
@@ -984,7 +1024,7 @@ async fn proxy_pipeline(
                 &egress_path,
                 &credential,
                 egress_body,
-                extra_headers,
+                request_headers.clone(),
                 &ingress_str,
                 &egress_str,
                 &request_model,
@@ -1004,6 +1044,32 @@ async fn proxy_pipeline(
                 request_body_str.clone(),
             )
             .await
+        } else if upstream_forces_stream {
+            handle_non_stream_via_upstream_stream(
+                gw.clone(),
+                client,
+                adapter.as_ref(),
+                &provider,
+                &egress_base_url,
+                egress,
+                ingress,
+                &egress_path,
+                &credential,
+                egress_body,
+                request_headers,
+                &ingress_str,
+                &egress_str,
+                &request_model,
+                &actual_model,
+                auth_key.id.as_deref(),
+                start,
+                request_cache_key.as_deref(),
+                exact_enabled_for_route,
+                Some(exact_ttl),
+                semantic_write_ctx.clone(),
+                miss_expose_headers,
+            )
+            .await
         } else {
             handle_non_stream(
                 gw.clone(),
@@ -1016,7 +1082,7 @@ async fn proxy_pipeline(
                 &egress_path,
                 &credential,
                 egress_body,
-                extra_headers,
+                request_headers,
                 &ingress_str,
                 &egress_str,
                 &request_model,
@@ -1247,6 +1313,185 @@ async fn handle_non_stream(
                             vector,
                             bytes,
                         )
+                        .await;
+                }
+            }
+        }
+    }
+    response
+}
+
+/// Consume a streaming upstream response and return a non-streaming client
+/// response. Used when the egress protocol forces `stream: true` upstream
+/// (e.g. Responses API) but the ingress client requested non-stream.
+#[allow(clippy::too_many_arguments)]
+async fn handle_non_stream_via_upstream_stream(
+    gw: Gateway,
+    client: ProxyClient,
+    adapter: &dyn ProviderAdapter,
+    provider: &Provider,
+    egress_base_url: &str,
+    egress: Protocol,
+    ingress: Protocol,
+    path: &str,
+    credential: &str,
+    body: Value,
+    extra_headers: reqwest::header::HeaderMap,
+    ingress_str: &str,
+    egress_str: &str,
+    request_model: &str,
+    actual_model: &str,
+    api_key_id: Option<&str>,
+    start: Instant,
+    cache_key: Option<&str>,
+    allow_exact_store: bool,
+    exact_cache_ttl: Option<Duration>,
+    semantic_write_ctx: Option<SemanticWriteContext>,
+    expose_headers: bool,
+) -> Response {
+    let credential_to_use = credential.to_string();
+    let call_result = match client
+        .call_stream(
+            adapter,
+            egress_base_url,
+            path,
+            &credential_to_use,
+            body.clone(),
+            extra_headers.clone(),
+        )
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            emit_log(
+                &gw, ingress_str, egress_str, request_model, actual_model,
+                api_key_id,
+                &provider.name, 502, start.elapsed().as_millis() as f64,
+                TokenUsage::default(), false, false,
+                Some(e.to_string()), None,
+                LogExtras::default(),
+            );
+            return error_response(502, &format!("upstream error: {e}"));
+        }
+    };
+
+    let (resp, status) = call_result;
+
+    if status >= 400 {
+        let err_body: Value = resp
+            .json()
+            .await
+            .unwrap_or_else(|_| serde_json::json!({"error": {"message": "upstream error"}}));
+        emit_log(
+            &gw, ingress_str, egress_str, request_model, actual_model,
+            api_key_id,
+            &provider.name, status as i32, start.elapsed().as_millis() as f64,
+            TokenUsage::default(), false, false,
+            Some(err_body.to_string()), None,
+            LogExtras::default(),
+        );
+        return (
+            StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
+            Json(err_body),
+        )
+            .into_response();
+    }
+
+    let mut stream_parser = crate::protocol::get_stream_parser(egress);
+    let mut byte_stream = resp.bytes_stream();
+    let mut accumulator = StreamResponseAccumulator::default();
+
+    while let Some(chunk) = byte_stream.next().await {
+        let bytes = match chunk {
+            Ok(b) => b,
+            Err(e) => {
+                emit_log(
+                    &gw, ingress_str, egress_str, request_model, actual_model,
+                    api_key_id,
+                    &provider.name, 502, start.elapsed().as_millis() as f64,
+                    TokenUsage::default(), false, false,
+                    Some(format!("stream read error: {e}")), None,
+                    LogExtras::default(),
+                );
+                return error_response(502, &format!("upstream stream error: {e}"));
+            }
+        };
+        let text = String::from_utf8_lossy(&bytes);
+        if let Ok(deltas) = stream_parser.parse_chunk(&text) {
+            accumulator.apply_all(&deltas);
+        }
+    }
+
+    if let Ok(deltas) = stream_parser.finish() {
+        accumulator.apply_all(&deltas);
+    }
+
+    let mut internal_resp = accumulator.into_internal_response();
+    if internal_resp.id.is_empty() {
+        internal_resp.id = format!("chatcmpl-{}", uuid::Uuid::new_v4().simple());
+    }
+    if internal_resp.model.is_empty() {
+        internal_resp.model = actual_model.to_string();
+    }
+    if internal_resp.stop_reason.is_none() {
+        internal_resp.stop_reason = Some("stop".to_string());
+    }
+    crate::protocol::semantic::reasoning::normalize_response_reasoning(&mut internal_resp);
+    crate::protocol::semantic::response_items::populate_response_items(&mut internal_resp);
+
+    let is_tool = !internal_resp.tool_calls.is_empty();
+    let usage = internal_resp.usage.clone();
+    let formatter = crate::protocol::get_response_formatter(ingress);
+    let output = formatter.format_response(&internal_resp);
+
+    let response_preview = serde_json::to_string(&output)
+        .ok()
+        .map(|s| s.chars().take(500).collect());
+
+    emit_log(
+        &gw, ingress_str, egress_str, request_model, actual_model,
+        api_key_id,
+        &provider.name, status as i32, start.elapsed().as_millis() as f64,
+        usage.clone(), false, is_tool, None, response_preview,
+        LogExtras::default(),
+    );
+
+    let mut response = (
+        StatusCode::from_u16(status).unwrap_or(StatusCode::OK),
+        Json(output.clone()),
+    )
+        .into_response();
+    set_cache_headers(&mut response, "MISS", cache_key, None, expose_headers);
+
+    if status < 400 && !is_tool {
+        let entry = CacheEntry {
+            payload: output,
+            status_code: status,
+            provider_name: provider.name.clone(),
+            actual_model: Some(actual_model.to_string()),
+            usage,
+            created_at_epoch_ms: chrono::Utc::now().timestamp_millis(),
+            internal_response: Some(internal_resp),
+        };
+        if let Ok(bytes) = serde_json::to_vec(&entry) {
+            if allow_exact_store {
+                let cache_backend = gw.cache_backend.read().await.clone();
+                if let (Some(key), Some(cache_backend)) = (cache_key, cache_backend.as_ref()) {
+                    let _ = cache_backend.set(key, &bytes, exact_cache_ttl).await;
+                }
+            }
+            let vector_store = gw.vector_store.read().await.clone();
+            if let (Some(vector_store), Some(ctx)) =
+                (vector_store.as_ref(), semantic_write_ctx.as_ref())
+            {
+                let vector = if let Some(existing) = ctx.query_vector.clone() {
+                    Some(existing)
+                } else {
+                    compute_embedding(&gw, &ctx.embedding_text).await.ok()
+                };
+                if let Some(vector) = vector {
+                    let _ = vector_store
+                        .upsert(&ctx.partition, ctx.key.clone(), vector, bytes)
                         .await;
                 }
             }
@@ -1805,7 +2050,17 @@ async fn compute_embedding(gw: &Gateway, text: &str) -> anyhow::Result<Vec<f32>>
             Ok(provider) => provider,
             Err(_) => continue,
         };
-        let Some(openai_base_url) = resolve_openai_base_url(&provider) else {
+        let provider_runtime = match gw.admin().resolve_provider_runtime(&provider).await {
+            Ok(runtime) => runtime,
+            Err(_) => continue,
+        };
+        let openai_base_url = provider_runtime
+            .binding
+            .base_url_override
+            .clone()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| resolve_openai_base_url(&provider));
+        let Some(openai_base_url) = openai_base_url else {
             missing_openai_endpoint = true;
             continue;
         };
@@ -1815,10 +2070,7 @@ async fn compute_embedding(gw: &Gateway, text: &str) -> anyhow::Result<Vec<f32>>
             target.model.clone()
         };
         let adapter = adapter::get_adapter(&provider, Protocol::OpenAI);
-        let credential = match resolve_provider_credential(gw, &provider).await {
-            Ok(value) => value,
-            Err(_) => continue,
-        };
+        let credential = provider_runtime.access_token.clone();
         let client = match gw.http_client_for_provider(provider.use_proxy).await {
             Ok(http_client) => ProxyClient::new(http_client),
             Err(_) => continue,
@@ -1834,7 +2086,10 @@ async fn compute_embedding(gw: &Gateway, text: &str) -> anyhow::Result<Vec<f32>>
                 "/v1/embeddings",
                 &credential,
                 request_body,
-                reqwest::header::HeaderMap::new(),
+                match runtime_binding_headers(&provider_runtime.binding) {
+                    Ok(headers) => headers,
+                    Err(_) => continue,
+                },
             )
             .await
         {
@@ -2283,9 +2538,15 @@ fn ensure_tool_index(tool_calls: &mut Vec<Option<ToolCall>>, index: usize) {
     }
 }
 
-async fn resolve_provider_credential(gw: &Gateway, provider: &Provider) -> anyhow::Result<String> {
-    let _ = gw;
-    Ok(provider.api_key.clone())
+fn runtime_binding_headers(binding: &crate::auth::RuntimeBinding) -> anyhow::Result<ReqwestHeaderMap> {
+    let mut headers = ReqwestHeaderMap::new();
+    for (key, value) in &binding.extra_headers {
+        headers.insert(
+            reqwest::header::HeaderName::from_bytes(key.as_bytes())?,
+            ReqwestHeaderValue::from_str(value)?,
+        );
+    }
+    Ok(headers)
 }
 
 #[derive(Default, Clone)]

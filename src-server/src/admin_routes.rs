@@ -6,6 +6,7 @@ use axum::routing::{delete, get, post, put};
 use axum::{Extension, Json, Router};
 use nyro_core::db::models::*;
 use nyro_core::Gateway;
+use nyro_core::auth::AuthExchangeInput;
 use serde::Deserialize;
 
 #[derive(Clone)]
@@ -59,6 +60,15 @@ pub fn create_router(gateway: Gateway, admin_token: Option<String>) -> Router {
         .route("/providers/:id/test-models", get(test_provider_models_handler))
         .route("/providers/:id/models", get(provider_models_handler))
         .route("/providers/:id/model-capabilities", get(provider_model_capabilities_handler))
+        .route("/providers/:id/oauth/status", get(get_provider_oauth_status_handler))
+        .route("/providers/:id/oauth/reconnect", post(reconnect_provider_oauth_handler))
+        .route("/providers/:id/oauth/logout", post(logout_provider_oauth_handler))
+        .route("/providers/:id/oauth/bind", post(bind_provider_oauth_handler))
+        .route("/providers/oauth", post(create_oauth_provider_handler))
+        .route("/oauth/sessions/init", post(init_oauth_session_handler))
+        .route("/oauth/sessions/:id/status", get(get_oauth_session_status_handler))
+        .route("/oauth/sessions/:id/cancel", post(cancel_oauth_session_handler))
+        .route("/oauth/sessions/:id/complete", post(complete_oauth_session_handler))
         .route("/routes", get(list_routes_handler).post(create_route_handler))
         .route("/routes/:id", routes_item)
         .route("/api-keys", get(list_api_keys_handler).post(create_api_key_handler))
@@ -192,6 +202,116 @@ async fn provider_model_capabilities_handler(
 #[derive(Deserialize)]
 struct ModelCapabilitiesQuery {
     model: String,
+}
+
+#[derive(Deserialize)]
+struct InitOAuthSessionRequest {
+    vendor: String,
+    #[serde(default)]
+    use_proxy: bool,
+}
+
+#[derive(Deserialize)]
+struct CreateOAuthProviderRequest {
+    session_id: String,
+    input: CreateProvider,
+}
+
+async fn init_oauth_session_handler(
+    State(gw): State<Gateway>,
+    Json(input): Json<InitOAuthSessionRequest>,
+) -> impl IntoResponse {
+    match gw.admin().init_oauth_session(&input.vendor, input.use_proxy).await {
+        Ok(v) => Json(serde_json::json!({ "data": v })).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+async fn get_oauth_session_status_handler(
+    State(gw): State<Gateway>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match gw.admin().get_oauth_session_status(&id).await {
+        Ok(v) => Json(serde_json::json!({ "data": v })).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+async fn cancel_oauth_session_handler(
+    State(gw): State<Gateway>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match gw.admin().cancel_oauth_session(&id).await {
+        Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+async fn complete_oauth_session_handler(
+    State(gw): State<Gateway>,
+    Path(id): Path<String>,
+    Json(input): Json<AuthExchangeInput>,
+) -> impl IntoResponse {
+    match gw.admin().complete_oauth_session(&id, input).await {
+        Ok(v) => Json(serde_json::json!({ "data": v })).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+async fn create_oauth_provider_handler(
+    State(gw): State<Gateway>,
+    Json(input): Json<CreateOAuthProviderRequest>,
+) -> impl IntoResponse {
+    match gw.admin().create_provider_with_oauth_session(&input.session_id, input.input).await {
+        Ok(v) => Json(serde_json::json!({ "data": v })).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+async fn get_provider_oauth_status_handler(
+    State(gw): State<Gateway>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match gw.admin().get_provider_oauth_status(&id).await {
+        Ok(v) => Json(serde_json::json!({ "data": v })).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+async fn reconnect_provider_oauth_handler(
+    State(gw): State<Gateway>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match gw.admin().reconnect_provider_oauth(&id).await {
+        Ok(v) => Json(serde_json::json!({ "data": v })).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+async fn logout_provider_oauth_handler(
+    State(gw): State<Gateway>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    match gw.admin().logout_provider_oauth(&id).await {
+        Ok(v) => Json(serde_json::json!({ "data": v })).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct BindProviderOAuthRequest {
+    session_id: String,
+}
+
+async fn bind_provider_oauth_handler(
+    State(gw): State<Gateway>,
+    Path(id): Path<String>,
+    Json(input): Json<BindProviderOAuthRequest>,
+) -> impl IntoResponse {
+    match gw.admin().bind_provider_with_oauth_session(&id, &input.session_id).await {
+        Ok(v) => Json(serde_json::json!({ "data": v })).into_response(),
+        Err(e) => err(e),
+    }
 }
 
 // ── Routes ──

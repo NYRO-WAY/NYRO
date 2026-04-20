@@ -12,6 +12,7 @@ use crate::db::models::{
     ApiKey, ApiKeyWithBindings, CreateApiKey, CreateProvider, CreateRoute, CreateRouteTarget,
     LogPage, LogQuery, ModelStats, Provider, ProviderStats, RequestLog, Route, RouteTarget,
     StatsHourly, StatsOverview, UpdateApiKey, UpdateProvider, UpdateRoute,
+    is_valid_provider_auth_mode,
 };
 use crate::logging::LogEntry;
 use crate::storage::traits::{
@@ -126,7 +127,7 @@ struct SqliteProviderStore {
 impl ProviderStore for SqliteProviderStore {
     async fn list(&self) -> anyhow::Result<Vec<Provider>> {
         Ok(sqlx::query_as::<_, Provider>(
-            "SELECT id, name, vendor, protocol, base_url, COALESCE(default_protocol, protocol) AS default_protocol, COALESCE(protocol_endpoints, '{}') AS protocol_endpoints, preset_key, channel, models_source, capabilities_source, static_models, api_key, COALESCE(use_proxy, 0) AS use_proxy, last_test_success, last_test_at, COALESCE(is_enabled, 1) AS is_enabled, created_at, updated_at FROM providers ORDER BY created_at DESC",
+            "SELECT id, name, vendor, protocol, base_url, COALESCE(default_protocol, protocol) AS default_protocol, COALESCE(protocol_endpoints, '{}') AS protocol_endpoints, preset_key, channel, models_source, capabilities_source, static_models, api_key, COALESCE(auth_mode, 'api_key') AS auth_mode, access_token, refresh_token, expires_at, COALESCE(use_proxy, 0) AS use_proxy, last_test_success, last_test_at, COALESCE(is_enabled, 1) AS is_enabled, created_at, updated_at FROM providers ORDER BY created_at DESC",
         )
         .fetch_all(&self.pool)
         .await?)
@@ -134,7 +135,7 @@ impl ProviderStore for SqliteProviderStore {
 
     async fn get(&self, id: &str) -> anyhow::Result<Option<Provider>> {
         Ok(sqlx::query_as::<_, Provider>(
-            "SELECT id, name, vendor, protocol, base_url, COALESCE(default_protocol, protocol) AS default_protocol, COALESCE(protocol_endpoints, '{}') AS protocol_endpoints, preset_key, channel, models_source, capabilities_source, static_models, api_key, COALESCE(use_proxy, 0) AS use_proxy, last_test_success, last_test_at, COALESCE(is_enabled, 1) AS is_enabled, created_at, updated_at FROM providers WHERE id = ?",
+            "SELECT id, name, vendor, protocol, base_url, COALESCE(default_protocol, protocol) AS default_protocol, COALESCE(protocol_endpoints, '{}') AS protocol_endpoints, preset_key, channel, models_source, capabilities_source, static_models, api_key, COALESCE(auth_mode, 'api_key') AS auth_mode, access_token, refresh_token, expires_at, COALESCE(use_proxy, 0) AS use_proxy, last_test_success, last_test_at, COALESCE(is_enabled, 1) AS is_enabled, created_at, updated_at FROM providers WHERE id = ?",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -150,8 +151,11 @@ impl ProviderStore for SqliteProviderStore {
             .as_deref()
             .unwrap_or(input.protocol.as_str());
         let protocol_endpoints = input.protocol_endpoints.as_deref().unwrap_or("{}");
+        if !is_valid_provider_auth_mode(&input.auth_mode) {
+            anyhow::bail!("unsupported provider auth_mode: {}", input.auth_mode);
+        }
         sqlx::query(
-            "INSERT INTO providers (id, name, vendor, protocol, base_url, default_protocol, protocol_endpoints, preset_key, channel, models_source, capabilities_source, static_models, api_key, use_proxy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO providers (id, name, vendor, protocol, base_url, default_protocol, protocol_endpoints, preset_key, channel, models_source, capabilities_source, static_models, api_key, auth_mode, access_token, refresh_token, expires_at, use_proxy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&input.name)
@@ -166,6 +170,10 @@ impl ProviderStore for SqliteProviderStore {
         .bind(&input.capabilities_source)
         .bind(&input.static_models)
         .bind(&input.api_key)
+        .bind(&input.auth_mode)
+        .bind(&input.access_token)
+        .bind(&input.refresh_token)
+        .bind(&input.expires_at)
         .bind(input.use_proxy)
         .execute(&self.pool)
         .await?;
@@ -198,11 +206,18 @@ impl ProviderStore for SqliteProviderStore {
         let capabilities_source = input.capabilities_source.or(current.capabilities_source);
         let static_models = input.static_models.or(current.static_models);
         let api_key = input.api_key.unwrap_or(current.api_key);
+        let auth_mode = input.auth_mode.unwrap_or(current.auth_mode);
+        if !is_valid_provider_auth_mode(&auth_mode) {
+            anyhow::bail!("unsupported provider auth_mode: {}", auth_mode);
+        }
+        let access_token = input.access_token.or(current.access_token);
+        let refresh_token = input.refresh_token.or(current.refresh_token);
+        let expires_at = input.expires_at.or(current.expires_at);
         let use_proxy = input.use_proxy.unwrap_or(current.use_proxy);
         let is_enabled = input.is_enabled.unwrap_or(current.is_enabled);
 
         sqlx::query(
-            "UPDATE providers SET name=?, vendor=?, protocol=?, base_url=?, default_protocol=?, protocol_endpoints=?, preset_key=?, channel=?, models_source=?, capabilities_source=?, static_models=?, api_key=?, use_proxy=?, is_enabled=?, updated_at=datetime('now') WHERE id=?",
+            "UPDATE providers SET name=?, vendor=?, protocol=?, base_url=?, default_protocol=?, protocol_endpoints=?, preset_key=?, channel=?, models_source=?, capabilities_source=?, static_models=?, api_key=?, auth_mode=?, access_token=?, refresh_token=?, expires_at=?, use_proxy=?, is_enabled=?, updated_at=datetime('now') WHERE id=?",
         )
         .bind(name)
         .bind(vendor)
@@ -216,6 +231,10 @@ impl ProviderStore for SqliteProviderStore {
         .bind(capabilities_source)
         .bind(static_models)
         .bind(api_key)
+        .bind(auth_mode)
+        .bind(access_token)
+        .bind(refresh_token)
+        .bind(expires_at)
         .bind(use_proxy)
         .bind(is_enabled)
         .bind(id)

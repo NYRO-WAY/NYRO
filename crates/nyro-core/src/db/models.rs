@@ -1,7 +1,45 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sqlx::FromRow;
+
+const PROVIDER_PRESETS_SNAPSHOT: &str = include_str!("../../assets/providers.json");
+
+pub fn default_provider_auth_mode() -> String {
+    "api_key".to_string()
+}
+
+pub fn is_valid_provider_auth_mode(value: &str) -> bool {
+    matches!(value.trim(), "api_key" | "oauth")
+}
+
+fn resolve_preset_channel_auth_mode(preset_key: Option<&str>, channel_id: Option<&str>) -> Option<String> {
+    let preset_key = preset_key?.trim();
+    if preset_key.is_empty() {
+        return None;
+    }
+    let requested_channel = channel_id
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("default");
+    let parsed = serde_json::from_str::<Value>(PROVIDER_PRESETS_SNAPSHOT).ok()?;
+    let items = parsed.as_array()?;
+    let preset = items.iter().find(|item| item.get("id").and_then(Value::as_str) == Some(preset_key))?;
+    let channels = preset.get("channels").and_then(Value::as_array)?;
+    let channel = channels
+        .iter()
+        .find(|item| item.get("id").and_then(Value::as_str) == Some(requested_channel))
+        .or_else(|| channels.iter().find(|item| item.get("id").and_then(Value::as_str) == Some("default")))?;
+    Some(
+        channel
+            .get("auth_mode")
+            .and_then(Value::as_str)
+            .unwrap_or("api_key")
+            .trim()
+            .to_string(),
+    )
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct Provider {
@@ -24,6 +62,11 @@ pub struct Provider {
     pub capabilities_source: Option<String>,
     pub static_models: Option<String>,
     pub api_key: String,
+    #[serde(default = "default_provider_auth_mode")]
+    pub auth_mode: String,
+    pub access_token: Option<String>,
+    pub refresh_token: Option<String>,
+    pub expires_at: Option<String>,
     #[serde(default)]
     pub use_proxy: bool,
     pub last_test_success: Option<bool>,
@@ -189,6 +232,11 @@ pub struct CreateProvider {
     pub capabilities_source: Option<String>,
     pub static_models: Option<String>,
     pub api_key: String,
+    #[serde(default = "default_provider_auth_mode")]
+    pub auth_mode: String,
+    pub access_token: Option<String>,
+    pub refresh_token: Option<String>,
+    pub expires_at: Option<String>,
     #[serde(default)]
     pub use_proxy: bool,
 }
@@ -209,6 +257,10 @@ pub struct UpdateProvider {
     pub capabilities_source: Option<String>,
     pub static_models: Option<String>,
     pub api_key: Option<String>,
+    pub auth_mode: Option<String>,
+    pub access_token: Option<String>,
+    pub refresh_token: Option<String>,
+    pub expires_at: Option<String>,
     pub use_proxy: Option<bool>,
     pub is_enabled: Option<bool>,
 }
@@ -421,6 +473,11 @@ pub struct ExportProvider {
     pub capabilities_source: Option<String>,
     pub static_models: Option<String>,
     pub api_key: String,
+    #[serde(default = "default_provider_auth_mode")]
+    pub auth_mode: String,
+    pub access_token: Option<String>,
+    pub refresh_token: Option<String>,
+    pub expires_at: Option<String>,
     #[serde(default)]
     pub use_proxy: bool,
     pub is_enabled: bool,
@@ -444,6 +501,18 @@ pub struct ImportResult {
 }
 
 impl Provider {
+    pub fn effective_auth_mode(&self) -> String {
+        resolve_preset_channel_auth_mode(self.preset_key.as_deref(), self.channel.as_deref())
+            .unwrap_or_else(|| {
+                let mode = self.auth_mode.trim();
+                if mode.is_empty() {
+                    default_provider_auth_mode()
+                } else {
+                    mode.to_string()
+                }
+            })
+    }
+
     pub fn effective_models_source(&self) -> Option<&str> {
         self.models_source
             .as_deref()

@@ -6,7 +6,11 @@ use nyro_core::protocol::gemini::stream::GeminiStreamFormatter;
 use nyro_core::protocol::openai::stream::OpenAIStreamFormatter;
 use nyro_core::protocol::openai::encoder::OpenAIEncoder;
 use nyro_core::protocol::openai::responses::decoder::ResponsesDecoder;
+use nyro_core::protocol::openai::responses::encoder::ResponsesEncoder;
 use nyro_core::protocol::openai::responses::formatter::ResponsesResponseFormatter;
+use nyro_core::protocol::openai::responses::parser::{
+    ResponsesResponseParser, ResponsesStreamParser,
+};
 use nyro_core::protocol::semantic::reasoning::normalize_response_reasoning;
 use nyro_core::protocol::semantic::tool_correlation::normalize_request_tool_results;
 use nyro_core::protocol::types::{
@@ -14,8 +18,10 @@ use nyro_core::protocol::types::{
     StreamDelta,
     TokenUsage, ToolCall, ToolDef,
 };
-use nyro_core::protocol::{IngressDecoder, Protocol, ResponseFormatter, StreamFormatter};
-use nyro_core::protocol::EgressEncoder;
+use nyro_core::protocol::{
+    EgressEncoder, IngressDecoder, Protocol, ResponseFormatter, ResponseParser, StreamFormatter,
+    StreamParser,
+};
 
 #[test]
 fn openai_to_anthropic_thinking_blocks() {
@@ -1238,4 +1244,288 @@ fn gemini_encoder_sanitizes_unsupported_json_schema_fields() {
     assert!(!rendered.contains("$ref"));
     assert!(!rendered.contains("\"ref\""));
     assert!(!rendered.contains("$defs"));
+}
+
+fn responses_request(messages: Vec<InternalMessage>, stream: bool) -> InternalRequest {
+    InternalRequest {
+        messages,
+        model: "gpt-5.4".to_string(),
+        stream,
+        temperature: None,
+        max_tokens: None,
+        top_p: None,
+        tools: None,
+        tool_choice: None,
+        source_protocol: Protocol::ResponsesAPI,
+        extra: Default::default(),
+    }
+}
+
+#[test]
+fn responses_encoder_targets_slash_v1_responses_and_forces_stream() {
+    let req = responses_request(
+        vec![InternalMessage {
+            role: Role::User,
+            content: MessageContent::Text("hello".to_string()),
+            tool_calls: None,
+            tool_call_id: None,
+        }],
+        false,
+    );
+
+    let (body, _) = ResponsesEncoder.encode_request(&req).expect("encode");
+    assert_eq!(
+        body.get("stream").and_then(|v| v.as_bool()),
+        Some(true),
+        "responses backends only accept stream:true"
+    );
+    assert_eq!(
+        body.get("store").and_then(|v| v.as_bool()),
+        Some(false),
+        "gateway never persists server-side state"
+    );
+    assert_eq!(
+        ResponsesEncoder.egress_path("gpt-5.4", false),
+        "/v1/responses"
+    );
+}
+
+#[test]
+fn responses_encoder_splits_system_to_instructions_and_user_to_input_text() {
+    let req = responses_request(
+        vec![
+            InternalMessage {
+                role: Role::System,
+                content: MessageContent::Text("be terse".to_string()),
+                tool_calls: None,
+                tool_call_id: None,
+            },
+            InternalMessage {
+                role: Role::User,
+                content: MessageContent::Text("hi".to_string()),
+                tool_calls: None,
+                tool_call_id: None,
+            },
+        ],
+        false,
+    );
+
+    let (body, _) = ResponsesEncoder.encode_request(&req).expect("encode");
+    assert_eq!(
+        body.get("instructions").and_then(|v| v.as_str()),
+        Some("be terse")
+    );
+    let input = body.get("input").and_then(|v| v.as_array()).expect("input");
+    assert_eq!(input.len(), 1);
+    assert_eq!(input[0].get("type").and_then(|v| v.as_str()), Some("message"));
+    assert_eq!(input[0].get("role").and_then(|v| v.as_str()), Some("user"));
+    let first_block = input[0]
+        .get("content")
+        .and_then(|v| v.as_array())
+        .and_then(|arr| arr.first())
+        .expect("first content block");
+    assert_eq!(
+        first_block.get("type").and_then(|v| v.as_str()),
+        Some("input_text")
+    );
+    assert_eq!(first_block.get("text").and_then(|v| v.as_str()), Some("hi"));
+}
+
+#[test]
+fn responses_encoder_emits_function_call_and_function_call_output_items() {
+    let req = responses_request(
+        vec![
+            InternalMessage {
+                role: Role::Assistant,
+                content: MessageContent::Text(String::new()),
+                tool_calls: Some(vec![ToolCall {
+                    id: "call_abc".to_string(),
+                    name: "list_dir".to_string(),
+                    arguments: "{\"path\":\".\"}".to_string(),
+                }]),
+                tool_call_id: None,
+            },
+            InternalMessage {
+                role: Role::Tool,
+                content: MessageContent::Text("file1\nfile2".to_string()),
+                tool_calls: None,
+                tool_call_id: Some("call_abc".to_string()),
+            },
+        ],
+        false,
+    );
+
+    let (body, _) = ResponsesEncoder.encode_request(&req).expect("encode");
+    let input = body.get("input").and_then(|v| v.as_array()).expect("input");
+    assert_eq!(input.len(), 2, "one function_call + one function_call_output");
+
+    assert_eq!(
+        input[0].get("type").and_then(|v| v.as_str()),
+        Some("function_call")
+    );
+    assert_eq!(
+        input[0].get("call_id").and_then(|v| v.as_str()),
+        Some("call_abc")
+    );
+    assert_eq!(
+        input[0].get("name").and_then(|v| v.as_str()),
+        Some("list_dir")
+    );
+    assert_eq!(
+        input[0].get("arguments").and_then(|v| v.as_str()),
+        Some("{\"path\":\".\"}")
+    );
+
+    assert_eq!(
+        input[1].get("type").and_then(|v| v.as_str()),
+        Some("function_call_output")
+    );
+    assert_eq!(
+        input[1].get("call_id").and_then(|v| v.as_str()),
+        Some("call_abc")
+    );
+    assert_eq!(
+        input[1].get("output").and_then(|v| v.as_str()),
+        Some("file1\nfile2")
+    );
+}
+
+#[test]
+fn responses_encoder_drops_max_output_tokens_for_codex_compat() {
+    let mut req = responses_request(
+        vec![InternalMessage {
+            role: Role::User,
+            content: MessageContent::Text("hi".to_string()),
+            tool_calls: None,
+            tool_call_id: None,
+        }],
+        false,
+    );
+    req.max_tokens = Some(128);
+
+    let (body, _) = ResponsesEncoder.encode_request(&req).expect("encode");
+    assert!(
+        body.get("max_output_tokens").is_none(),
+        "codex backend rejects max_output_tokens; callers needing a cap must use extra"
+    );
+}
+
+#[test]
+fn responses_stream_parser_extracts_text_and_usage() {
+    let sse = "event: response.created\n\
+data: {\"response\":{\"id\":\"resp_1\",\"model\":\"gpt-5.4\"}}\n\
+\n\
+event: response.output_text.delta\n\
+data: {\"delta\":\"Hel\"}\n\
+\n\
+event: response.output_text.delta\n\
+data: {\"delta\":\"lo\"}\n\
+\n\
+event: response.completed\n\
+data: {\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":7,\"output_tokens\":2}}}\n\
+\n";
+
+    let mut parser = ResponsesStreamParser::new();
+    let deltas = parser.parse_chunk(sse).expect("parse");
+
+    let mut saw_start = false;
+    let mut text_concat = String::new();
+    let mut usage_input = 0;
+    let mut usage_output = 0;
+    let mut done_reason: Option<String> = None;
+
+    for delta in &deltas {
+        match delta {
+            StreamDelta::MessageStart { id, model } => {
+                saw_start = true;
+                assert_eq!(id, "resp_1");
+                assert_eq!(model, "gpt-5.4");
+            }
+            StreamDelta::TextDelta(t) => text_concat.push_str(t),
+            StreamDelta::Usage(u) => {
+                usage_input = u.input_tokens;
+                usage_output = u.output_tokens;
+            }
+            StreamDelta::Done { stop_reason } => done_reason = Some(stop_reason.clone()),
+            _ => {}
+        }
+    }
+
+    assert!(saw_start);
+    assert_eq!(text_concat, "Hello");
+    assert_eq!(usage_input, 7);
+    assert_eq!(usage_output, 2);
+    assert_eq!(done_reason.as_deref(), Some("completed"));
+}
+
+#[test]
+fn responses_stream_parser_extracts_function_call() {
+    let sse = "event: response.output_item.added\n\
+data: {\"output_index\":0,\"item\":{\"type\":\"function_call\",\"call_id\":\"call_xyz\",\"name\":\"ls\"}}\n\
+\n\
+event: response.function_call_arguments.delta\n\
+data: {\"output_index\":0,\"delta\":\"{\\\"a\\\":1\"}\n\
+\n\
+event: response.function_call_arguments.delta\n\
+data: {\"output_index\":0,\"delta\":\"}\"}\n\
+\n";
+
+    let mut parser = ResponsesStreamParser::new();
+    let deltas = parser.parse_chunk(sse).expect("parse");
+
+    let mut got_start = false;
+    let mut arg_concat = String::new();
+    for delta in &deltas {
+        match delta {
+            StreamDelta::ToolCallStart { id, name, .. } => {
+                got_start = true;
+                assert_eq!(id, "call_xyz");
+                assert_eq!(name, "ls");
+            }
+            StreamDelta::ToolCallDelta { arguments, .. } => arg_concat.push_str(arguments),
+            _ => {}
+        }
+    }
+    assert!(got_start);
+    assert_eq!(arg_concat, "{\"a\":1}");
+}
+
+#[test]
+fn responses_response_parser_extracts_text_tool_calls_and_usage() {
+    let body = serde_json::json!({
+        "id": "resp_42",
+        "model": "gpt-5.4",
+        "status": "completed",
+        "output": [
+            {
+                "type": "message",
+                "content": [
+                    {"type": "output_text", "text": "Hi "},
+                    {"type": "output_text", "text": "there"}
+                ]
+            },
+            {
+                "type": "function_call",
+                "call_id": "call_1",
+                "name": "search",
+                "arguments": "{\"q\":\"rust\"}"
+            }
+        ],
+        "usage": {"input_tokens": 11, "output_tokens": 3}
+    });
+
+    let resp = ResponsesResponseParser
+        .parse_response(body)
+        .expect("parse");
+
+    assert_eq!(resp.id, "resp_42");
+    assert_eq!(resp.model, "gpt-5.4");
+    assert_eq!(resp.content, "Hi there");
+    assert_eq!(resp.stop_reason.as_deref(), Some("completed"));
+    assert_eq!(resp.usage.input_tokens, 11);
+    assert_eq!(resp.usage.output_tokens, 3);
+    assert_eq!(resp.tool_calls.len(), 1);
+    assert_eq!(resp.tool_calls[0].id, "call_1");
+    assert_eq!(resp.tool_calls[0].name, "search");
+    assert_eq!(resp.tool_calls[0].arguments, "{\"q\":\"rust\"}");
 }

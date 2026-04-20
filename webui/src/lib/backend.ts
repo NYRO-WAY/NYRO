@@ -81,6 +81,44 @@ function resolveHTTP(cmd: string, args?: Record<string, unknown>): HTTPMapping {
         method: "GET",
         url: `${base}/providers/${args?.providerId}/model-capabilities?model=${encodeURIComponent(String(args?.model ?? ""))}`,
       };
+    case "get_provider_oauth_status":
+      return { method: "GET", url: `${base}/providers/${args?.id}/oauth/status` };
+    case "reconnect_provider_oauth":
+      return { method: "POST", url: `${base}/providers/${args?.id}/oauth/reconnect` };
+    case "logout_provider_oauth":
+      return { method: "POST", url: `${base}/providers/${args?.id}/oauth/logout` };
+    case "init_oauth_session":
+      return {
+        method: "POST",
+        url: `${base}/oauth/sessions/init`,
+        body: {
+          vendor: args?.vendor,
+          use_proxy: args?.useProxy ?? args?.use_proxy,
+        },
+      };
+    case "get_oauth_session_status":
+      return { method: "GET", url: `${base}/oauth/sessions/${args?.sessionId ?? args?.session_id}/status` };
+    case "cancel_oauth_session":
+      return { method: "POST", url: `${base}/oauth/sessions/${args?.sessionId ?? args?.session_id}/cancel` };
+    case "complete_oauth_session":
+      return {
+        method: "POST",
+        url: `${base}/oauth/sessions/${args?.sessionId ?? args?.session_id}/complete`,
+        body: {
+          code: args?.code,
+          callback_url: args?.callbackUrl ?? args?.callback_url,
+          metadata: args?.metadata ?? {},
+        },
+      };
+    case "create_oauth_provider":
+      return {
+        method: "POST",
+        url: `${base}/providers/oauth`,
+        body: {
+          session_id: args?.sessionId ?? args?.session_id,
+          input: args?.input,
+        },
+      };
     case "list_routes":
       return { method: "GET", url: `${base}/routes` };
     case "create_route":

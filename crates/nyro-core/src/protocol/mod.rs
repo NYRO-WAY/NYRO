@@ -145,7 +145,8 @@ pub fn get_decoder(protocol: Protocol) -> Box<dyn IngressDecoder + Send> {
 
 pub fn get_encoder(protocol: Protocol) -> Box<dyn EgressEncoder + Send> {
     match protocol {
-        Protocol::OpenAI | Protocol::ResponsesAPI => Box::new(openai::encoder::OpenAIEncoder),
+        Protocol::OpenAI => Box::new(openai::encoder::OpenAIEncoder),
+        Protocol::ResponsesAPI => Box::new(openai::responses::encoder::ResponsesEncoder),
         Protocol::Anthropic => Box::new(anthropic::encoder::AnthropicEncoder),
         Protocol::Gemini => Box::new(gemini::encoder::GeminiEncoder),
     }
@@ -153,7 +154,8 @@ pub fn get_encoder(protocol: Protocol) -> Box<dyn EgressEncoder + Send> {
 
 pub fn get_response_parser(protocol: Protocol) -> Box<dyn ResponseParser> {
     match protocol {
-        Protocol::OpenAI | Protocol::ResponsesAPI => Box::new(openai::stream::OpenAIResponseParser),
+        Protocol::OpenAI => Box::new(openai::stream::OpenAIResponseParser),
+        Protocol::ResponsesAPI => Box::new(openai::responses::parser::ResponsesResponseParser),
         Protocol::Anthropic => Box::new(anthropic::stream::AnthropicResponseParser),
         Protocol::Gemini => Box::new(gemini::stream::GeminiResponseParser),
     }
@@ -172,8 +174,9 @@ pub fn get_response_formatter(protocol: Protocol) -> Box<dyn ResponseFormatter> 
 
 pub fn get_stream_parser(protocol: Protocol) -> Box<dyn StreamParser> {
     match protocol {
-        Protocol::OpenAI | Protocol::ResponsesAPI => {
-            Box::new(openai::stream::OpenAIStreamParser::new())
+        Protocol::OpenAI => Box::new(openai::stream::OpenAIStreamParser::new()),
+        Protocol::ResponsesAPI => {
+            Box::new(openai::responses::parser::ResponsesStreamParser::new())
         }
         Protocol::Anthropic => Box::new(anthropic::stream::AnthropicStreamParser::new()),
         Protocol::Gemini => Box::new(gemini::stream::GeminiStreamParser::new()),
@@ -216,16 +219,15 @@ impl ProviderProtocols {
             }
         }
 
-        let default = provider
+        let declared_default = provider
             .effective_default_protocol()
             .parse::<Protocol>()
-            .unwrap_or_else(|_| {
-                endpoints
-                    .keys()
-                    .next()
-                    .copied()
-                    .unwrap_or(Protocol::OpenAI)
-            });
+            .ok();
+        let default = declared_default
+            .filter(|p| endpoints.contains_key(p))
+            .or_else(|| endpoints.keys().next().copied())
+            .or(declared_default)
+            .unwrap_or(Protocol::OpenAI);
 
         Self { default, endpoints }
     }
@@ -235,20 +237,21 @@ impl ProviderProtocols {
     }
 
     /// Resolve egress protocol and base_url for an incoming ingress protocol.
-    /// ResponsesAPI maps to OpenAI for endpoint resolution.
+    ///
+    /// Each declared `protocol_endpoints` key is considered an independent
+    /// egress target. If the ingress protocol has a direct match, use it;
+    /// otherwise fall back to the provider's default and mark the request
+    /// as needing protocol conversion.
     pub fn resolve_egress(&self, ingress: Protocol) -> ResolvedEgress {
-        let lookup = match ingress {
-            Protocol::ResponsesAPI => Protocol::OpenAI,
-            other => other,
-        };
-
-        if let Some(ep) = self.endpoints.get(&lookup) {
-            ResolvedEgress {
-                protocol: lookup,
+        if let Some(ep) = self.endpoints.get(&ingress) {
+            return ResolvedEgress {
+                protocol: ingress,
                 base_url: ep.base_url.clone(),
                 needs_conversion: false,
-            }
-        } else if let Some(ep) = self.endpoints.get(&self.default) {
+            };
+        }
+
+        if let Some(ep) = self.endpoints.get(&self.default) {
             ResolvedEgress {
                 protocol: self.default,
                 base_url: ep.base_url.clone(),

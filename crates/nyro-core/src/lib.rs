@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod admin;
 pub mod cache;
 pub mod config;
@@ -19,6 +20,7 @@ use sqlx::{Pool, Postgres, SqlitePool};
 use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 
+use crate::auth::types::AuthSession;
 use crate::cache::{
     CacheBackend, CacheConfig, DatabaseCacheBackend, InMemoryCacheBackend, MemoryVectorStore,
     PgVectorStore, SqliteVecVectorStore, VectorStore,
@@ -58,6 +60,7 @@ pub struct Gateway {
     pub cache_backend: Arc<tokio::sync::RwLock<Option<Arc<dyn CacheBackend>>>>,
     pub vector_store: Arc<tokio::sync::RwLock<Option<Arc<dyn VectorStore>>>>,
     pub cache_in_flight: Arc<DashMap<String, broadcast::Sender<Vec<u8>>>>,
+    pub(crate) auth_sessions: Arc<tokio::sync::RwLock<HashMap<String, AuthSession>>>,
     sqlite_pool: Option<SqlitePool>,
     postgres_pool: Option<Pool<Postgres>>,
 }
@@ -165,6 +168,7 @@ impl Gateway {
             cache_backend: Arc::new(tokio::sync::RwLock::new(None)),
             vector_store: Arc::new(tokio::sync::RwLock::new(None)),
             cache_in_flight: Arc::new(DashMap::new()),
+            auth_sessions: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             sqlite_pool,
             postgres_pool,
         };
@@ -184,6 +188,22 @@ impl Gateway {
             let http_client = gw.http_client.clone();
             tokio::spawn(async move {
                 admin::refresh_models_dev_runtime_cache_on_startup(data_dir, http_client).await;
+            });
+        }
+
+        {
+            let gw_refresh = gw.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(120));
+                loop {
+                    interval.tick().await;
+                    if let Err(error) = gw_refresh.admin().refresh_oauth_providers().await {
+                        tracing::warn!("background oauth refresh skipped: {error}");
+                    }
+                    if let Err(error) = gw_refresh.admin().cleanup_auth_sessions().await {
+                        tracing::warn!("auth session cleanup skipped: {error}");
+                    }
+                }
             });
         }
 

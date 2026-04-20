@@ -8,6 +8,11 @@ export interface Provider {
   protocol_endpoints: string;
   api_key?: string;
   use_proxy: boolean;
+  auth_mode?: "api_key" | "oauth";
+  oauth_status?: ProviderOAuthStatus;
+  oauth_expires_at?: string | null;
+  oauth_last_error?: string | null;
+  oauth_updated_at?: string | null;
   preset_key?: string | null;
   channel?: string | null;
   models_source?: string | null;
@@ -148,7 +153,11 @@ export interface ModelCapabilities {
   output_modalities: string[];
 }
 
-export type ProviderProtocol = "openai" | "anthropic" | "gemini";
+export type ProviderProtocol =
+  | "openai"
+  | "openai_responses"
+  | "anthropic"
+  | "gemini";
 
 export interface ProviderChannelPreset {
   id: string;
@@ -156,6 +165,7 @@ export interface ProviderChannelPreset {
     zh: string;
     en: string;
   };
+  auth_mode?: "api_key" | "oauth";
   baseUrls: Partial<Record<ProviderProtocol, string>>;
   modelsSource?: string;
   capabilitiesSource?: string;
@@ -183,6 +193,7 @@ export interface CreateProvider {
   default_protocol?: string;
   protocol_endpoints?: string;
   use_proxy?: boolean;
+  auth_mode?: "api_key" | "oauth";
   preset_key?: string;
   channel?: string;
   models_source?: string;
@@ -199,6 +210,7 @@ export interface UpdateProvider {
   default_protocol?: string;
   protocol_endpoints?: string;
   use_proxy?: boolean;
+  auth_mode?: "api_key" | "oauth";
   preset_key?: string;
   channel?: string;
   models_source?: string;
@@ -347,4 +359,62 @@ export interface ImportResult {
   providers_imported: number;
   routes_imported: number;
   settings_imported: number;
+}
+
+
+export interface OAuthSessionInitData {
+  session_id: string;
+  vendor: string;
+  scheme: string;
+  auth_url: string;
+  requires_manual_code: boolean;
+  user_code: string;
+  verification_uri: string;
+  verification_uri_complete: string;
+  expires_in: number;
+  interval: number;
+}
+
+export type OAuthSessionStatusData =
+  | {
+      status: "pending";
+      scheme: string;
+      auth_url: string;
+      requires_manual_code: boolean;
+      expires_in: number;
+      interval: number;
+      user_code: string;
+      verification_uri_complete: string;
+    }
+  | {
+      status: "ready";
+      expires_in: number;
+      resource_url?: string | null;
+    }
+  | {
+      status: "error";
+      code: string;
+      message: string;
+    };
+
+export type ProviderOAuthStatus =
+  | "not_connected"
+  | "pending"
+  | "connected"
+  | "unavailable"
+  | "quota_exhausted"
+  | "error"
+  | "disconnected";
+
+export interface ProviderOAuthStatusData {
+  provider_id: string;
+  provider_name: string;
+  driver_key: string;
+  status: ProviderOAuthStatus;
+  expires_at?: string | null;
+  resource_url?: string | null;
+  subject_id?: string | null;
+  last_error?: string | null;
+  updated_at?: string | null;
+  has_refresh_token: boolean;
 }

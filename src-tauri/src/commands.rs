@@ -1,3 +1,5 @@
+use nyro_core::admin::ProviderOAuthStatusData;
+use nyro_core::auth::{AuthExchangeInput, AuthSessionInitData, AuthSessionStatusData};
 use nyro_core::db::models::*;
 use nyro_core::Gateway;
 use serde::{Deserialize, Serialize};
@@ -81,6 +83,118 @@ pub async fn get_model_capabilities(
 ) -> Result<ModelCapabilities, String> {
     gw.admin()
         .get_model_capabilities(&provider_id, &model)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn init_oauth_session(
+    gw: State<'_, Gateway>,
+    vendor: String,
+    use_proxy: Option<bool>,
+) -> Result<AuthSessionInitData, String> {
+    gw.admin()
+        .init_oauth_session(&vendor, use_proxy.unwrap_or(false))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_oauth_session_status(
+    gw: State<'_, Gateway>,
+    session_id: String,
+) -> Result<AuthSessionStatusData, String> {
+    gw.admin()
+        .get_oauth_session_status(&session_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn cancel_oauth_session(
+    gw: State<'_, Gateway>,
+    session_id: String,
+) -> Result<(), String> {
+    gw.admin()
+        .cancel_oauth_session(&session_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn complete_oauth_session(
+    gw: State<'_, Gateway>,
+    session_id: String,
+    code: Option<String>,
+    callback_url: Option<String>,
+    metadata: Option<serde_json::Value>,
+) -> Result<AuthSessionStatusData, String> {
+    gw.admin()
+        .complete_oauth_session(
+            &session_id,
+            AuthExchangeInput {
+                code,
+                callback_url,
+                metadata: metadata.unwrap_or(serde_json::Value::Null),
+            },
+        )
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn create_oauth_provider(
+    gw: State<'_, Gateway>,
+    session_id: String,
+    input: CreateProvider,
+) -> Result<Provider, String> {
+    gw.admin()
+        .create_provider_with_oauth_session(&session_id, input)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn get_provider_oauth_status(
+    gw: State<'_, Gateway>,
+    id: String,
+) -> Result<ProviderOAuthStatusData, String> {
+    gw.admin()
+        .get_provider_oauth_status(&id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn reconnect_provider_oauth(
+    gw: State<'_, Gateway>,
+    id: String,
+) -> Result<ProviderOAuthStatusData, String> {
+    gw.admin()
+        .reconnect_provider_oauth(&id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn logout_provider_oauth(
+    gw: State<'_, Gateway>,
+    id: String,
+) -> Result<ProviderOAuthStatusData, String> {
+    gw.admin()
+        .logout_provider_oauth(&id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn bind_provider_oauth(
+    gw: State<'_, Gateway>,
+    id: String,
+    session_id: String,
+) -> Result<nyro_core::db::models::Provider, String> {
+    gw.admin()
+        .bind_provider_with_oauth_session(&id, &session_id)
         .await
         .map_err(|e| e.to_string())
 }

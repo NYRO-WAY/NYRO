@@ -8,7 +8,8 @@
       {
         "id": "default",
         "label": { "zh": "默认", "en": "Default" },
-        "capabilitiesSource": "ai://models.dev/"
+        "capabilitiesSource": "ai://models.dev/",
+        "auth_mode": "api_key"
       }
     ]
   },
@@ -23,7 +24,29 @@
         "label": { "zh": "默认", "en": "Default" },
         "baseUrls": { "openai": "https://api.openai.com/v1" },
         "modelsSource": "https://api.openai.com/v1/models",
-        "capabilitiesSource": "ai://models.dev/openai"
+        "capabilitiesSource": "ai://models.dev/openai",
+        "auth_mode": "api_key"
+      },
+      {
+        "id": "codex",
+        "label": { "zh": "Codex", "en": "Codex" },
+        "baseUrls": { "openai_responses": "https://chatgpt.com/backend-api/codex" },
+        "modelsSource": "https://chatgpt.com/backend-api/codex/models",
+        "capabilitiesSource": "ai://models.dev/openai",
+        "auth_mode": "oauth",
+        "oauth": {
+          "authBaseUrl": "https://auth.openai.com",
+          "authorizeUrl": "https://auth.openai.com/oauth/authorize",
+          "tokenUrl": "https://auth.openai.com/oauth/token",
+          "clientId": "app_EMoamEEZ73f0CkXaXp7hrann",
+          "redirectUri": "http://localhost:1455/auth/callback",
+          "scope": "openid profile email offline_access"
+        },
+        "runtime": {
+          "apiBaseUrl": "https://chatgpt.com/backend-api/codex",
+          "modelsUrl": "https://chatgpt.com/backend-api/codex/models",
+          "modelsClientVersion": "0.99.0"
+        }
       }
     ]
   },
@@ -38,7 +61,8 @@
         "label": { "zh": "默认", "en": "Default" },
         "baseUrls": { "anthropic": "https://api.anthropic.com" },
         "modelsSource": "https://api.anthropic.com/v1/models",
-        "capabilitiesSource": "ai://models.dev/anthropic"
+        "capabilitiesSource": "ai://models.dev/anthropic",
+        "auth_mode": "api_key"
       }
     ]
   },
@@ -56,7 +80,8 @@
           "gemini": "https://generativelanguage.googleapis.com"
         },
         "modelsSource": "https://generativelanguage.googleapis.com/v1beta/openai/models",
-        "capabilitiesSource": "ai://models.dev/google"
+        "capabilitiesSource": "ai://models.dev/google",
+        "auth_mode": "api_key"
       }
     ]
   },
@@ -71,7 +96,8 @@
         "label": { "zh": "默认", "en": "Default" },
         "baseUrls": { "openai": "https://api.x.ai/v1" },
         "modelsSource": "https://api.x.ai/v1/models",
-        "capabilitiesSource": "ai://models.dev/xai"
+        "capabilitiesSource": "ai://models.dev/xai",
+        "auth_mode": "api_key"
       }
     ]
   },
@@ -89,7 +115,8 @@
           "anthropic": "https://api.deepseek.com/anthropic"
         },
         "modelsSource": "https://api.deepseek.com/v1/models",
-        "capabilitiesSource": "ai://models.dev/deepseek"
+        "capabilitiesSource": "ai://models.dev/deepseek",
+        "auth_mode": "api_key"
       }
     ]
   },
@@ -107,7 +134,8 @@
           "anthropic": "https://api.moonshot.ai/anthropic"
         },
         "modelsSource": "https://api.moonshot.ai/v1/models",
-        "capabilitiesSource": "ai://models.dev/moonshotai"
+        "capabilitiesSource": "ai://models.dev/moonshotai",
+        "auth_mode": "api_key"
       },
       {
         "id": "china",
@@ -117,7 +145,8 @@
           "anthropic": "https://api.moonshot.cn/anthropic"
         },
         "modelsSource": "https://api.moonshot.cn/v1/models",
-        "capabilitiesSource": "ai://models.dev/moonshotai"
+        "capabilitiesSource": "ai://models.dev/moonshotai",
+        "auth_mode": "api_key"
       }
     ]
   },
@@ -136,7 +165,8 @@
         },
         "modelsSource": "ai://models.dev/minimax",
         "capabilitiesSource": "ai://models.dev/minimax",
-        "staticModels": []
+        "staticModels": [],
+        "auth_mode": "api_key"
       },
       {
         "id": "china",
@@ -147,7 +177,8 @@
         },
         "modelsSource": "ai://models.dev/minimax",
         "capabilitiesSource": "ai://models.dev/minimax",
-        "staticModels": []
+        "staticModels": [],
+        "auth_mode": "api_key"
       }
     ]
   },
@@ -165,7 +196,8 @@
           "anthropic": "https://open.bigmodel.cn/api/anthropic"
         },
         "modelsSource": "https://open.bigmodel.cn/api/paas/v4/models",
-        "capabilitiesSource": "ai://models.dev/zhipuai"
+        "capabilitiesSource": "ai://models.dev/zhipuai",
+        "auth_mode": "api_key"
       },
       {
         "id": "coding",
@@ -175,7 +207,8 @@
           "anthropic": "https://open.bigmodel.cn/api/anthropic"
         },
         "modelsSource": "https://open.bigmodel.cn/api/coding/paas/v4/models",
-        "capabilitiesSource": "ai://models.dev/zhipuai"
+        "capabilitiesSource": "ai://models.dev/zhipuai",
+        "auth_mode": "api_key"
       }
     ]
   },
@@ -193,7 +226,8 @@
           "anthropic": "https://api.z.ai/api/anthropic"
         },
         "modelsSource": "https://api.z.ai/api/paas/v4/models",
-        "capabilitiesSource": "ai://models.dev/zai"
+        "capabilitiesSource": "ai://models.dev/zai",
+        "auth_mode": "api_key"
       },
       {
         "id": "coding",
@@ -203,7 +237,8 @@
           "anthropic": "https://api.z.ai/api/anthropic"
         },
         "modelsSource": "https://api.z.ai/api/coding/paas/v4/models",
-        "capabilitiesSource": "ai://models.dev/zai"
+        "capabilitiesSource": "ai://models.dev/zai",
+        "auth_mode": "api_key"
       }
     ]
   },
@@ -220,7 +255,8 @@
           "openai": "https://integrate.api.nvidia.com/v1"
         },
         "modelsSource": "https://integrate.api.nvidia.com/v1/models",
-        "capabilitiesSource": "ai://models.dev/nvidia"
+        "capabilitiesSource": "ai://models.dev/nvidia",
+        "auth_mode": "api_key"
       }
     ]
   },
@@ -238,7 +274,8 @@
           "anthropic": "https://openrouter.ai/api"
         },
         "modelsSource": "https://openrouter.ai/api/v1/models",
-        "capabilitiesSource": "https://openrouter.ai/api/v1/models"
+        "capabilitiesSource": "https://openrouter.ai/api/v1/models",
+        "auth_mode": "api_key"
       }
     ]
   },
@@ -257,7 +294,8 @@
         },
         "apiKey": "sk-ollama",
         "modelsSource": "http://127.0.0.1:11434/v1/models",
-        "capabilitiesSource": "http://127.0.0.1:11434/api/show"
+        "capabilitiesSource": "http://127.0.0.1:11434/api/show",
+        "auth_mode": "api_key"
       }
     ]
   }
