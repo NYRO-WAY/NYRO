@@ -22,14 +22,14 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends pkg-config libssl-dev libdbus-1-dev ca-certificates && \
     rm -rf /var/lib/apt/lists/*
 
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml ./
 COPY crates ./crates
 COPY src-server ./src-server
 COPY src-tauri/Cargo.toml ./src-tauri/Cargo.toml
 COPY src-tauri/build.rs ./src-tauri/build.rs
 COPY src-tauri/src ./src-tauri/src
 
-RUN cargo build --locked --release -p nyro-server
+RUN mkdir -p /workspace/webui/dist/ && cargo build --release -p nyro-server
 
 FROM ${RUNTIME_IMAGE} AS runtime
 WORKDIR /app
