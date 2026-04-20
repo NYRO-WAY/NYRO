@@ -4,6 +4,28 @@ All notable changes to Nyro will be documented in this file.
 
 ---
 
+## v1.6.2
+
+> Released on 2026-04-19
+
+#### Features
+
+- **Request/response payload logging**: extend `request_logs` schema with `method`, `path`, `request_headers`, `request_body`, `response_headers`, `response_body` (non-breaking migrations for SQLite + Postgres via `ensure_request_log_column` / `ALTER TABLE IF NOT EXISTS`); capture ingress payloads across universal, Gemini and embeddings proxy entrypoints; aggregate streaming responses into a final JSON and persist as `response_body`; emit logs on all early-exit paths (decode failure, no route, auth failure, upstream error, cache-miss fallbacks) with full context; cache-hit paths now carry complete request/response bodies; embeddings proxy parses `usage.prompt_tokens` into `input_tokens`
+- **Redesigned log viewer**: compact 7-column list (Time / Status / Model / Protocol / Latency / Token / Type) with left-aligned rows and click-to-open detail dialog; new `LogDetailDialog` with meta header and four copy-enabled payload blocks (request headers/body, response headers/body) using lazy `get_log(id)` fetch and pretty-printed JSON; Token displayed with IN/OUT labels and K/M formatting (<1000 raw, <1M one-decimal K, ≥1M two-decimal M); green SSE / sky JSON type badges replace the boolean stream column; Settings page splits Log Configuration into its own half-width card next to Proxy Configuration with HelpCircle tooltips
+- **Log payload persistence toggle**: new `log_record_payloads` setting (default `true`) to disable request/response body storage for sensitive-data deployments
+
+#### Improvements
+
+- **Standalone provider config ergonomics**: `default_protocol` is now optional and auto-inferred from the first declared `endpoints` entry when omitted; add aliases `protocol` (for `default_protocol`) and `apikey` (for `api_key`); switch `endpoints` to `IndexMap` to preserve YAML declaration order; reject conflicting canonical + alias pairs (`default_protocol` + `protocol`, `api_key` + `apikey`) at deserialization time via `YamlProviderRaw` + `TryFrom`; emit a WARN log when protocol is inferred from multiple endpoints
+- **Log retention defaults rebalanced**: `DEFAULT_RETENTION_DAYS` 30 → 7, batch size 64 → 32, cleanup interval 60s → 600s to reduce storage growth and cleanup churn
+- **Split log API**: `query_logs` list now strips heavy fields (NULL bodies/headers); new `get_log(id)` endpoint fetches the full payload on demand
+
+#### Fixes
+
+- Fix `release-server` workflow missing `webui/dist` at compile time: `#[derive(RustEmbed)]` expansion failed because `WebUiAssets::get` was absent; add Node 20 + pnpm 9 setup and run `pnpm -C webui install/build` before `cargo build`
+
+---
+
 ## v1.6.1
 
 > Released on 2026-04-14

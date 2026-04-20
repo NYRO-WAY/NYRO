@@ -4,6 +4,28 @@ Nyro 的所有重要变更均记录在此文件中。
 
 ---
 
+## v1.6.2
+
+> 发布于 2026-04-19
+
+#### 功能
+
+- **请求/响应载荷日志**：扩展 `request_logs` 表结构，新增 `method`、`path`、`request_headers`、`request_body`、`response_headers`、`response_body` 字段，SQLite 与 Postgres 均提供非破坏性迁移（`ensure_request_log_column` / `ALTER TABLE IF NOT EXISTS`）；在 universal、Gemini、Embeddings 代理入口统一捕获入口请求方法/路径/头部/Body；流式响应聚合为完整 JSON 后持久化为 `response_body`；所有早退出路径（解码失败、无路由、鉴权失败、上游错误、缓存回退）均落库完整上下文；缓存命中路径同样携带完整请求/响应 Body；Embeddings 解析 `usage.prompt_tokens` 作为 `input_tokens`
+- **日志查看器重构**：紧凑 7 列列表（时间 / 状态 / 模型 / 协议 / 延迟 / Token / 类型），行点击打开详情；新增 `LogDetailDialog`，含元信息头部与 4 个可复制的请求/响应头与 Body 面板，通过 `get_log(id)` 按需懒加载完整载荷并格式化 JSON；Token 以 IN/OUT 标签与 K/M 格式展示（<1000 原值、<1M 保留一位 K、≥1M 保留两位 M）；SSE（绿）/JSON（天蓝）类型徽标替代布尔 stream 列；设置页将日志配置拆分为独立半宽卡片，与代理配置并列，新增 HelpCircle 提示
+- **日志载荷持久化开关**：新增 `log_record_payloads` 设置项（默认 `true`），可在敏感数据场景下关闭请求/响应 Body 的存储
+
+#### 改进
+
+- **Standalone Provider 配置体验优化**：`default_protocol` 改为可选，未设置时自动取 `endpoints` 声明顺序的首个协议；新增别名 `protocol`（对应 `default_protocol`）与 `apikey`（对应 `api_key`）；`endpoints` 切换为 `IndexMap` 保留 YAML 声明顺序；通过 `YamlProviderRaw` + `TryFrom` 在反序列化阶段拒绝规范名与别名同时出现（`default_protocol` + `protocol`、`api_key` + `apikey`）；多 endpoint 下未显式声明协议时输出 WARN 日志提示
+- **日志保留默认值调整**：`DEFAULT_RETENTION_DAYS` 30 → 7 天、批大小 64 → 32、清理周期 60s → 600s，降低存储增长与清理抖动
+- **日志接口拆分**：列表 `query_logs` 现已剔除重型字段（bodies/headers 置 NULL）；新增 `get_log(id)` 接口按需拉取完整载荷
+
+#### 修复
+
+- 修复 `release-server` 工作流编译期缺失 `webui/dist` 的问题：`#[derive(RustEmbed)]` 展开失败导致 `WebUiAssets::get` 缺失；新增 Node 20 + pnpm 9 安装步骤，并在 `cargo build` 之前执行 `pnpm -C webui install/build`
+
+---
+
 ## v1.6.1
 
 > 发布于 2026-04-14

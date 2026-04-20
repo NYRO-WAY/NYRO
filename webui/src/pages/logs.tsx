@@ -1,10 +1,15 @@
 import { useQuery } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
+import { ChevronLeft, ChevronRight, ScrollText } from "lucide-react";
+
 import { backend } from "@/lib/backend";
-import type { LogPage, LogQuery, Provider } from "@/lib/types";
-import { ScrollText, ChevronLeft, ChevronRight } from "lucide-react";
+import type { LogPage, LogQuery, Provider, RequestLog } from "@/lib/types";
+import { getRouteType } from "@/lib/types";
+import { formatDuration, formatLogTime, formatTokenCount } from "@/lib/format";
+import { cn } from "@/lib/utils";
 import { useLocale } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import {
   Select,
   SelectContent,
@@ -12,29 +17,18 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { LogDetailDialog } from "@/components/log-detail-dialog";
 
-const PAGE_SIZE = 12;
+const PAGE_SIZE = 11;
 const ALL_OPTION = "__all__";
 
 export default function LogsPage() {
   const { locale } = useLocale();
   const isZh = locale === "zh-CN";
-  const dateTimeFormatter = useMemo(
-    () =>
-      new Intl.DateTimeFormat(isZh ? "zh-CN" : "en-US", {
-        year: "numeric",
-        month: "2-digit",
-        day: "2-digit",
-        hour: "2-digit",
-        minute: "2-digit",
-        second: "2-digit",
-        hour12: false,
-      }),
-    [isZh],
-  );
 
   const [page, setPage] = useState(0);
   const [filter, setFilter] = useState<LogQuery>({ limit: PAGE_SIZE, offset: 0 });
+  const [selected, setSelected] = useState<RequestLog | null>(null);
 
   const query: LogQuery = { ...filter, limit: PAGE_SIZE, offset: page * PAGE_SIZE };
 
@@ -51,13 +45,11 @@ export default function LogsPage() {
   const items = data?.items ?? [];
   const total = data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
   const providerOptions = useMemo(
     () => [
       { value: "", label: isZh ? "全部提供商" : "All Providers" },
-      ...providers.map((provider) => ({
-        value: provider.name,
-        label: provider.name,
-      })),
+      ...providers.map((p) => ({ value: p.name, label: p.name })),
     ],
     [providers, isZh],
   );
@@ -69,6 +61,7 @@ export default function LogsPage() {
     ],
     [isZh],
   );
+
   const providerFilterValue = filter.provider ?? ALL_OPTION;
   const statusFilterValue =
     (filter.status_min ?? null) === 200 && (filter.status_max ?? null) === 299
@@ -76,16 +69,6 @@ export default function LogsPage() {
       : (filter.status_min ?? null) === 400 && (filter.status_max ?? null) == null
         ? "error"
         : ALL_OPTION;
-  const formatLogTime = (value: string | undefined) => {
-    if (!value) return "–";
-    const normalized = value.includes("T") ? value : value.replace(" ", "T");
-    const hasZone = /[zZ]$|[+-]\d{2}:?\d{2}$/.test(normalized);
-    const parsed = new Date(hasZone ? normalized : `${normalized}Z`);
-    if (Number.isNaN(parsed.getTime())) {
-      return value.replace("T", " ").slice(0, 19);
-    }
-    return dateTimeFormatter.format(parsed);
-  };
 
   return (
     <div className="space-y-5">
@@ -155,49 +138,112 @@ export default function LogsPage() {
             <table className="w-full text-sm">
               <thead className="border-b border-slate-200/80 bg-slate-50/50 text-slate-500">
                 <tr>
-                  <th className="px-4 py-3 text-left font-medium">{isZh ? "时间" : "Time"}</th>
-                  <th className="px-4 py-3 text-left font-medium">{isZh ? "模型" : "Model"}</th>
-                  <th className="px-4 py-3 text-left font-medium">{isZh ? "提供商" : "Provider"}</th>
-                  <th className="px-4 py-3 text-left font-medium">{isZh ? "协议" : "Protocol"}</th>
-                  <th className="px-4 py-3 text-center font-medium">{isZh ? "状态" : "Status"}</th>
-                  <th className="px-4 py-3 text-right font-medium">{isZh ? "延迟" : "Latency"}</th>
-                  <th className="px-4 py-3 text-right font-medium">{isZh ? "Token" : "Tokens"}</th>
-                  <th className="px-4 py-3 text-center font-medium">{isZh ? "流式" : "Stream"}</th>
+                  <th className="px-3 py-2.5 text-left font-medium whitespace-nowrap">
+                    {isZh ? "时间" : "Time"}
+                  </th>
+                  <th className="px-3 py-2.5 text-left font-medium">
+                    {isZh ? "状态" : "Status"}
+                  </th>
+                  <th className="px-3 py-2.5 text-left font-medium">
+                    {isZh ? "模型" : "Model"}
+                  </th>
+                  <th className="px-3 py-2.5 text-left font-medium">
+                    {isZh ? "协议" : "Protocol"}
+                  </th>
+                  <th className="px-3 py-2.5 text-left font-medium">
+                    {isZh ? "耗时" : "Latency"}
+                  </th>
+                  <th className="px-3 py-2.5 text-left font-medium">Token</th>
+                  <th className="px-3 py-2.5 text-left font-medium">
+                    {isZh ? "类型" : "Type"}
+                  </th>
                 </tr>
               </thead>
               <tbody>
-                {items.map((log) => (
-                  <tr key={log.id} className="border-t border-slate-100 text-slate-700 hover:bg-slate-50/50">
-                    <td className="px-4 py-2.5 text-xs text-slate-500 whitespace-nowrap">
-                      {formatLogTime(log.created_at)}
-                    </td>
-                    <td className="px-4 py-2.5 font-medium">{log.actual_model ?? "–"}</td>
-                    <td className="px-4 py-2.5">{log.provider_name ?? "–"}</td>
-                    <td className="px-4 py-2.5">
-                      <span className="text-xs text-slate-500">
-                        {log.ingress_protocol} → {log.egress_protocol}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2.5 text-center">
-                      <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${
-                        (log.status_code ?? 0) < 400
-                          ? "bg-green-50 text-green-700"
-                          : "bg-red-50 text-red-600"
-                      }`}>
-                        {log.status_code ?? "–"}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2.5 text-right text-xs">
-                      {log.duration_ms != null ? `${log.duration_ms.toFixed(0)}ms` : "–"}
-                    </td>
-                    <td className="px-4 py-2.5 text-right text-xs">
-                      {log.input_tokens + log.output_tokens}
-                    </td>
-                    <td className="px-4 py-2.5 text-center text-xs">
-                      {log.is_stream ? "SSE" : "–"}
-                    </td>
-                  </tr>
-                ))}
+                {items.map((log) => {
+                  const routeType = getRouteType(log);
+                  const statusOk = (log.status_code ?? 0) < 400;
+                  return (
+                    <tr
+                      key={log.id}
+                      onClick={() => setSelected(log)}
+                      className="cursor-pointer border-t border-slate-100 text-slate-700 transition-colors hover:bg-slate-50"
+                    >
+                      <td className="px-3 py-2 text-xs text-slate-500 whitespace-nowrap">
+                        {formatLogTime(log.created_at)}
+                      </td>
+                      <td className="px-3 py-2">
+                        <span
+                          className={cn(
+                            "inline-block rounded-full px-2 py-0.5 text-xs font-medium",
+                            statusOk ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600",
+                          )}
+                        >
+                          {log.status_code ?? "–"}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2">
+                        <div className="flex flex-col leading-tight">
+                          <span className="text-xs font-medium text-slate-800">
+                            {log.request_model ?? "–"}
+                          </span>
+                          <span className="text-[11px] text-slate-500">
+                            {log.provider_name ?? "–"}
+                            {log.actual_model ? `: ${log.actual_model}` : ""}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="px-3 py-2">
+                        <div className="flex items-center gap-1.5 text-xs text-slate-500">
+                          <span>
+                            {(log.ingress_protocol ?? "–")} → {(log.egress_protocol ?? "–")}
+                          </span>
+                          {routeType === "embedding" ? (
+                            <Badge variant="outline" className="text-[10px]">EMB</Badge>
+                          ) : null}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2 text-xs text-slate-600 whitespace-nowrap">
+                        {formatDuration(log.duration_ms)}
+                      </td>
+                      <td className="px-3 py-2">
+                        <div className="flex flex-col items-start leading-tight text-[11px] tabular-nums">
+                          <span className="inline-flex items-center gap-1 text-sky-600">
+                            <span className="font-semibold tracking-wide">IN</span>
+                            <span title={String(log.input_tokens)}>
+                              {formatTokenCount(log.input_tokens)}
+                            </span>
+                          </span>
+                          {routeType === "embedding" && log.output_tokens === 0 ? null : (
+                            <span className="inline-flex items-center gap-1 text-emerald-600">
+                              <span className="font-semibold tracking-wide">OUT</span>
+                              <span title={String(log.output_tokens)}>
+                                {formatTokenCount(log.output_tokens)}
+                              </span>
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2">
+                        {log.is_stream ? (
+                          <Badge
+                            variant="outline"
+                            className="border-green-200 bg-green-50 text-[10px] text-green-700"
+                          >
+                            SSE
+                          </Badge>
+                        ) : (
+                          <Badge
+                            variant="outline"
+                            className="border-sky-200 bg-sky-50 text-[10px] text-sky-700"
+                          >
+                            JSON
+                          </Badge>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -227,6 +273,15 @@ export default function LogsPage() {
           </div>
         </div>
       )}
+
+      <LogDetailDialog
+        logId={selected?.id ?? null}
+        summary={selected}
+        open={!!selected}
+        onOpenChange={(open) => {
+          if (!open) setSelected(null);
+        }}
+      />
     </div>
   );
 }
