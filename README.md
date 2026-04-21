@@ -233,54 +233,22 @@ export NYRO_POSTGRES_DSN="postgres://user:pass@host:5432/db"
 
 ### Docker
 
-Nyro's Docker support is split into two separate use cases:
+Pre-built server images are distributed via the separate [nyroway/docker-nyro](https://github.com/nyroway/docker-nyro) repository and published to Docker Hub as [nyroway/nyro](https://hub.docker.com/r/nyroway/nyro).
 
-- `docker/runtime/Dockerfile`: production-style server distribution image (`nyro-server` + `webui/dist`)
-- `docker/dev/Dockerfile`: development container image for contributors
-
-Build and run the server distribution image:
+Quick start:
 
 ```bash
-docker build -f docker/runtime/Dockerfile -t nyro:runtime .
-
 docker run --rm \
   -e NYRO_ADMIN_TOKEN=change-me \
   -p 19530:19530 \
   -p 19531:19531 \
   -v nyro-data:/var/lib/nyro \
-  nyro:runtime
+  nyroway/nyro:latest
 ```
 
-Open `http://127.0.0.1:19531` for the management UI.
+Open `http://127.0.0.1:19531` for the management UI. Use the same `NYRO_ADMIN_TOKEN` value as the Bearer token for admin API requests.
 
-Use the same `NYRO_ADMIN_TOKEN` value as the Bearer token for admin API requests.
-
-Override base images with `--build-arg` if you need to use a different registry or a mirrored base image:
-
-```bash
-docker build \
-  --build-arg RUST_IMAGE=<custom-rust-image> \
-  --build-arg NODE_IMAGE=<custom-node-image> \
-  --build-arg RUNTIME_IMAGE=<custom-runtime-image> \
-  -f docker/runtime/Dockerfile \
-  -t nyro:runtime .
-```
-
-Use the development container directly:
-
-```bash
-docker build -f docker/dev/Dockerfile -t nyro:dev .
-
-docker run --rm -it \
-  -v "$(pwd)":/workspace/nyro \
-  -w /workspace/nyro \
-  -p 5173:5173 \
-  -p 19530:19530 \
-  -p 19531:19531 \
-  nyro:dev
-```
-
-VS Code / Cursor users can also open the repository with `.devcontainer/devcontainer.json`.
+For Postgres-backed deployments and `docker compose` usage, see the [docker-nyro README](https://github.com/nyroway/docker-nyro).
 
 ---
 

@@ -112,3 +112,12 @@ jobs:
           artifacts: artifacts/*
           replacesArtifacts: true
           makeLatest: legacy
+
+      - name: Trigger docker-nyro build
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.DOCKER_NYRO_TOKEN }}
+          repository: nyroway/docker-nyro
+          event-type: release-published
+          client-payload: '{"version": "${{ github.ref_name }}"}'
