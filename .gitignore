@@ -1,6 +1,5 @@
 # Rust
 target/
-Cargo.lock
 
 # Node / WebUI
 webui/node_modules/
