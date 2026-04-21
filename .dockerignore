@@ -1,9 +1,0 @@
-.git
-.github
-target
-webui/node_modules
-webui/dist
-src-tauri/target
-src-tauri/gen
-scripts/smoke/__pycache__
-.DS_Store

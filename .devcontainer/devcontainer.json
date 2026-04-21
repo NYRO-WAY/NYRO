@@ -1,7 +1,7 @@
 {
   "name": "nyro-dev",
   "build": {
-    "dockerfile": "../docker/dev/Dockerfile",
+    "dockerfile": "Dockerfile",
     "context": ".."
   },
   "remoteUser": "vscode",
