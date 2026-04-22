@@ -1316,6 +1316,21 @@ END $$;"#,
         .execute(self.adapter.pool())
         .await
         .ok();
+        // Migrate OAuth credentials from providers table to new dedicated table
+        sqlx::query(
+            r#"
+            INSERT INTO provider_oauth_credentials
+                (provider_id, access_token, refresh_token, expires_at, status)
+            SELECT id, COALESCE(access_token, ''), refresh_token, expires_at, 'connected'
+            FROM providers
+            WHERE auth_mode = 'oauth'
+              AND access_token IS NOT NULL
+              AND btrim(access_token) != ''
+            ON CONFLICT DO NOTHING
+            "#,
+        )
+        .execute(self.adapter.pool())
+        .await?;
         ensure_semantic_cache_vectors_table(self.adapter.pool(), self.vector_dimensions).await?;
         Ok(())
     }
@@ -1643,4 +1658,26 @@ CREATE TABLE IF NOT EXISTS api_key_routes (
 
 CREATE INDEX IF NOT EXISTS idx_api_keys_key ON api_keys(key);
 CREATE INDEX IF NOT EXISTS idx_api_key_routes_route_id ON api_key_routes(route_id);
+
+CREATE TABLE IF NOT EXISTS provider_oauth_credentials (
+    provider_id       TEXT PRIMARY KEY REFERENCES providers(id) ON DELETE CASCADE,
+    driver_key        TEXT NOT NULL DEFAULT '',
+    scheme            TEXT NOT NULL DEFAULT '',
+    access_token      TEXT NOT NULL DEFAULT '',
+    refresh_token     TEXT,
+    expires_at        TIMESTAMPTZ,
+    resource_url      TEXT,
+    subject_id        TEXT,
+    scopes            TEXT NOT NULL DEFAULT '[]',
+    meta              TEXT NOT NULL DEFAULT '{}',
+    status            TEXT NOT NULL DEFAULT 'connected',
+    status_version    INTEGER NOT NULL DEFAULT 0,
+    last_error        TEXT,
+    last_refresh_at   TIMESTAMPTZ,
+    created_at        TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
+    updated_at        TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_oauth_creds_status ON provider_oauth_credentials(status);
+CREATE INDEX IF NOT EXISTS idx_oauth_creds_expires ON provider_oauth_credentials(expires_at);
 "#;
