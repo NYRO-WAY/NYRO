@@ -1,16 +1,20 @@
+use std::time::Duration;
+
+use anyhow::Context;
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 
 use crate::db::models::{
-    CreateProvider, CreateRoute, LogPage, LogQuery, ModelStats, Provider, ProviderStats,
-    RequestLog, Route, StatsHourly, StatsOverview, UpdateProvider, UpdateRoute,
+    CreateProvider, CreateRoute, LogPage, LogQuery, ModelStats, OAuthCredential, Provider,
+    ProviderStats, RequestLog, Route, StatsHourly, StatsOverview, UpdateProvider, UpdateRoute,
+    UpsertOAuthCredential,
 };
 use crate::logging::LogEntry;
 
 use super::traits::{
-    ApiKeyStore, AuthAccessStore, LogStore, ProviderStore, ProviderTestResult,
-    RouteSnapshotStore, RouteStore, RouteTargetStore, SettingsStore, Storage, StorageBootstrap,
-    StorageBackend, StorageHealth,
+    ApiKeyStore, AuthAccessStore, LogStore, OAuthCredentialStore, ProviderStore,
+    ProviderTestResult, RouteSnapshotStore, RouteStore, RouteTargetStore, SettingsStore, Storage,
+    StorageBackend, StorageBootstrap, StorageHealth,
 };
 
 use std::sync::Arc;
@@ -20,6 +24,7 @@ pub struct MemoryStorage {
     providers: Arc<RwLock<Vec<Provider>>>,
     routes: Arc<RwLock<Vec<Route>>>,
     settings: Arc<RwLock<Vec<(String, String)>>>,
+    oauth_credentials: Arc<MemoryOAuthCredentialStore>,
 }
 
 impl MemoryStorage {
@@ -32,8 +37,15 @@ impl MemoryStorage {
             providers: Arc::new(RwLock::new(providers)),
             routes: Arc::new(RwLock::new(routes)),
             settings: Arc::new(RwLock::new(settings)),
+            oauth_credentials: Arc::new(MemoryOAuthCredentialStore {
+                credentials: RwLock::new(std::collections::HashMap::new()),
+            }),
         }
     }
+}
+
+pub struct MemoryOAuthCredentialStore {
+    credentials: RwLock<std::collections::HashMap<String, OAuthCredential>>,
 }
 
 impl Storage for MemoryStorage {
@@ -60,6 +72,9 @@ impl Storage for MemoryStorage {
     }
     fn logs(&self) -> &dyn LogStore {
         self
+    }
+    fn oauth_credentials(&self) -> &dyn OAuthCredentialStore {
+        self.oauth_credentials.as_ref()
     }
     fn bootstrap(&self) -> &dyn StorageBootstrap {
         self
@@ -233,4 +248,133 @@ impl StorageBootstrap for MemoryStorage {
         })
     }
 
+}
+
+fn now_rfc3339() -> String {
+    chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string()
+}
+
+#[async_trait]
+impl OAuthCredentialStore for MemoryOAuthCredentialStore {
+    async fn get(&self, provider_id: &str) -> anyhow::Result<Option<OAuthCredential>> {
+        Ok(self.credentials.read().await.get(provider_id).cloned())
+    }
+
+    async fn upsert(
+        &self,
+        provider_id: &str,
+        input: UpsertOAuthCredential,
+    ) -> anyhow::Result<OAuthCredential> {
+        let now = now_rfc3339();
+        let mut map = self.credentials.write().await;
+        let version = map.get(provider_id).map(|c| c.status_version + 1).unwrap_or(0);
+        let cred = OAuthCredential {
+            provider_id: provider_id.to_string(),
+            driver_key: input.driver_key,
+            scheme: input.scheme,
+            access_token: input.access_token,
+            refresh_token: input.refresh_token,
+            expires_at: input.expires_at,
+            resource_url: input.resource_url,
+            subject_id: input.subject_id,
+            scopes: input.scopes.unwrap_or_else(|| "[]".to_string()),
+            meta: input.meta.unwrap_or_else(|| "{}".to_string()),
+            status: "connected".to_string(),
+            status_version: version,
+            last_error: None,
+            last_refresh_at: map.get(provider_id).and_then(|c| c.last_refresh_at.clone()),
+            created_at: map.get(provider_id).map(|c| c.created_at.clone()).unwrap_or_else(|| now.clone()),
+            updated_at: now,
+        };
+        map.insert(provider_id.to_string(), cred.clone());
+        Ok(cred)
+    }
+
+    async fn delete(&self, provider_id: &str) -> anyhow::Result<()> {
+        self.credentials.write().await.remove(provider_id);
+        Ok(())
+    }
+
+    async fn try_begin_refresh(
+        &self,
+        provider_id: &str,
+        expected_version: i32,
+    ) -> anyhow::Result<Option<OAuthCredential>> {
+        let mut map = self.credentials.write().await;
+        let Some(cred) = map.get_mut(provider_id) else {
+            return Ok(None);
+        };
+        if cred.status != "connected" || cred.status_version != expected_version {
+            return Ok(None);
+        }
+        cred.status = "refreshing".to_string();
+        cred.status_version += 1;
+        cred.updated_at = now_rfc3339();
+        Ok(Some(cred.clone()))
+    }
+
+    async fn complete_refresh(
+        &self,
+        provider_id: &str,
+        input: UpsertOAuthCredential,
+    ) -> anyhow::Result<OAuthCredential> {
+        let mut map = self.credentials.write().await;
+        let cred = map.get_mut(provider_id).context("credential not found")?;
+        let now = now_rfc3339();
+        cred.driver_key = input.driver_key;
+        cred.scheme = input.scheme;
+        cred.access_token = input.access_token;
+        cred.refresh_token = input.refresh_token;
+        cred.expires_at = input.expires_at;
+        cred.resource_url = input.resource_url;
+        cred.subject_id = input.subject_id;
+        if let Some(scopes) = input.scopes {
+            cred.scopes = scopes;
+        }
+        if let Some(meta) = input.meta {
+            cred.meta = meta;
+        }
+        cred.status = "connected".to_string();
+        cred.status_version += 1;
+        cred.last_error = None;
+        cred.last_refresh_at = Some(now.clone());
+        cred.updated_at = now;
+        Ok(cred.clone())
+    }
+
+    async fn fail_refresh(
+        &self,
+        provider_id: &str,
+        error_message: &str,
+    ) -> anyhow::Result<()> {
+        let mut map = self.credentials.write().await;
+        if let Some(cred) = map.get_mut(provider_id) {
+            cred.status = "error".to_string();
+            cred.last_error = Some(error_message.to_string());
+            cred.status_version += 1;
+            cred.updated_at = now_rfc3339();
+        }
+        Ok(())
+    }
+
+    async fn list_expiring(&self, _before: Duration) -> anyhow::Result<Vec<OAuthCredential>> {
+        // Memory store: return all connected credentials (no real time comparison)
+        let map = self.credentials.read().await;
+        Ok(map.values().filter(|c| c.status == "connected").cloned().collect())
+    }
+
+    async fn recover_stale_refreshing(&self, _timeout: Duration) -> anyhow::Result<u64> {
+        let mut map = self.credentials.write().await;
+        let mut count = 0u64;
+        for cred in map.values_mut() {
+            if cred.status == "refreshing" {
+                cred.status = "error".to_string();
+                cred.last_error = Some("refresh timeout".to_string());
+                cred.status_version += 1;
+                cred.updated_at = now_rfc3339();
+                count += 1;
+            }
+        }
+        Ok(count)
+    }
 }

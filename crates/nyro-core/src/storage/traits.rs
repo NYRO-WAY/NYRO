@@ -5,8 +5,8 @@ use async_trait::async_trait;
 
 use crate::db::models::{
     ApiKeyWithBindings, CreateApiKey, CreateProvider, CreateRoute, CreateRouteTarget, LogPage,
-    LogQuery, ModelStats, Provider, ProviderStats, RequestLog, Route, RouteTarget, StatsHourly,
-    StatsOverview, UpdateApiKey, UpdateProvider, UpdateRoute,
+    LogQuery, ModelStats, OAuthCredential, Provider, ProviderStats, RequestLog, Route, RouteTarget,
+    StatsHourly, StatsOverview, UpdateApiKey, UpdateProvider, UpdateRoute, UpsertOAuthCredential,
 };
 use crate::logging::LogEntry;
 
@@ -137,6 +137,34 @@ pub trait CacheStore: Send + Sync {
 }
 
 #[async_trait]
+pub trait OAuthCredentialStore: Send + Sync {
+    async fn get(&self, provider_id: &str) -> anyhow::Result<Option<OAuthCredential>>;
+    async fn upsert(
+        &self,
+        provider_id: &str,
+        input: UpsertOAuthCredential,
+    ) -> anyhow::Result<OAuthCredential>;
+    async fn delete(&self, provider_id: &str) -> anyhow::Result<()>;
+    async fn try_begin_refresh(
+        &self,
+        provider_id: &str,
+        expected_version: i32,
+    ) -> anyhow::Result<Option<OAuthCredential>>;
+    async fn complete_refresh(
+        &self,
+        provider_id: &str,
+        input: UpsertOAuthCredential,
+    ) -> anyhow::Result<OAuthCredential>;
+    async fn fail_refresh(
+        &self,
+        provider_id: &str,
+        error_message: &str,
+    ) -> anyhow::Result<()>;
+    async fn list_expiring(&self, before: Duration) -> anyhow::Result<Vec<OAuthCredential>>;
+    async fn recover_stale_refreshing(&self, timeout: Duration) -> anyhow::Result<u64>;
+}
+
+#[async_trait]
 pub trait StorageBootstrap: Send + Sync {
     async fn init(&self) -> anyhow::Result<()>;
     async fn migrate(&self) -> anyhow::Result<()>;
@@ -161,6 +189,7 @@ pub trait Storage: Send + Sync {
     fn cache(&self) -> Option<&dyn CacheStore> {
         None
     }
+    fn oauth_credentials(&self) -> &dyn OAuthCredentialStore;
     fn bootstrap(&self) -> &dyn StorageBootstrap;
 }
 

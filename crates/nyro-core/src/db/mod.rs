@@ -83,6 +83,8 @@ pub async fn migrate(pool: &SqlitePool, vector_dimensions: usize) -> anyhow::Res
     ensure_provider_column(pool, "access_token", "TEXT").await?;
     ensure_provider_column(pool, "refresh_token", "TEXT").await?;
     ensure_provider_column(pool, "expires_at", "TEXT").await?;
+    ensure_oauth_credentials_table(pool).await?;
+    migrate_oauth_credentials_from_providers(pool).await?;
     ensure_semantic_cache_vectors_table(pool, vector_dimensions).await?;
     backfill_provider_vendor(pool).await?;
     backfill_route_fields(pool).await?;
@@ -407,6 +409,54 @@ async fn backfill_route_targets(pool: &SqlitePool) -> anyhow::Result<()> {
     .execute(pool)
     .await?;
 
+    Ok(())
+}
+
+async fn ensure_oauth_credentials_table(pool: &SqlitePool) -> anyhow::Result<()> {
+    sqlx::query(
+        r#"
+        CREATE TABLE IF NOT EXISTS provider_oauth_credentials (
+            provider_id       TEXT PRIMARY KEY REFERENCES providers(id) ON DELETE CASCADE,
+            driver_key        TEXT NOT NULL DEFAULT '',
+            scheme            TEXT NOT NULL DEFAULT '',
+            access_token      TEXT NOT NULL DEFAULT '',
+            refresh_token     TEXT,
+            expires_at        TEXT,
+            resource_url      TEXT,
+            subject_id        TEXT,
+            scopes            TEXT NOT NULL DEFAULT '[]',
+            meta              TEXT NOT NULL DEFAULT '{}',
+            status            TEXT NOT NULL DEFAULT 'connected',
+            status_version    INTEGER NOT NULL DEFAULT 0,
+            last_error        TEXT,
+            last_refresh_at   TEXT,
+            created_at        TEXT DEFAULT (datetime('now')),
+            updated_at        TEXT DEFAULT (datetime('now'))
+        )
+        "#,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+async fn migrate_oauth_credentials_from_providers(pool: &SqlitePool) -> anyhow::Result<()> {
+    if !column_exists(pool, "providers", "access_token").await? {
+        return Ok(());
+    }
+    sqlx::query(
+        r#"
+        INSERT OR IGNORE INTO provider_oauth_credentials
+            (provider_id, access_token, refresh_token, expires_at, status)
+        SELECT id, COALESCE(access_token, ''), refresh_token, expires_at, 'connected'
+        FROM providers
+        WHERE auth_mode = 'oauth'
+          AND access_token IS NOT NULL
+          AND access_token != ''
+        "#,
+    )
+    .execute(pool)
+    .await?;
     Ok(())
 }
 

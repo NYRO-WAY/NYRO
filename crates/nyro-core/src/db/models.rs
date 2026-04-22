@@ -64,9 +64,6 @@ pub struct Provider {
     pub api_key: String,
     #[serde(default = "default_provider_auth_mode")]
     pub auth_mode: String,
-    pub access_token: Option<String>,
-    pub refresh_token: Option<String>,
-    pub expires_at: Option<String>,
     #[serde(default)]
     pub use_proxy: bool,
     pub last_test_success: Option<bool>,
@@ -74,6 +71,39 @@ pub struct Provider {
     pub is_enabled: bool,
     pub created_at: String,
     pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
+pub struct OAuthCredential {
+    pub provider_id: String,
+    pub driver_key: String,
+    pub scheme: String,
+    pub access_token: String,
+    pub refresh_token: Option<String>,
+    pub expires_at: Option<String>,
+    pub resource_url: Option<String>,
+    pub subject_id: Option<String>,
+    pub scopes: String,
+    pub meta: String,
+    pub status: String,
+    pub status_version: i32,
+    pub last_error: Option<String>,
+    pub last_refresh_at: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct UpsertOAuthCredential {
+    pub driver_key: String,
+    pub scheme: String,
+    pub access_token: String,
+    pub refresh_token: Option<String>,
+    pub expires_at: Option<String>,
+    pub resource_url: Option<String>,
+    pub subject_id: Option<String>,
+    pub scopes: Option<String>,
+    pub meta: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -234,9 +264,6 @@ pub struct CreateProvider {
     pub api_key: String,
     #[serde(default = "default_provider_auth_mode")]
     pub auth_mode: String,
-    pub access_token: Option<String>,
-    pub refresh_token: Option<String>,
-    pub expires_at: Option<String>,
     #[serde(default)]
     pub use_proxy: bool,
 }
@@ -258,9 +285,6 @@ pub struct UpdateProvider {
     pub static_models: Option<String>,
     pub api_key: Option<String>,
     pub auth_mode: Option<String>,
-    pub access_token: Option<String>,
-    pub refresh_token: Option<String>,
-    pub expires_at: Option<String>,
     pub use_proxy: Option<bool>,
     pub is_enabled: Option<bool>,
 }
@@ -475,9 +499,6 @@ pub struct ExportProvider {
     pub api_key: String,
     #[serde(default = "default_provider_auth_mode")]
     pub auth_mode: String,
-    pub access_token: Option<String>,
-    pub refresh_token: Option<String>,
-    pub expires_at: Option<String>,
     #[serde(default)]
     pub use_proxy: bool,
     pub is_enabled: bool,

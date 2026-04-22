@@ -7,17 +7,17 @@ use std::time::Duration;
 
 use crate::db::models::{
     ApiKey, ApiKeyWithBindings, CreateApiKey, CreateProvider, CreateRoute, CreateRouteTarget,
-    LogPage, LogQuery, ModelStats, Provider, ProviderStats, RequestLog, Route, RouteTarget,
-    StatsHourly, StatsOverview, UpdateApiKey, UpdateProvider, UpdateRoute,
-    is_valid_provider_auth_mode,
+    LogPage, LogQuery, ModelStats, OAuthCredential, Provider, ProviderStats, RequestLog, Route,
+    RouteTarget, StatsHourly, StatsOverview, UpdateApiKey, UpdateProvider, UpdateRoute,
+    UpsertOAuthCredential, is_valid_provider_auth_mode,
 };
 use crate::logging::LogEntry;
 use crate::storage::sql::config::SqlBackendConfig;
 use crate::storage::sql::pool::RelationalPool;
 use crate::storage::traits::{
-    ApiKeyAccessRecord, ApiKeyStore, AuthAccessStore, CacheStore, LogStore, ProviderStore,
-    ProviderTestResult, RouteSnapshotStore, RouteStore, RouteTargetStore, SettingsStore, Storage,
-    StorageBackend, StorageBootstrap, StorageHealth, UsageWindow,
+    ApiKeyAccessRecord, ApiKeyStore, AuthAccessStore, CacheStore, LogStore, OAuthCredentialStore,
+    ProviderStore, ProviderTestResult, RouteSnapshotStore, RouteStore, RouteTargetStore,
+    SettingsStore, Storage, StorageBackend, StorageBootstrap, StorageHealth, UsageWindow,
 };
 
 const VECTOR_DIMENSIONS_SETTING_KEY: &str = "vector_embedding_dimensions";
@@ -80,6 +80,7 @@ pub struct PostgresStorage {
     settings_store: Arc<PostgresSettingsStore>,
     api_key_store: Arc<PostgresApiKeyStore>,
     auth_store: Arc<PostgresAuthAccessStore>,
+    oauth_credential_store: Arc<PostgresOAuthCredentialStore>,
     log_store: Arc<PostgresLogStore>,
     bootstrap: Arc<PostgresBootstrap>,
 }
@@ -101,6 +102,7 @@ impl PostgresStorage {
         let settings_store = Arc::new(PostgresSettingsStore { pool: pool.clone() });
         let api_key_store = Arc::new(PostgresApiKeyStore { pool: pool.clone() });
         let auth_store = Arc::new(PostgresAuthAccessStore { pool: pool.clone() });
+        let oauth_credential_store = Arc::new(PostgresOAuthCredentialStore { pool: pool.clone() });
         let log_store = Arc::new(PostgresLogStore { pool: pool.clone() });
         let bootstrap = Arc::new(PostgresBootstrap {
             adapter,
@@ -114,6 +116,7 @@ impl PostgresStorage {
             settings_store,
             api_key_store,
             auth_store,
+            oauth_credential_store,
             log_store,
             bootstrap,
         })
@@ -224,8 +227,122 @@ impl Storage for PostgresStorage {
         Some(self.log_store.as_ref())
     }
 
+    fn oauth_credentials(&self) -> &dyn OAuthCredentialStore {
+        self.oauth_credential_store.as_ref()
+    }
+
     fn bootstrap(&self) -> &dyn StorageBootstrap {
         self.bootstrap.as_ref()
+    }
+}
+
+#[derive(Clone)]
+struct PostgresOAuthCredentialStore {
+    pool: Pool<Postgres>,
+}
+
+#[async_trait]
+impl OAuthCredentialStore for PostgresOAuthCredentialStore {
+    async fn get(&self, provider_id: &str) -> anyhow::Result<Option<OAuthCredential>> {
+        Ok(sqlx::query_as::<_, OAuthCredential>(
+            "SELECT provider_id, driver_key, scheme, access_token, refresh_token, to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS expires_at, resource_url, subject_id, scopes, meta, status, status_version, last_error, to_char(last_refresh_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS last_refresh_at, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS updated_at FROM provider_oauth_credentials WHERE provider_id = $1",
+        )
+        .bind(provider_id)
+        .fetch_optional(&self.pool)
+        .await?)
+    }
+
+    async fn upsert(&self, provider_id: &str, input: UpsertOAuthCredential) -> anyhow::Result<OAuthCredential> {
+        sqlx::query(
+            "INSERT INTO provider_oauth_credentials (provider_id, driver_key, scheme, access_token, refresh_token, expires_at, resource_url, subject_id, scopes, meta, status, status_version, last_error) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'connected', 0, NULL) ON CONFLICT(provider_id) DO UPDATE SET driver_key=EXCLUDED.driver_key, scheme=EXCLUDED.scheme, access_token=EXCLUDED.access_token, refresh_token=EXCLUDED.refresh_token, expires_at=EXCLUDED.expires_at, resource_url=EXCLUDED.resource_url, subject_id=EXCLUDED.subject_id, scopes=EXCLUDED.scopes, meta=EXCLUDED.meta, status='connected', status_version=provider_oauth_credentials.status_version+1, last_error=NULL, updated_at=CURRENT_TIMESTAMP",
+        )
+        .bind(provider_id)
+        .bind(&input.driver_key)
+        .bind(&input.scheme)
+        .bind(&input.access_token)
+        .bind(&input.refresh_token)
+        .bind(&input.expires_at)
+        .bind(&input.resource_url)
+        .bind(&input.subject_id)
+        .bind(input.scopes.as_deref().unwrap_or("[]"))
+        .bind(input.meta.as_deref().unwrap_or("{}"))
+        .execute(&self.pool)
+        .await?;
+        self.get(provider_id).await?.context("credential not found after upsert")
+    }
+
+    async fn delete(&self, provider_id: &str) -> anyhow::Result<()> {
+        sqlx::query("DELETE FROM provider_oauth_credentials WHERE provider_id = $1")
+            .bind(provider_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    async fn try_begin_refresh(&self, provider_id: &str, expected_version: i32) -> anyhow::Result<Option<OAuthCredential>> {
+        let result = sqlx::query(
+            "UPDATE provider_oauth_credentials SET status='refreshing', status_version=status_version+1, updated_at=CURRENT_TIMESTAMP WHERE provider_id=$1 AND status='connected' AND status_version=$2",
+        )
+        .bind(provider_id)
+        .bind(expected_version)
+        .execute(&self.pool)
+        .await?;
+        if result.rows_affected() > 0 {
+            Ok(self.get(provider_id).await?)
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn complete_refresh(&self, provider_id: &str, input: UpsertOAuthCredential) -> anyhow::Result<OAuthCredential> {
+        sqlx::query(
+            "UPDATE provider_oauth_credentials SET driver_key=$1, scheme=$2, access_token=$3, refresh_token=$4, expires_at=$5, resource_url=$6, subject_id=$7, scopes=$8, meta=$9, status='connected', status_version=status_version+1, last_error=NULL, last_refresh_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE provider_id=$10",
+        )
+        .bind(&input.driver_key)
+        .bind(&input.scheme)
+        .bind(&input.access_token)
+        .bind(&input.refresh_token)
+        .bind(&input.expires_at)
+        .bind(&input.resource_url)
+        .bind(&input.subject_id)
+        .bind(input.scopes.as_deref().unwrap_or("[]"))
+        .bind(input.meta.as_deref().unwrap_or("{}"))
+        .bind(provider_id)
+        .execute(&self.pool)
+        .await?;
+        self.get(provider_id).await?.context("credential not found after complete_refresh")
+    }
+
+    async fn fail_refresh(&self, provider_id: &str, error_message: &str) -> anyhow::Result<()> {
+        sqlx::query(
+            "UPDATE provider_oauth_credentials SET status='error', last_error=$1, status_version=status_version+1, updated_at=CURRENT_TIMESTAMP WHERE provider_id=$2",
+        )
+        .bind(error_message)
+        .bind(provider_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn list_expiring(&self, before: Duration) -> anyhow::Result<Vec<OAuthCredential>> {
+        let seconds = before.as_secs() as i64;
+        Ok(sqlx::query_as::<_, OAuthCredential>(
+            "SELECT provider_id, driver_key, scheme, access_token, refresh_token, to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS expires_at, resource_url, subject_id, scopes, meta, status, status_version, last_error, to_char(last_refresh_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS last_refresh_at, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS updated_at FROM provider_oauth_credentials WHERE status='connected' AND expires_at IS NOT NULL AND expires_at <= CURRENT_TIMESTAMP + ($1 * INTERVAL '1 second')",
+        )
+        .bind(seconds)
+        .fetch_all(&self.pool)
+        .await?)
+    }
+
+    async fn recover_stale_refreshing(&self, timeout: Duration) -> anyhow::Result<u64> {
+        let seconds = timeout.as_secs() as i64;
+        let result = sqlx::query(
+            "UPDATE provider_oauth_credentials SET status='error', last_error='refresh timeout: process did not complete within timeout', status_version=status_version+1, updated_at=CURRENT_TIMESTAMP WHERE status='refreshing' AND updated_at + ($1 * INTERVAL '1 second') < CURRENT_TIMESTAMP",
+        )
+        .bind(seconds)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
     }
 }
 
@@ -264,7 +381,7 @@ impl ProviderStore for PostgresProviderStore {
             anyhow::bail!("unsupported provider auth_mode: {}", input.auth_mode);
         }
         sqlx::query(
-            "INSERT INTO providers (id, name, vendor, protocol, base_url, default_protocol, protocol_endpoints, preset_key, channel, models_source, capabilities_source, static_models, api_key, auth_mode, access_token, refresh_token, expires_at, use_proxy) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)",
+            "INSERT INTO providers (id, name, vendor, protocol, base_url, default_protocol, protocol_endpoints, preset_key, channel, models_source, capabilities_source, static_models, api_key, auth_mode, use_proxy) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
         )
         .bind(&id)
         .bind(input.name.trim())
@@ -280,9 +397,6 @@ impl ProviderStore for PostgresProviderStore {
         .bind(input.static_models)
         .bind(input.api_key)
         .bind(input.auth_mode)
-        .bind(input.access_token)
-        .bind(input.refresh_token)
-        .bind(input.expires_at)
         .bind(input.use_proxy)
         .execute(&self.pool)
         .await?;
@@ -319,14 +433,11 @@ impl ProviderStore for PostgresProviderStore {
         if !is_valid_provider_auth_mode(&auth_mode) {
             anyhow::bail!("unsupported provider auth_mode: {}", auth_mode);
         }
-        let access_token = input.access_token.or(current.access_token);
-        let refresh_token = input.refresh_token.or(current.refresh_token);
-        let expires_at = input.expires_at.or(current.expires_at);
         let use_proxy = input.use_proxy.unwrap_or(current.use_proxy);
         let is_enabled = input.is_enabled.unwrap_or(current.is_enabled);
 
         sqlx::query(
-            "UPDATE providers SET name=$1, vendor=$2, protocol=$3, base_url=$4, default_protocol=$5, protocol_endpoints=$6, preset_key=$7, channel=$8, models_source=$9, capabilities_source=$10, static_models=$11, api_key=$12, auth_mode=$13, access_token=$14, refresh_token=$15, expires_at=$16, use_proxy=$17, is_enabled=$18, updated_at=CURRENT_TIMESTAMP WHERE id=$19",
+            "UPDATE providers SET name=$1, vendor=$2, protocol=$3, base_url=$4, default_protocol=$5, protocol_endpoints=$6, preset_key=$7, channel=$8, models_source=$9, capabilities_source=$10, static_models=$11, api_key=$12, auth_mode=$13, use_proxy=$14, is_enabled=$15, updated_at=CURRENT_TIMESTAMP WHERE id=$16",
         )
         .bind(name.trim())
         .bind(vendor)
@@ -341,9 +452,6 @@ impl ProviderStore for PostgresProviderStore {
         .bind(static_models)
         .bind(api_key)
         .bind(auth_mode)
-        .bind(access_token)
-        .bind(refresh_token)
-        .bind(expires_at)
         .bind(use_proxy)
         .bind(is_enabled)
         .bind(id)
@@ -1303,7 +1411,7 @@ fn is_pg_permission_error(error: &anyhow::Error) -> bool {
 
 fn provider_select(suffix: Option<&str>) -> String {
     let mut sql = String::from(
-        "SELECT id, name, vendor, protocol, base_url, COALESCE(default_protocol, protocol) AS default_protocol, COALESCE(protocol_endpoints, '{}') AS protocol_endpoints, preset_key, channel, models_source, capabilities_source, static_models, api_key, COALESCE(auth_mode, 'apikey') AS auth_mode, access_token, refresh_token, to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS expires_at, COALESCE(use_proxy, FALSE) AS use_proxy, last_test_success, to_char(last_test_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS last_test_at, COALESCE(is_enabled, TRUE) AS is_enabled, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS updated_at FROM providers",
+        "SELECT id, name, vendor, protocol, base_url, COALESCE(default_protocol, protocol) AS default_protocol, COALESCE(protocol_endpoints, '{}') AS protocol_endpoints, preset_key, channel, models_source, capabilities_source, static_models, api_key, COALESCE(auth_mode, 'apikey') AS auth_mode, COALESCE(use_proxy, FALSE) AS use_proxy, last_test_success, to_char(last_test_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS last_test_at, COALESCE(is_enabled, TRUE) AS is_enabled, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS updated_at FROM providers",
     );
     if let Some(suffix) = suffix {
         sql.push(' ');

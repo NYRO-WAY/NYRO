@@ -10,15 +10,15 @@ use crate::config::GatewayConfig;
 use crate::db;
 use crate::db::models::{
     ApiKey, ApiKeyWithBindings, CreateApiKey, CreateProvider, CreateRoute, CreateRouteTarget,
-    LogPage, LogQuery, ModelStats, Provider, ProviderStats, RequestLog, Route, RouteTarget,
-    StatsHourly, StatsOverview, UpdateApiKey, UpdateProvider, UpdateRoute,
-    is_valid_provider_auth_mode,
+    LogPage, LogQuery, ModelStats, OAuthCredential, Provider, ProviderStats, RequestLog, Route,
+    RouteTarget, StatsHourly, StatsOverview, UpdateApiKey, UpdateProvider, UpdateRoute,
+    UpsertOAuthCredential, is_valid_provider_auth_mode,
 };
 use crate::logging::LogEntry;
 use crate::storage::traits::{
-    ApiKeyAccessRecord, ApiKeyStore, AuthAccessStore, CacheStore, LogStore, ProviderStore,
-    ProviderTestResult, RouteSnapshotStore, RouteStore, RouteTargetStore, SettingsStore, Storage,
-    StorageBackend, StorageBootstrap, StorageHealth, UsageWindow,
+    ApiKeyAccessRecord, ApiKeyStore, AuthAccessStore, CacheStore, LogStore, OAuthCredentialStore,
+    ProviderStore, ProviderTestResult, RouteSnapshotStore, RouteStore, RouteTargetStore,
+    SettingsStore, Storage, StorageBackend, StorageBootstrap, StorageHealth, UsageWindow,
 };
 
 #[derive(Clone)]
@@ -30,6 +30,7 @@ pub struct SqliteStorage {
     settings_store: Arc<SqliteSettingsStore>,
     api_key_store: Arc<SqliteApiKeyStore>,
     auth_store: Arc<SqliteAuthAccessStore>,
+    oauth_credential_store: Arc<SqliteOAuthCredentialStore>,
     log_store: Arc<SqliteLogStore>,
     bootstrap: Arc<SqliteBootstrap>,
 }
@@ -53,6 +54,7 @@ impl SqliteStorage {
         let settings_store = Arc::new(SqliteSettingsStore { pool: pool.clone() });
         let api_key_store = Arc::new(SqliteApiKeyStore { pool: pool.clone() });
         let auth_store = Arc::new(SqliteAuthAccessStore { pool: pool.clone() });
+        let oauth_credential_store = Arc::new(SqliteOAuthCredentialStore { pool: pool.clone() });
         let log_store = Arc::new(SqliteLogStore { pool: pool.clone() });
         let bootstrap = Arc::new(SqliteBootstrap {
             pool: pool.clone(),
@@ -66,6 +68,7 @@ impl SqliteStorage {
             settings_store,
             api_key_store,
             auth_store,
+            oauth_credential_store,
             log_store,
             bootstrap,
         }
@@ -113,8 +116,195 @@ impl Storage for SqliteStorage {
         Some(self.log_store.as_ref())
     }
 
+    fn oauth_credentials(&self) -> &dyn OAuthCredentialStore {
+        self.oauth_credential_store.as_ref()
+    }
+
     fn bootstrap(&self) -> &dyn StorageBootstrap {
         self.bootstrap.as_ref()
+    }
+}
+
+#[derive(Clone)]
+struct SqliteOAuthCredentialStore {
+    pool: SqlitePool,
+}
+
+#[async_trait]
+impl OAuthCredentialStore for SqliteOAuthCredentialStore {
+    async fn get(&self, provider_id: &str) -> anyhow::Result<Option<OAuthCredential>> {
+        let row = sqlx::query_as::<_, OAuthCredential>(
+            r#"SELECT provider_id, driver_key, scheme, access_token, refresh_token,
+                      expires_at, resource_url, subject_id, scopes, meta,
+                      status, status_version, last_error, last_refresh_at,
+                      created_at, updated_at
+               FROM provider_oauth_credentials WHERE provider_id = ?"#,
+        )
+        .bind(provider_id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row)
+    }
+
+    async fn upsert(
+        &self,
+        provider_id: &str,
+        input: UpsertOAuthCredential,
+    ) -> anyhow::Result<OAuthCredential> {
+        sqlx::query(
+            r#"INSERT INTO provider_oauth_credentials
+                   (provider_id, driver_key, scheme, access_token, refresh_token,
+                    expires_at, resource_url, subject_id, scopes, meta,
+                    status, status_version, last_error, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'connected', 0, NULL, datetime('now'), datetime('now'))
+               ON CONFLICT(provider_id) DO UPDATE SET
+                   driver_key = excluded.driver_key,
+                   scheme = excluded.scheme,
+                   access_token = excluded.access_token,
+                   refresh_token = excluded.refresh_token,
+                   expires_at = excluded.expires_at,
+                   resource_url = excluded.resource_url,
+                   subject_id = excluded.subject_id,
+                   scopes = excluded.scopes,
+                   meta = excluded.meta,
+                   status = 'connected',
+                   status_version = status_version + 1,
+                   last_error = NULL,
+                   updated_at = datetime('now')
+            "#,
+        )
+        .bind(provider_id)
+        .bind(&input.driver_key)
+        .bind(&input.scheme)
+        .bind(&input.access_token)
+        .bind(&input.refresh_token)
+        .bind(&input.expires_at)
+        .bind(&input.resource_url)
+        .bind(&input.subject_id)
+        .bind(input.scopes.as_deref().unwrap_or("[]"))
+        .bind(input.meta.as_deref().unwrap_or("{}"))
+        .execute(&self.pool)
+        .await?;
+        self.get(provider_id)
+            .await?
+            .context("credential not found after upsert")
+    }
+
+    async fn delete(&self, provider_id: &str) -> anyhow::Result<()> {
+        sqlx::query("DELETE FROM provider_oauth_credentials WHERE provider_id = ?")
+            .bind(provider_id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    async fn try_begin_refresh(
+        &self,
+        provider_id: &str,
+        expected_version: i32,
+    ) -> anyhow::Result<Option<OAuthCredential>> {
+        let result = sqlx::query(
+            r#"UPDATE provider_oauth_credentials
+               SET status = 'refreshing', status_version = status_version + 1,
+                   updated_at = datetime('now')
+               WHERE provider_id = ? AND status = 'connected' AND status_version = ?"#,
+        )
+        .bind(provider_id)
+        .bind(expected_version)
+        .execute(&self.pool)
+        .await?;
+        if result.rows_affected() > 0 {
+            Ok(self.get(provider_id).await?)
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn complete_refresh(
+        &self,
+        provider_id: &str,
+        input: UpsertOAuthCredential,
+    ) -> anyhow::Result<OAuthCredential> {
+        sqlx::query(
+            r#"UPDATE provider_oauth_credentials SET
+                   driver_key = ?, scheme = ?,
+                   access_token = ?, refresh_token = ?, expires_at = ?,
+                   resource_url = ?, subject_id = ?,
+                   scopes = ?, meta = ?,
+                   status = 'connected', status_version = status_version + 1,
+                   last_error = NULL, last_refresh_at = datetime('now'),
+                   updated_at = datetime('now')
+               WHERE provider_id = ?"#,
+        )
+        .bind(&input.driver_key)
+        .bind(&input.scheme)
+        .bind(&input.access_token)
+        .bind(&input.refresh_token)
+        .bind(&input.expires_at)
+        .bind(&input.resource_url)
+        .bind(&input.subject_id)
+        .bind(input.scopes.as_deref().unwrap_or("[]"))
+        .bind(input.meta.as_deref().unwrap_or("{}"))
+        .bind(provider_id)
+        .execute(&self.pool)
+        .await?;
+        self.get(provider_id)
+            .await?
+            .context("credential not found after complete_refresh")
+    }
+
+    async fn fail_refresh(
+        &self,
+        provider_id: &str,
+        error_message: &str,
+    ) -> anyhow::Result<()> {
+        sqlx::query(
+            r#"UPDATE provider_oauth_credentials SET
+                   status = 'error', last_error = ?,
+                   status_version = status_version + 1,
+                   updated_at = datetime('now')
+               WHERE provider_id = ?"#,
+        )
+        .bind(error_message)
+        .bind(provider_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn list_expiring(&self, before: Duration) -> anyhow::Result<Vec<OAuthCredential>> {
+        let seconds = before.as_secs() as i64;
+        let rows = sqlx::query_as::<_, OAuthCredential>(
+            r#"SELECT provider_id, driver_key, scheme, access_token, refresh_token,
+                      expires_at, resource_url, subject_id, scopes, meta,
+                      status, status_version, last_error, last_refresh_at,
+                      created_at, updated_at
+               FROM provider_oauth_credentials
+               WHERE status = 'connected'
+                 AND expires_at IS NOT NULL
+                 AND datetime(expires_at) <= datetime('now', '+' || ? || ' seconds')"#,
+        )
+        .bind(seconds)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    async fn recover_stale_refreshing(&self, timeout: Duration) -> anyhow::Result<u64> {
+        let seconds = timeout.as_secs() as i64;
+        let result = sqlx::query(
+            r#"UPDATE provider_oauth_credentials SET
+                   status = 'error',
+                   last_error = 'refresh timeout: process did not complete within timeout',
+                   status_version = status_version + 1,
+                   updated_at = datetime('now')
+               WHERE status = 'refreshing'
+                 AND datetime(updated_at, '+' || ? || ' seconds') < datetime('now')"#,
+        )
+        .bind(seconds)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected())
     }
 }
 
@@ -127,7 +317,7 @@ struct SqliteProviderStore {
 impl ProviderStore for SqliteProviderStore {
     async fn list(&self) -> anyhow::Result<Vec<Provider>> {
         Ok(sqlx::query_as::<_, Provider>(
-            "SELECT id, name, vendor, protocol, base_url, COALESCE(default_protocol, protocol) AS default_protocol, COALESCE(protocol_endpoints, '{}') AS protocol_endpoints, preset_key, channel, models_source, capabilities_source, static_models, api_key, COALESCE(auth_mode, 'apikey') AS auth_mode, access_token, refresh_token, expires_at, COALESCE(use_proxy, 0) AS use_proxy, last_test_success, last_test_at, COALESCE(is_enabled, 1) AS is_enabled, created_at, updated_at FROM providers ORDER BY created_at DESC",
+            "SELECT id, name, vendor, protocol, base_url, COALESCE(default_protocol, protocol) AS default_protocol, COALESCE(protocol_endpoints, '{}') AS protocol_endpoints, preset_key, channel, models_source, capabilities_source, static_models, api_key, COALESCE(auth_mode, 'apikey') AS auth_mode, COALESCE(use_proxy, 0) AS use_proxy, last_test_success, last_test_at, COALESCE(is_enabled, 1) AS is_enabled, created_at, updated_at FROM providers ORDER BY created_at DESC",
         )
         .fetch_all(&self.pool)
         .await?)
@@ -135,7 +325,7 @@ impl ProviderStore for SqliteProviderStore {
 
     async fn get(&self, id: &str) -> anyhow::Result<Option<Provider>> {
         Ok(sqlx::query_as::<_, Provider>(
-            "SELECT id, name, vendor, protocol, base_url, COALESCE(default_protocol, protocol) AS default_protocol, COALESCE(protocol_endpoints, '{}') AS protocol_endpoints, preset_key, channel, models_source, capabilities_source, static_models, api_key, COALESCE(auth_mode, 'apikey') AS auth_mode, access_token, refresh_token, expires_at, COALESCE(use_proxy, 0) AS use_proxy, last_test_success, last_test_at, COALESCE(is_enabled, 1) AS is_enabled, created_at, updated_at FROM providers WHERE id = ?",
+            "SELECT id, name, vendor, protocol, base_url, COALESCE(default_protocol, protocol) AS default_protocol, COALESCE(protocol_endpoints, '{}') AS protocol_endpoints, preset_key, channel, models_source, capabilities_source, static_models, api_key, COALESCE(auth_mode, 'apikey') AS auth_mode, COALESCE(use_proxy, 0) AS use_proxy, last_test_success, last_test_at, COALESCE(is_enabled, 1) AS is_enabled, created_at, updated_at FROM providers WHERE id = ?",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -155,7 +345,7 @@ impl ProviderStore for SqliteProviderStore {
             anyhow::bail!("unsupported provider auth_mode: {}", input.auth_mode);
         }
         sqlx::query(
-            "INSERT INTO providers (id, name, vendor, protocol, base_url, default_protocol, protocol_endpoints, preset_key, channel, models_source, capabilities_source, static_models, api_key, auth_mode, access_token, refresh_token, expires_at, use_proxy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO providers (id, name, vendor, protocol, base_url, default_protocol, protocol_endpoints, preset_key, channel, models_source, capabilities_source, static_models, api_key, auth_mode, use_proxy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&input.name)
@@ -171,9 +361,6 @@ impl ProviderStore for SqliteProviderStore {
         .bind(&input.static_models)
         .bind(&input.api_key)
         .bind(&input.auth_mode)
-        .bind(&input.access_token)
-        .bind(&input.refresh_token)
-        .bind(&input.expires_at)
         .bind(input.use_proxy)
         .execute(&self.pool)
         .await?;
@@ -210,14 +397,11 @@ impl ProviderStore for SqliteProviderStore {
         if !is_valid_provider_auth_mode(&auth_mode) {
             anyhow::bail!("unsupported provider auth_mode: {}", auth_mode);
         }
-        let access_token = input.access_token.or(current.access_token);
-        let refresh_token = input.refresh_token.or(current.refresh_token);
-        let expires_at = input.expires_at.or(current.expires_at);
         let use_proxy = input.use_proxy.unwrap_or(current.use_proxy);
         let is_enabled = input.is_enabled.unwrap_or(current.is_enabled);
 
         sqlx::query(
-            "UPDATE providers SET name=?, vendor=?, protocol=?, base_url=?, default_protocol=?, protocol_endpoints=?, preset_key=?, channel=?, models_source=?, capabilities_source=?, static_models=?, api_key=?, auth_mode=?, access_token=?, refresh_token=?, expires_at=?, use_proxy=?, is_enabled=?, updated_at=datetime('now') WHERE id=?",
+            "UPDATE providers SET name=?, vendor=?, protocol=?, base_url=?, default_protocol=?, protocol_endpoints=?, preset_key=?, channel=?, models_source=?, capabilities_source=?, static_models=?, api_key=?, auth_mode=?, use_proxy=?, is_enabled=?, updated_at=datetime('now') WHERE id=?",
         )
         .bind(name)
         .bind(vendor)
@@ -232,9 +416,6 @@ impl ProviderStore for SqliteProviderStore {
         .bind(static_models)
         .bind(api_key)
         .bind(auth_mode)
-        .bind(access_token)
-        .bind(refresh_token)
-        .bind(expires_at)
         .bind(use_proxy)
         .bind(is_enabled)
         .bind(id)
