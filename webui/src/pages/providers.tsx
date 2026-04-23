@@ -463,7 +463,10 @@ export default function ProvidersPage() {
   const [createOAuthStatus, setCreateOAuthStatus] = useState<OAuthSessionStatusData | null>(null);
   const [createOAuthBusy, setCreateOAuthBusy] = useState(false);
   const [createOAuthCallbackUrl, setCreateOAuthCallbackUrl] = useState("");
+  const [createOAuthCallbackError, setCreateOAuthCallbackError] = useState("");
   const [createOAuthCode, setCreateOAuthCode] = useState("");
+  const [createOAuthCopied, setCreateOAuthCopied] = useState(false);
+  const [createOAuthCopyFailed, setCreateOAuthCopyFailed] = useState(false);
   const createOAuthPollerRef = useRef<number | null>(null);
   // Edit-mode OAuth re-authorization states
   const [editOAuthSession, setEditOAuthSession] = useState<OAuthSessionInitData | null>(null);
@@ -671,7 +674,10 @@ export default function ProvidersPage() {
     setCreateOAuthStatus(null);
     setCreateOAuthBusy(false);
     setCreateOAuthCallbackUrl("");
+    setCreateOAuthCallbackError("");
     setCreateOAuthCode("");
+    setCreateOAuthCopied(false);
+    setCreateOAuthCopyFailed(false);
     if (cancelRemote && sessionId) {
       void backend("cancel_oauth_session", { sessionId }).catch(() => {
         // Best-effort cleanup only.
@@ -717,16 +723,8 @@ export default function ProvidersPage() {
         };
       });
 
-      const authUrl = init.auth_url || init.verification_uri_complete;
-      if (authUrl) {
-        void openExternalUrl(authUrl).catch((error) => {
-          setCreateOAuthStatus((prev) => prev ?? {
-            status: "error",
-            code: "OAUTH_OPEN_BROWSER_FAILED",
-            message: normalizeErrorMessage(error),
-          });
-        });
-      }
+      // Don't auto-open the browser — let the user click "Open Authorization Page"
+      // after reviewing the URL. This avoids surprising pop-ups.
 
       if (init.requires_manual_code) {
         setCreateOAuthBusy(false);
@@ -1502,25 +1500,64 @@ export default function ProvidersPage() {
                       <p className="mt-2 text-xs text-slate-500">
                         {isZh ? "先打开浏览器完成登录授权。" : "Open the browser and complete sign-in first."}
                       </p>
-                      {createOAuthSession ? (
-                        <div className="mt-3 rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2 text-xs text-slate-600">
-                          <div className="font-medium text-slate-700">{isZh ? "授权链接" : "Authorization URL"}</div>
-                          <div className="mt-1 break-all">{createOAuthSession.auth_url || createOAuthSession.verification_uri_complete}</div>
-                        </div>
-                      ) : null}
                       <div className="mt-3 flex flex-wrap gap-2">
-                        <Button type="button" onClick={startCreateOAuth} disabled={createOAuthBusy || !selectedPreset}>
-                          {createOAuthBusy ? (isZh ? "打开中..." : "Opening...") : (isZh ? "开始授权" : "Start Authorization")}
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          onClick={reopenCreateOAuthPage}
-                          disabled={!createOAuthSession}
-                        >
-                          {isZh ? "重新打开" : "Open Again"}
-                        </Button>
+                        {!createOAuthSession ? (
+                          <Button type="button" onClick={startCreateOAuth} disabled={createOAuthBusy || !selectedPreset}>
+                            {createOAuthBusy ? (isZh ? "初始化中..." : "Initializing...") : (isZh ? "开始授权" : "Start Authorization")}
+                          </Button>
+                        ) : (
+                          <>
+                            <Button type="button" onClick={reopenCreateOAuthPage}>
+                              {isZh ? "打开授权页" : "Open Authorization Page"}
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              onClick={async () => {
+                                const url = createOAuthSession.auth_url || createOAuthSession.verification_uri_complete || "";
+                                let ok = false;
+                                try {
+                                  await navigator.clipboard.writeText(url);
+                                  ok = true;
+                                } catch {
+                                  // fallback for HTTP
+                                  try {
+                                    const ta = document.createElement("textarea");
+                                    ta.value = url;
+                                    ta.style.position = "fixed";
+                                    ta.style.opacity = "0";
+                                    document.body.appendChild(ta);
+                                    ta.select();
+                                    ok = document.execCommand("copy");
+                                    document.body.removeChild(ta);
+                                  } catch { /* ignore */ }
+                                }
+                                if (ok) {
+                                  setCreateOAuthCopyFailed(false);
+                                  setCreateOAuthCopied(true);
+                                } else {
+                                  setCreateOAuthCopyFailed(true);
+                                }
+                              }}
+                            >
+                              {createOAuthCopied ? (isZh ? "已复制" : "Copied!") : (isZh ? "复制链接" : "Copy Link")}
+                            </Button>
+                          </>
+                        )}
                       </div>
+                      {createOAuthCopied && (
+                        <p className="mt-2 text-xs text-emerald-600">
+                          {isZh ? "链接已复制，请在浏览器中打开并完成授权登录。" : "Link copied. Please open it in your browser and complete the authorization."}
+                        </p>
+                      )}
+                      {createOAuthCopyFailed && createOAuthSession && (
+                        <div className="mt-2 space-y-1">
+                          <p className="text-xs text-rose-600">{isZh ? "复制失败，请手动复制以下链接并在浏览器中打开完成授权：" : "Copy failed. Please manually copy the link below and open it in your browser to authorize:"}</p>
+                          <div className="rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2 text-xs text-slate-600 break-all select-all">
+                            {createOAuthSession.auth_url || createOAuthSession.verification_uri_complete}
+                          </div>
+                        </div>
+                      )}
                     </div>
                     <div className={`rounded-lg border p-3 ${createOAuthStatus?.status === "error" ? "border-rose-200 bg-rose-50" : createOAuthSession ? "border-sky-200 bg-sky-50" : "border-slate-200 bg-white"}`}>
                       <div className="flex items-center gap-2 text-sm font-medium text-slate-800">
@@ -1539,16 +1576,40 @@ export default function ProvidersPage() {
                             onChange={(e) => {
                               const url = e.target.value;
                               setCreateOAuthCallbackUrl(url);
+                              setCreateOAuthCallbackError("");
+                              if (!url.trim()) return;
                               try {
                                 const parsed = new URL(url);
                                 const code = parsed.searchParams.get("code");
-                                if (code) setCreateOAuthCode(code);
+                                if (code) {
+                                  setCreateOAuthCode(code);
+                                } else if (parsed.searchParams.has("error")) {
+                                  const desc = parsed.searchParams.get("error_description") || parsed.searchParams.get("error") || "";
+                                  setCreateOAuthCallbackError(
+                                    isZh
+                                      ? `授权失败：${desc || "回调中包含 error 参数"}`
+                                      : `Authorization failed: ${desc || "callback contains error parameter"}`,
+                                  );
+                                } else {
+                                  setCreateOAuthCallbackError(
+                                    isZh
+                                      ? "回调地址中没有找到 code 参数，请确认粘贴了正确的回调地址。"
+                                      : "No code parameter found in URL. Please confirm you pasted the correct callback URL.",
+                                  );
+                                }
                               } catch {
-                                // not a valid URL yet, ignore
+                                setCreateOAuthCallbackError(
+                                  isZh
+                                    ? "输入的内容不是有效的 URL，请粘贴完整的回调地址。"
+                                    : "Input is not a valid URL. Please paste the complete callback URL.",
+                                );
                               }
                             }}
                             disabled={!createOAuthSession || createOAuthBusy}
                           />
+                          {createOAuthCallbackError && (
+                            <p className="text-xs text-rose-600">{createOAuthCallbackError}</p>
+                          )}
                         </div>
                         <div className="space-y-2">
                           <FieldLabel>{isZh ? "授权码" : "Authorization Code"}</FieldLabel>
@@ -1563,7 +1624,7 @@ export default function ProvidersPage() {
                           <Button
                             type="button"
                             onClick={completeCreateOAuth}
-                            disabled={createOAuthBusy || !createOAuthSession}
+                            disabled={createOAuthBusy || !createOAuthSession || !!createOAuthCallbackError}
                           >
                             {createOAuthBusy ? (isZh ? "提交中..." : "Submitting...") : (isZh ? "提交结果" : "Submit")}
                           </Button>
