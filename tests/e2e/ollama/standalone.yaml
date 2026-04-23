@@ -26,4 +26,4 @@ routes:
     vmodel: qwen3
     targets:
       - provider: ollama
-        model: "qwen3:0.8b"
+        model: "qwen3.5:0.8b"

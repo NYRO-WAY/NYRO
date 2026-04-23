@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """L3 Ollama dynamic E2E tests for Nyro.
 
-Covers 7 protocol chains (qwen3:0.8b via Ollama):
+Covers 7 protocol chains (qwen3.5:0.8b via Ollama):
   1. OpenAI  /v1/chat/completions  non-stream
   2. OpenAI  /v1/chat/completions  stream
   3. OpenAI  /v1/responses         non-stream  (reasoning output)

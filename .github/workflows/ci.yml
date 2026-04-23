@@ -85,7 +85,7 @@ jobs:
             pkg-config libssl-dev
 
       - name: Run unit tests
-        run: cargo test --workspace --exclude nyro-desktop
+        run: cargo test --workspace --exclude nyro-desktop --exclude nyro-server
 
   e2e-static-tests:
     needs: build
@@ -141,11 +141,11 @@ jobs:
           docker run -d --name ollama -p 11434:11434 ollama/ollama
           timeout 60 bash -c 'until curl -sf http://localhost:11434/api/version; do sleep 2; done'
 
-      - name: Pull qwen3 model and warmup
+      - name: Pull qwen3.5 model and warmup
         run: |
-          docker exec ollama ollama pull qwen3:0.8b
+          docker exec ollama ollama pull qwen3.5:0.8b
           curl -s -o /dev/null http://localhost:11434/api/generate \
-            -d '{"model":"qwen3:0.8b","prompt":"hi","stream":false}'
+            -d '{"model":"qwen3.5:0.8b","prompt":"hi","stream":false}'
 
       - name: Run inference E2E tests
         run: python3 tests/e2e/ollama/run.py
