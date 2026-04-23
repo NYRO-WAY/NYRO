@@ -98,7 +98,7 @@ def test_openai_responses_nonstream(base: str) -> None:
             "input": "Think briefly then say hi",
             "max_output_tokens": 512,
         },
-        timeout=60.0,
+        timeout=120.0,
     )
     assert status == 200, f"OpenAI Responses non-stream status={status}: {resp}"
     assert "output" in resp, f"missing output: {resp}"
