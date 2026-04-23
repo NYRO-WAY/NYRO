@@ -1725,7 +1725,6 @@ export default function ProvidersPage() {
                     <div key={`create-endpoint-${index}`} className="grid grid-cols-[180px_minmax(0,1fr)_32px] gap-2">
                       <Select
                         value={row.protocol}
-                        disabled={createResolvedAuthMode === "oauth"}
                         onValueChange={(value) => {
                           const nextProtocol = value as ProviderProtocol;
                           setCreateEndpointRows((prev) =>
@@ -1747,7 +1746,6 @@ export default function ProvidersPage() {
                       <Input
                         placeholder={isZh ? "输入上游基础地址" : "Enter upstream base URL"}
                         value={row.base_url}
-                        disabled={createResolvedAuthMode === "oauth"}
                         onChange={(e) =>
                           setCreateEndpointRows((prev) =>
                             prev.map((item, i) => (i === index ? { ...item, base_url: e.target.value } : item)),
@@ -1756,7 +1754,7 @@ export default function ProvidersPage() {
                       />
                       <button
                         type="button"
-                        disabled={createResolvedAuthMode === "oauth" || createEndpointRows.length <= 1}
+                        disabled={createEndpointRows.length <= 1}
                         onClick={() =>
                           setCreateEndpointRows((prev) => (prev.length <= 1 ? prev : prev.filter((_, i) => i !== index)))
                         }
@@ -1770,7 +1768,6 @@ export default function ProvidersPage() {
                     type="button"
                     variant="secondary"
                     className="w-full"
-                    disabled={createResolvedAuthMode === "oauth"}
                     onClick={() =>
                       setCreateEndpointRows((prev) => [...prev, { protocol: "openai", base_url: "" }])
                     }
