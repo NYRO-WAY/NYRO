@@ -82,7 +82,7 @@ def start_aimock(
     cmd = [
         "docker", "run", "--rm", "-d",
         "--name", container_name,
-        "-p", f"127.0.0.1:{port}:3000",
+        "-p", f"127.0.0.1:{port}:4010",
         "-v", f"{host_dir}:/fixtures:ro",
         AIMOCK_IMAGE,
         "-f", "/fixtures",

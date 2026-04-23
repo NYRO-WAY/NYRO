@@ -61,6 +61,7 @@ def test_openai_chat_nonstream(base: str) -> None:
             "messages": [{"role": "user", "content": "Say hi in one word"}],
             "max_tokens": 512,
         },
+        timeout=60.0,
     )
     assert status == 200, f"OpenAI chat non-stream status={status}: {resp}"
     assert "choices" in resp, f"missing choices: {resp}"
@@ -97,6 +98,7 @@ def test_openai_responses_nonstream(base: str) -> None:
             "input": "Think briefly then say hi",
             "max_output_tokens": 512,
         },
+        timeout=60.0,
     )
     assert status == 200, f"OpenAI Responses non-stream status={status}: {resp}"
     assert "output" in resp, f"missing output: {resp}"
@@ -139,6 +141,7 @@ def test_anthropic_messages_nonstream(base: str) -> None:
             "messages": [{"role": "user", "content": "Think briefly then say hi"}],
         },
         headers={"anthropic-version": "2023-06-01"},
+        timeout=60.0,
     )
     assert status == 200, f"Anthropic non-stream status={status}: {resp}"
     assert resp.get("role") == "assistant", f"wrong role: {resp.get('role')}"

@@ -130,9 +130,11 @@ def test_route_crud(ctx: dict) -> None:
     rid = resp["data"]["id"]
     ctx["route_id"] = rid
 
-    status, resp = http_request("GET", f"{ctx['admin']}/api/v1/routes/{rid}", headers=ctx["auth"])
+    # Verify via list (GET /routes/:id doesn't exist — only PUT/DELETE on item)
+    status, resp = http_request("GET", f"{ctx['admin']}/api/v1/routes", headers=ctx["auth"])
     assert status == 200
-    assert resp["data"]["id"] == rid
+    ids = [r["id"] for r in resp.get("data", [])]
+    assert rid in ids, f"route {rid} not found in list: {ids}"
 
 
 def test_api_key_crud(ctx: dict) -> None:
@@ -159,7 +161,7 @@ def test_access_control_rejects_anonymous(ctx: dict) -> None:
 
 
 def test_export_config_counts(ctx: dict) -> None:
-    status, resp = http_request("GET", f"{ctx['admin']}/api/v1/export", headers=ctx["auth"])
+    status, resp = http_request("GET", f"{ctx['admin']}/api/v1/config/export", headers=ctx["auth"])
     assert status == 200, f"export config failed: {status}"
     data = resp.get("data", {})
     assert len(data.get("providers", [])) >= 1, "export must include at least 1 provider"
