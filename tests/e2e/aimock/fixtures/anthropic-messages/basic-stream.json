@@ -1,0 +1,16 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "ping-anthropic-stream",
+        "endpoint": "chat"
+      },
+      "response": {
+        "content": "pong-anthropic",
+        "reasoning": "pong-anthropic-thinking"
+      },
+      "chunkSize": 4,
+      "latency": 0
+    }
+  ]
+}

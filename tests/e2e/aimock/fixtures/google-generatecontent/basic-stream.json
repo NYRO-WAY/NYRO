@@ -1,0 +1,15 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "ping-gemini-stream",
+        "endpoint": "chat"
+      },
+      "response": {
+        "content": "pong-gemini"
+      },
+      "chunkSize": 4,
+      "latency": 0
+    }
+  ]
+}

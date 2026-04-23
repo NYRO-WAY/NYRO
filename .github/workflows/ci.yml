@@ -2,11 +2,18 @@ name: CI
 
 on:
   push:
+    branches:
+      - master
+      - 'release/**'
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  build-and-smoke:
+  build:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -17,6 +24,9 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -42,8 +52,127 @@ jobs:
       - name: Cargo check
         run: cargo check --workspace --exclude nyro-desktop
 
-      - name: Build nyro-server
+      - name: Build nyro-server (debug)
         run: cargo build -p nyro-server
 
-      - name: Run smoke tests
-        run: python3 scripts/smoke/server_smoke.py
+      - name: Upload nyro-server binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: nyro-server-linux-x86_64
+          path: target/debug/nyro-server
+          retention-days: 1
+
+  unit-tests:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux system deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libssl-dev
+
+      - name: Run unit tests
+        run: cargo test --workspace --exclude nyro-desktop
+
+  e2e-static-tests:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download nyro-server binary
+        uses: actions/download-artifact@v4
+        with:
+          name: nyro-server-linux-x86_64
+          path: target/debug
+
+      - name: Make binary executable
+        run: chmod +x target/debug/nyro-server
+
+      - name: Pull aimock image
+        # Pin SHA in production; update via Dependabot weekly.
+        # To pin: docker pull ghcr.io/copilotkit/aimock:latest && docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/copilotkit/aimock:latest
+        run: docker pull ghcr.io/copilotkit/aimock:latest
+
+      - name: Run static E2E tests
+        run: python3 tests/e2e/aimock/run.py
+        env:
+          NYRO_BINARY: target/debug/nyro-server
+
+  e2e-inference-tests:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download nyro-server binary
+        uses: actions/download-artifact@v4
+        with:
+          name: nyro-server-linux-x86_64
+          path: target/debug
+
+      - name: Make binary executable
+        run: chmod +x target/debug/nyro-server
+
+      - name: Start Ollama
+        run: |
+          docker run -d --name ollama -p 11434:11434 ollama/ollama
+          timeout 60 bash -c 'until curl -sf http://localhost:11434/api/version; do sleep 2; done'
+
+      - name: Pull qwen3 model and warmup
+        run: |
+          docker exec ollama ollama pull qwen3:0.8b
+          curl -s -o /dev/null http://localhost:11434/api/generate \
+            -d '{"model":"qwen3:0.8b","prompt":"hi","stream":false}'
+
+      - name: Run inference E2E tests
+        run: python3 tests/e2e/ollama/run.py
+        env:
+          NYRO_BINARY: target/debug/nyro-server
+          OLLAMA_HOST: "http://127.0.0.1:11434"
+
+  e2e-admin-tests:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download nyro-server binary
+        uses: actions/download-artifact@v4
+        with:
+          name: nyro-server-linux-x86_64
+          path: target/debug
+
+      - name: Make binary executable
+        run: chmod +x target/debug/nyro-server
+
+      - name: Run admin E2E tests
+        run: python3 tests/e2e/admin/run.py
+        env:
+          NYRO_BINARY: target/debug/nyro-server

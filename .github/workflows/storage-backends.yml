@@ -1,0 +1,61 @@
+name: Storage Backends
+
+on:
+  schedule:
+    # Daily at 03:00 UTC — runs against both SQLite and pgvector/Postgres.
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+    inputs:
+      backend:
+        description: 'Backend(s) to test: sqlite, postgres, or both'
+        required: false
+        default: 'sqlite postgres'
+
+concurrency:
+  group: storage-backends-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  storage-tests:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: nyro
+          POSTGRES_PASSWORD: nyro
+          POSTGRES_DB: nyro_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux system deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libssl-dev
+
+      - name: Run storage E2E tests (sqlite)
+        run: python3 tests/e2e/storage/run.py --backend sqlite
+
+      - name: Run storage E2E tests (postgres / pgvector)
+        run: python3 tests/e2e/storage/run.py --backend postgres
+        env:
+          DB_URL: postgresql://nyro:nyro@localhost:5432/nyro_test

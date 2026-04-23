@@ -1,0 +1,14 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "ping-azure",
+        "endpoint": "chat"
+      },
+      "response": {
+        "content": "pong-azure",
+        "finishReason": "content_filter"
+      }
+    }
+  ]
+}

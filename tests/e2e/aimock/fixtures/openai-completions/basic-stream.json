@@ -1,0 +1,15 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "ping-stream",
+        "endpoint": "chat"
+      },
+      "response": {
+        "content": "pong"
+      },
+      "chunkSize": 2,
+      "latency": 0
+    }
+  ]
+}

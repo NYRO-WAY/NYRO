@@ -1,0 +1,29 @@
+# Nyro standalone config for L3 Ollama dynamic E2E tests.
+# run.py replaces the proxy_port value at test time via render_standalone_yaml.
+#
+# Ollama exposes:
+#   OpenAI Chat / Responses  →  http://127.0.0.1:11434/v1
+#   Anthropic Messages       →  http://127.0.0.1:11434   (requires OLLAMA_ORIGINS=*)
+
+server:
+  proxy_host: "127.0.0.1"
+  proxy_port: 19530
+
+providers:
+  - name: ollama
+    default_protocol: openai
+    endpoints:
+      openai:
+        base_url: "http://127.0.0.1:11434/v1"
+      openai_responses:
+        base_url: "http://127.0.0.1:11434/v1"
+      anthropic:
+        base_url: "http://127.0.0.1:11434"
+    api_key: "ollama"
+
+routes:
+  - name: qwen3
+    vmodel: qwen3
+    targets:
+      - provider: ollama
+        model: "qwen3:0.8b"

@@ -1,0 +1,14 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "ping-reasoning",
+        "endpoint": "chat"
+      },
+      "response": {
+        "content": "pong-answer",
+        "reasoning": "pong-thinking"
+      }
+    }
+  ]
+}

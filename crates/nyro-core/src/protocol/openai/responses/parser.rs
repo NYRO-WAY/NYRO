@@ -187,6 +187,16 @@ impl ResponsesStreamParser {
                     }
                 }
             }
+            "response.reasoning_summary_text.delta" => {
+                // Emitted by Ollama's Responses API when the model includes reasoning.
+                // Must be handled independently from response.output_text.delta —
+                // they carry semantically different content (reasoning vs answer text).
+                if let Some(text) = payload.get("delta").and_then(|v| v.as_str()) {
+                    if !text.is_empty() {
+                        deltas.push(StreamDelta::ReasoningDelta(text.to_string()));
+                    }
+                }
+            }
             "response.function_call_arguments.delta" => {
                 let index = payload
                     .get("output_index")
@@ -251,5 +261,183 @@ impl ResponsesStreamParser {
             }
             _ => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::{ResponseParser, StreamParser};
+
+    fn sse_event(event: &str, data: &str) -> String {
+        format!("event: {event}\ndata: {data}\n\n")
+    }
+
+    fn sse_data(data: &str) -> String {
+        format!("data: {data}\n\n")
+    }
+
+    // ── ResponsesResponseParser ──
+
+    #[test]
+    fn test_parse_response_message_output() {
+        let resp = serde_json::json!({
+            "id": "resp_1",
+            "model": "gpt-4o",
+            "status": "completed",
+            "output": [
+                {
+                    "type": "message",
+                    "id": "msg_1",
+                    "status": "completed",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "hello"}]
+                }
+            ],
+            "usage": {"input_tokens": 5, "output_tokens": 3}
+        });
+        let r = ResponsesResponseParser.parse_response(resp).unwrap();
+        assert_eq!(r.content, "hello");
+        assert_eq!(r.stop_reason.as_deref(), Some("completed"));
+        assert_eq!(r.usage.input_tokens, 5);
+    }
+
+    #[test]
+    fn test_parse_response_with_encrypted_content_plaintext() {
+        // Ollama's Responses API returns reasoning as plaintext in encrypted_content field.
+        // The parser must not fail, and should extract text from the content array.
+        let resp = serde_json::json!({
+            "id": "resp_2",
+            "model": "qwen3",
+            "status": "completed",
+            "output": [
+                {
+                    "type": "reasoning",
+                    "id": "rs_1",
+                    "summary": [{"type": "summary_text", "text": "thinking..."}],
+                    // encrypted_content is plaintext in Ollama — parser must not crash
+                    "encrypted_content": "plaintext-not-base64"
+                },
+                {
+                    "type": "message",
+                    "id": "msg_1",
+                    "status": "completed",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": "answer"}]
+                }
+            ],
+            "usage": {"input_tokens": 10, "output_tokens": 20}
+        });
+        let result = ResponsesResponseParser.parse_response(resp);
+        assert!(result.is_ok(), "parser must not fail on plaintext encrypted_content");
+        let r = result.unwrap();
+        assert_eq!(r.content, "answer");
+    }
+
+    #[test]
+    fn test_parse_response_function_call_output() {
+        let resp = serde_json::json!({
+            "id": "resp_3",
+            "model": "gpt-4o",
+            "status": "completed",
+            "output": [
+                {
+                    "type": "function_call",
+                    "id": "fc_1",
+                    "call_id": "call_abc",
+                    "name": "get_weather",
+                    "arguments": "{\"city\":\"Paris\"}"
+                }
+            ],
+            "usage": {"input_tokens": 15, "output_tokens": 10}
+        });
+        let r = ResponsesResponseParser.parse_response(resp).unwrap();
+        assert_eq!(r.tool_calls.len(), 1);
+        assert_eq!(r.tool_calls[0].id, "call_abc");
+        assert_eq!(r.tool_calls[0].name, "get_weather");
+    }
+
+    // ── ResponsesStreamParser ──
+
+    #[test]
+    fn test_stream_output_text_delta() {
+        let sse = [
+            sse_event(
+                "response.created",
+                r#"{"type":"response.created","response":{"id":"resp_1","model":"gpt-4o","status":"in_progress"}}"#,
+            ),
+            sse_event(
+                "response.output_text.delta",
+                r#"{"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"content_index":0,"delta":"hello"}"#,
+            ),
+            sse_event(
+                "response.completed",
+                r#"{"type":"response.completed","response":{"id":"resp_1","model":"gpt-4o","status":"completed","output":[],"usage":{"input_tokens":5,"output_tokens":3}}}"#,
+            ),
+        ]
+        .concat();
+
+        let mut parser = ResponsesStreamParser::new();
+        let deltas = parser.parse_chunk(&sse).unwrap();
+
+        let has_text = deltas.iter().any(|d| matches!(d, StreamDelta::TextDelta(t) if t == "hello"));
+        let has_done = deltas.iter().any(|d| matches!(d, StreamDelta::Done { .. }));
+        assert!(has_text, "expected TextDelta('hello'), got: {deltas:?}");
+        assert!(has_done, "expected Done, got: {deltas:?}");
+    }
+
+    #[test]
+    fn test_stream_reasoning_summary_text_delta() {
+        // Ollama sends response.reasoning_summary_text.delta for reasoning content.
+        // This event must be handled independently and produce ReasoningDelta — NOT TextDelta.
+        let sse = [
+            sse_event(
+                "response.created",
+                r#"{"type":"response.created","response":{"id":"resp_2","model":"qwen3","status":"in_progress"}}"#,
+            ),
+            sse_event(
+                "response.reasoning_summary_text.delta",
+                r#"{"type":"response.reasoning_summary_text.delta","item_id":"rs_1","output_index":1,"summary_index":0,"delta":"thinking step"}"#,
+            ),
+            sse_event(
+                "response.output_text.delta",
+                r#"{"type":"response.output_text.delta","item_id":"msg_1","output_index":0,"content_index":0,"delta":"answer text"}"#,
+            ),
+            sse_event(
+                "response.completed",
+                r#"{"type":"response.completed","response":{"id":"resp_2","model":"qwen3","status":"completed","output":[],"usage":{"input_tokens":10,"output_tokens":20}}}"#,
+            ),
+        ]
+        .concat();
+
+        let mut parser = ResponsesStreamParser::new();
+        let deltas = parser.parse_chunk(&sse).unwrap();
+
+        let reasoning: Vec<_> = deltas
+            .iter()
+            .filter_map(|d| if let StreamDelta::ReasoningDelta(t) = d { Some(t.as_str()) } else { None })
+            .collect();
+        assert!(
+            reasoning.contains(&"thinking step"),
+            "response.reasoning_summary_text.delta must produce ReasoningDelta, got: {deltas:?}"
+        );
+
+        let text: Vec<_> = deltas
+            .iter()
+            .filter_map(|d| if let StreamDelta::TextDelta(t) = d { Some(t.as_str()) } else { None })
+            .collect();
+        assert!(
+            text.contains(&"answer text"),
+            "response.output_text.delta must produce TextDelta, got: {deltas:?}"
+        );
+    }
+
+    #[test]
+    fn test_stream_done_sentinel() {
+        let sse = sse_data("[DONE]");
+        let mut parser = ResponsesStreamParser::new();
+        let deltas = parser.parse_chunk(&sse).unwrap();
+        let has_done = deltas.iter().any(|d| matches!(d, StreamDelta::Done { .. }));
+        assert!(has_done, "expected Done on [DONE] sentinel, got: {deltas:?}");
     }
 }

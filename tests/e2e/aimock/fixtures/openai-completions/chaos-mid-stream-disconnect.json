@@ -1,0 +1,16 @@
+{
+  "fixtures": [
+    {
+      "match": {
+        "userMessage": "ping-chaos-disconnect",
+        "endpoint": "chat"
+      },
+      "response": {
+        "content": "this message will be truncated by disconnect",
+        "finishReason": "stop"
+      },
+      "chunkSize": 5,
+      "disconnectAfterChunks": 2
+    }
+  ]
+}
