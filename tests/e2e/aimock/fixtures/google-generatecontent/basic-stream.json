@@ -8,7 +8,7 @@
       "response": {
         "content": "pong-gemini"
       },
-      "chunkSize": 4,
+      "chunkSize": 100,
       "latency": 0
     }
   ]

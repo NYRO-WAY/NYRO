@@ -8,7 +8,7 @@
       "response": {
         "content": "pong"
       },
-      "chunkSize": 2,
+      "chunkSize": 100,
       "latency": 0
     }
   ]

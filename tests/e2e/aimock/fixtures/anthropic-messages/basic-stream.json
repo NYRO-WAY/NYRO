@@ -9,7 +9,7 @@
         "content": "pong-anthropic",
         "reasoning": "pong-anthropic-thinking"
       },
-      "chunkSize": 4,
+      "chunkSize": 100,
       "latency": 0
     }
   ]
