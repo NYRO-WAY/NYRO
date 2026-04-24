@@ -1,16 +1,3 @@
-#!/usr/bin/env python3
-"""E2E storage backend tests for Nyro.
-
-Runs the sqlite + postgres (pgvector) matrix and verifies cross-backend
-behavioural equivalence.
-
-Postgres requires $DB_URL or $DATABASE_URL pointing to a pgvector-enabled
-Postgres instance (use pgvector/pgvector:pg16 in CI).
-
-Each backend runs in an isolated temporary directory / schema to prevent
-test pollution across matrix runs.
-"""
-
 from __future__ import annotations
 
 import json
@@ -18,31 +5,22 @@ import os
 import secrets
 import socket
 import subprocess
-import sys
 import tempfile
 import textwrap
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any
 
-# REPO_ROOT resolved dynamically — no hardcoded paths.
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-
-def assert_eq(a: Any, b: Any, msg: str) -> None:
-    if a != b:
-        raise AssertionError(f"{msg}: {a!r} != {b!r}")
-
-
 def find_free_port() -> int:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.bind(("127.0.0.1", 0))
-        return int(s.getsockname()[1])
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
 
 
 def make_isolated_schema(prefix: str = "nyro_storage_e2e", *, max_len: int = 63) -> str:
@@ -53,32 +31,29 @@ def make_isolated_schema(prefix: str = "nyro_storage_e2e", *, max_len: int = 63)
 
 def load_pg_url() -> str | None:
     for key in ("DB_URL", "DATABASE_URL"):
-        val = os.environ.get(key)
-        if val:
-            return val
-    # Also check .env in REPO_ROOT for local dev
+        value = os.environ.get(key)
+        if value:
+            return value
+
     env_file = REPO_ROOT / ".env"
     if env_file.exists():
         for line in env_file.read_text().splitlines():
             stripped = line.strip()
             if not stripped or stripped.startswith("#") or "=" not in stripped:
                 continue
-            k, v = stripped.split("=", 1)
-            if k.strip() in ("DB_URL", "DATABASE_URL"):
-                return v.strip().strip("'\"")
+            key, value = stripped.split("=", 1)
+            if key.strip() in ("DB_URL", "DATABASE_URL"):
+                return value.strip().strip("'\"")
     return None
-
-
-# ── Minimal OpenAI mock provider ──────────────────────────────────────────────
 
 
 class _MockHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
-    def log_message(self, fmt: str, *args: Any) -> None:
+    def log_message(self, fmt: str, *args: object) -> None:
         return
 
-    def _write_json(self, status: int, payload: dict) -> None:
+    def _write_json(self, status: int, payload: dict[str, object]) -> None:
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
         self.send_header("content-type", "application/json")
@@ -102,7 +77,13 @@ class _MockHandler(BaseHTTPRequestHandler):
                 "id": "chatcmpl-storage-e2e",
                 "object": "chat.completion",
                 "model": model,
-                "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}],
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "ok"},
+                        "finish_reason": "stop",
+                    }
+                ],
                 "usage": {"prompt_tokens": 3, "completion_tokens": 1, "total_tokens": 4},
             },
         )
@@ -112,9 +93,6 @@ def start_mock(port: int) -> ThreadingHTTPServer:
     server = ThreadingHTTPServer(("127.0.0.1", port), _MockHandler)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
-
-
-# ── Rust harness ──────────────────────────────────────────────────────────────
 
 
 def build_harness(work_dir: Path) -> None:
@@ -273,9 +251,9 @@ def build_harness(work_dir: Path) -> None:
     ).strip() + "\n"
 
     (work_dir / "Cargo.toml").write_text(cargo_toml)
-    src = work_dir / "src"
-    src.mkdir(parents=True, exist_ok=True)
-    (src / "main.rs").write_text(main_rs)
+    src_dir = work_dir / "src"
+    src_dir.mkdir(parents=True, exist_ok=True)
+    (src_dir / "main.rs").write_text(main_rs)
 
 
 def run_harness(
@@ -303,6 +281,7 @@ def run_harness(
         cwd=str(REPO_ROOT),
         text=True,
         capture_output=True,
+        check=False,
     )
     if proc.returncode != 0:
         raise RuntimeError(
@@ -311,61 +290,21 @@ def run_harness(
     return proc.stdout
 
 
-# ── Entry point ──────────────────────────────────────────────────────────────
-
-
-def main() -> int:
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Nyro storage E2E tests")
-    parser.add_argument(
-        "--backend", action="append", choices=["sqlite", "postgres"],
-        help="Backend(s) to test (default: sqlite; add --backend postgres for pgvector matrix).",
-    )
-    args = parser.parse_args()
-    backends: list[str] = args.backend or ["sqlite"]
-
-    if "postgres" in backends:
-        pg_url = load_pg_url()
-        if not pg_url:
-            print(
-                "postgres backend requires DB_URL or DATABASE_URL env var",
-                file=sys.stderr,
-            )
-            return 1
-    else:
-        pg_url = None
-
+@pytest.fixture(scope="module")
+def storage_runtime() -> dict[str, object]:
     upstream_port = find_free_port()
     mock_server = start_mock(upstream_port)
 
-    rc = 0
     try:
         with tempfile.TemporaryDirectory(prefix="nyro-storage-e2e-") as tmp:
             tmpdir = Path(tmp)
             build_harness(tmpdir)
-
-            for backend in backends:
-                t0 = time.time()
-                try:
-                    output = run_harness(
-                        backend,
-                        upstream_port=upstream_port,
-                        work_dir=tmpdir,
-                        pg_url=pg_url,
-                    )
-                    elapsed = time.time() - t0
-                    print(f"  PASS  {backend} ({elapsed:.1f}s)")
-                    print(output.strip())
-                except RuntimeError as exc:
-                    print(f"  FAIL  {backend}: {exc}", file=sys.stderr)
-                    rc = 1
+            yield {
+                "upstream_port": upstream_port,
+                "work_dir": tmpdir,
+                "pg_url": load_pg_url(),
+                "run_harness": run_harness,
+            }
     finally:
         mock_server.shutdown()
         mock_server.server_close()
-
-    return rc
-
-
-if __name__ == "__main__":
-    sys.exit(main())

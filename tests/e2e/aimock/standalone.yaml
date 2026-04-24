@@ -7,7 +7,7 @@
 #   Port 4012  →  fixtures/anthropic-messages/   Anthropic (/v1/messages)
 #   Port 4013  →  fixtures/google-generatecontent/ Gemini
 #
-# run.py substitutes proxy_port and the AIMOCK_* port placeholders before start.
+# Pytest fixtures substitute proxy_port and the AIMOCK_* port placeholders before start.
 
 server:
   proxy_host: "127.0.0.1"

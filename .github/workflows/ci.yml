@@ -106,13 +106,16 @@ jobs:
       - name: Make binary executable
         run: chmod +x target/debug/nyro-server
 
+      - name: Install Python test deps
+        run: python3 -m pip install -r requirements-dev.txt
+
       - name: Pull aimock image
         # Pin SHA in production; update via Dependabot weekly.
         # To pin: docker pull ghcr.io/copilotkit/aimock:latest && docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/copilotkit/aimock:latest
         run: docker pull ghcr.io/copilotkit/aimock:latest
 
       - name: Run static E2E tests
-        run: python3 tests/e2e/aimock/run.py
+        run: python3 -m pytest tests/e2e/aimock -q -m aimock
         env:
           NYRO_BINARY: target/debug/nyro-server
 
@@ -136,6 +139,9 @@ jobs:
       - name: Make binary executable
         run: chmod +x target/debug/nyro-server
 
+      - name: Install Python test deps
+        run: python3 -m pip install -r requirements-dev.txt
+
       - name: Start Ollama
         run: |
           docker run -d --name ollama -p 11434:11434 ollama/ollama
@@ -148,7 +154,7 @@ jobs:
             -d '{"model":"qwen3.5:0.8b","prompt":"hi","stream":false}'
 
       - name: Run inference E2E tests
-        run: python3 tests/e2e/ollama/run.py
+        run: python3 -m pytest tests/e2e/ollama -q -m ollama
         env:
           NYRO_BINARY: target/debug/nyro-server
           OLLAMA_HOST: "http://127.0.0.1:11434"
@@ -172,7 +178,10 @@ jobs:
       - name: Make binary executable
         run: chmod +x target/debug/nyro-server
 
+      - name: Install Python test deps
+        run: python3 -m pip install -r requirements-dev.txt
+
       - name: Run admin E2E tests
-        run: python3 tests/e2e/admin/run.py
+        run: python3 -m pytest tests/e2e/admin -q -m admin
         env:
           NYRO_BINARY: target/debug/nyro-server

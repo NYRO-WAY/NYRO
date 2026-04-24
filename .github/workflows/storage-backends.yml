@@ -52,10 +52,13 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             pkg-config libssl-dev
 
+      - name: Install Python test deps
+        run: python3 -m pip install -r requirements-dev.txt
+
       - name: Run storage E2E tests (sqlite)
-        run: python3 tests/e2e/storage/run.py --backend sqlite
+        run: python3 -m pytest tests/e2e/storage/test_storage.py -q -m storage -k sqlite
 
       - name: Run storage E2E tests (postgres / pgvector)
-        run: python3 tests/e2e/storage/run.py --backend postgres
+        run: python3 -m pytest tests/e2e/storage/test_storage.py -q -m storage -k postgres
         env:
           DB_URL: postgresql://nyro:nyro@localhost:5432/nyro_test

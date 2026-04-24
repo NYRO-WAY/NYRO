@@ -1,5 +1,5 @@
 # Nyro standalone config for L3 Ollama dynamic E2E tests.
-# run.py replaces the proxy_port value at test time via render_standalone_yaml.
+# Pytest fixtures replace the proxy_port value at test time via render_standalone_yaml.
 #
 # Ollama exposes:
 #   OpenAI Chat / Responses  →  http://127.0.0.1:11434/v1

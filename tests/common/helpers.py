@@ -237,23 +237,3 @@ def minimal_mock_provider(port: int) -> tuple[ThreadingHTTPServer, threading.Thr
     return server, t
 
 
-# ── Simple test runner ────────────────────────────────────────────────────────
-
-
-def run_tests(tests: list[tuple[str, Any]], *args: Any) -> int:
-    """Run a list of (name, fn) pairs; return 0 if all pass, 1 otherwise."""
-    failed: list[str] = []
-    for name, fn in tests:
-        try:
-            fn(*args)
-            print(f"  PASS  {name}")
-        except AssertionError as exc:
-            print(f"  FAIL  {name}: {exc}")
-            failed.append(name)
-        except Exception as exc:  # noqa: BLE001
-            print(f"  ERROR {name}: {type(exc).__name__}: {exc}")
-            failed.append(name)
-    if failed:
-        print(f"\n{len(failed)} test(s) failed: {', '.join(failed)}", file=sys.stderr)
-        return 1
-    return 0
