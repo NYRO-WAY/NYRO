@@ -115,7 +115,7 @@ jobs:
         run: docker pull ghcr.io/copilotkit/aimock:latest
 
       - name: Run static E2E tests
-        run: python3 -m pytest tests/e2e/aimock -q -m aimock
+        run: python3 -m pytest tests/e2e/aimock -vv -s -rA -m aimock
         env:
           NYRO_BINARY: target/debug/nyro-server
 
@@ -154,7 +154,7 @@ jobs:
             -d '{"model":"qwen3.5:0.8b","prompt":"hi","stream":false}'
 
       - name: Run inference E2E tests
-        run: python3 -m pytest tests/e2e/ollama -q -m ollama
+        run: python3 -m pytest tests/e2e/ollama -vv -s -rA -m ollama
         env:
           NYRO_BINARY: target/debug/nyro-server
           OLLAMA_HOST: "http://127.0.0.1:11434"
@@ -182,6 +182,6 @@ jobs:
         run: python3 -m pip install -r requirements-dev.txt
 
       - name: Run admin E2E tests
-        run: python3 -m pytest tests/e2e/admin -q -m admin
+        run: python3 -m pytest tests/e2e/admin -vv -s -rA -m admin
         env:
           NYRO_BINARY: target/debug/nyro-server
