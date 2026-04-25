@@ -44,6 +44,7 @@ struct OpenAIChannelSnapshot {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct OpenAIOAuthConfig {
+    #[serde(default)]
     auth_base_url: String,
     authorize_url: String,
     token_url: String,
@@ -56,7 +57,9 @@ struct OpenAIOAuthConfig {
 #[serde(rename_all = "camelCase")]
 struct OpenAIRuntimeConfig {
     api_base_url: String,
+    #[serde(default)]
     models_url: String,
+    #[serde(default)]
     models_client_version: String,
 }
 
