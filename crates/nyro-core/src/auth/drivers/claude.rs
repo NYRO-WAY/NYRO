@@ -1,0 +1,352 @@
+use std::collections::HashMap;
+
+use anyhow::{Context, Result, anyhow, bail};
+use async_trait::async_trait;
+use reqwest::header::{ACCEPT, CONTENT_TYPE};
+use serde::{Deserialize, Serialize};
+
+use super::shared::{
+    PkceAuthState, build_authorize_url, encode_scopes, expires_at_after, generate_code_challenge,
+    generate_code_verifier, generate_state, parse_oauth_callback, parse_session_state,
+    required_http_client, validate_callback_state,
+};
+use crate::auth::types::{
+    AuthDriver, AuthDriverMetadata, AuthExchangeInput, AuthScheme, AuthSession, CreateAuthSession,
+    CredentialBundle, ExchangeAuthContext, RefreshAuthContext, RuntimeBinding, StartAuthContext,
+    StoredCredential,
+};
+use crate::db::models::Provider;
+
+const PROVIDER_PRESETS_SNAPSHOT: &str = include_str!("../../../assets/providers.json");
+const ANTHROPIC_PRESET_ID: &str = "anthropic";
+const CLAUDE_CODE_CHANNEL_ID: &str = "claude-code";
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ClaudePresetSnapshot {
+    id: String,
+    #[serde(default)]
+    channels: Vec<ClaudeChannelSnapshot>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ClaudeChannelSnapshot {
+    id: String,
+    #[serde(default)]
+    oauth: Option<ClaudeOAuthConfig>,
+    #[serde(default)]
+    runtime: Option<ClaudeRuntimeConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ClaudeOAuthConfig {
+    authorize_url: String,
+    token_url: String,
+    client_id: String,
+    redirect_uri: String,
+    scope: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ClaudeRuntimeConfig {
+    api_base_url: String,
+}
+
+#[derive(Debug, Clone)]
+struct ClaudeCodeConfig {
+    oauth: ClaudeOAuthConfig,
+    runtime: ClaudeRuntimeConfig,
+}
+
+#[derive(Debug, Default)]
+pub struct ClaudeOAuthDriver;
+
+#[derive(Debug, Deserialize)]
+struct ClaudeTokenResponse {
+    access_token: Option<String>,
+    refresh_token: Option<String>,
+    expires_in: Option<i64>,
+    scope: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ClaudeErrorResponse {
+    error: Option<String>,
+    error_description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ClaudeAuthState {
+    #[serde(flatten)]
+    pkce: PkceAuthState,
+}
+
+impl ClaudeOAuthDriver {
+    fn claude_code_config() -> Result<ClaudeCodeConfig> {
+        let presets: Vec<ClaudePresetSnapshot> = serde_json::from_str(PROVIDER_PRESETS_SNAPSHOT)
+            .context("parse provider presets snapshot for claude oauth")?;
+        let preset = presets
+            .into_iter()
+            .find(|item| item.id == ANTHROPIC_PRESET_ID)
+            .ok_or_else(|| anyhow!("missing provider preset: {ANTHROPIC_PRESET_ID}"))?;
+        let channel = preset
+            .channels
+            .into_iter()
+            .find(|item| item.id == CLAUDE_CODE_CHANNEL_ID)
+            .ok_or_else(|| {
+                anyhow!("missing provider channel: {ANTHROPIC_PRESET_ID}/{CLAUDE_CODE_CHANNEL_ID}")
+            })?;
+        Ok(ClaudeCodeConfig {
+            oauth: channel.oauth.ok_or_else(|| {
+                anyhow!("missing oauth config for {ANTHROPIC_PRESET_ID}/{CLAUDE_CODE_CHANNEL_ID}")
+            })?,
+            runtime: channel.runtime.ok_or_else(|| {
+                anyhow!("missing runtime config for {ANTHROPIC_PRESET_ID}/{CLAUDE_CODE_CHANNEL_ID}")
+            })?,
+        })
+    }
+
+    fn normalize_token_response(
+        body: &str,
+        fallback_refresh_token: Option<&str>,
+        runtime: &ClaudeRuntimeConfig,
+    ) -> Result<CredentialBundle> {
+        let token: ClaudeTokenResponse =
+            serde_json::from_str(body).context("parse claude oauth token response")?;
+        let access_token = token
+            .access_token
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| anyhow!("claude oauth token response missing access_token"))?;
+        let expires_in = token.expires_in.unwrap_or(3600).max(1);
+
+        Ok(CredentialBundle {
+            access_token: Some(access_token),
+            refresh_token: token
+                .refresh_token
+                .filter(|value| !value.trim().is_empty())
+                .or_else(|| fallback_refresh_token.map(ToString::to_string)),
+            expires_at: Some(expires_at_after(expires_in)),
+            resource_url: Some(runtime.api_base_url.clone()),
+            subject_id: None,
+            scopes: encode_scopes(token.scope.as_deref()),
+            raw: serde_json::from_str(body).unwrap_or(serde_json::Value::Null),
+        })
+    }
+
+    fn parse_error(body: &str) -> Option<String> {
+        let parsed: ClaudeErrorResponse = serde_json::from_str(body).ok()?;
+        parsed
+            .error_description
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| parsed.error.filter(|value| !value.trim().is_empty()))
+    }
+
+    fn claude_cli_headers() -> Vec<(&'static str, &'static str)> {
+        vec![
+            ("User-Agent", "claude-cli/1.0.56 (external, cli)"),
+            ("Referer", "https://claude.ai/"),
+            ("Origin", "https://claude.ai"),
+        ]
+    }
+}
+
+#[async_trait]
+impl AuthDriver for ClaudeOAuthDriver {
+    fn metadata(&self) -> AuthDriverMetadata {
+        AuthDriverMetadata {
+            key: "claude-code",
+            label: "Claude Code",
+            scheme: AuthScheme::OAuthAuthCodePkce,
+            supports_new_provider: true,
+            supports_existing_provider: true,
+        }
+    }
+
+    async fn start(&self, ctx: StartAuthContext) -> Result<CreateAuthSession> {
+        let config = Self::claude_code_config()?;
+        let code_verifier = generate_code_verifier();
+        let code_challenge = generate_code_challenge(&code_verifier);
+        let state = generate_state();
+        let redirect_uri = ctx
+            .redirect_uri
+            .as_deref()
+            .filter(|v| !v.trim().is_empty())
+            .unwrap_or(config.oauth.redirect_uri.as_str());
+        let auth_url = build_authorize_url(
+            config.oauth.authorize_url.as_str(),
+            &[
+                ("code", "true"),
+                ("client_id", config.oauth.client_id.as_str()),
+                ("response_type", "code"),
+                ("redirect_uri", redirect_uri),
+                ("scope", config.oauth.scope.as_str()),
+                ("code_challenge", &code_challenge),
+                ("code_challenge_method", "S256"),
+                ("state", &state),
+            ],
+        )?;
+        let session_state = serde_json::to_string(&ClaudeAuthState {
+            pkce: PkceAuthState {
+                code_verifier,
+                state,
+                redirect_uri: redirect_uri.to_string(),
+            },
+        })?;
+
+        Ok(CreateAuthSession {
+            provider_id: ctx.provider_id,
+            driver_key: self.metadata().key.to_string(),
+            scheme: self.metadata().scheme.as_str().to_string(),
+            status: "pending".to_string(),
+            use_proxy: ctx.use_proxy,
+            user_code: None,
+            verification_uri: Some("https://claude.ai".to_string()),
+            verification_uri_complete: Some(auth_url),
+            state_json: Some(session_state),
+            context_json: None,
+            result_json: None,
+            expires_at: Some(expires_at_after(10 * 60)),
+            poll_interval_seconds: Some(2),
+            last_error: None,
+        })
+    }
+
+    async fn exchange(
+        &self,
+        session: &AuthSession,
+        input: AuthExchangeInput,
+        ctx: ExchangeAuthContext,
+    ) -> Result<CredentialBundle> {
+        let config = Self::claude_code_config()?;
+        let state: ClaudeAuthState = parse_session_state(session)?;
+        let callback = parse_oauth_callback(&input)?;
+        validate_callback_state(&state.pkce.state, callback.state.as_deref(), "claude")?;
+        let code = callback
+            .code
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| anyhow!("missing authorization code"))?;
+
+        let client = required_http_client(ctx.http_client)?;
+
+        // Claude token endpoint expects JSON body (not form-urlencoded)
+        let token_body = serde_json::json!({
+            "grant_type": "authorization_code",
+            "client_id": config.oauth.client_id,
+            "code": code,
+            "redirect_uri": state.pkce.redirect_uri,
+            "code_verifier": state.pkce.code_verifier,
+            "state": state.pkce.state,
+        });
+
+        let mut request = client
+            .post(config.oauth.token_url.as_str())
+            .header(CONTENT_TYPE, "application/json")
+            .header(ACCEPT, "application/json");
+
+        for (key, value) in Self::claude_cli_headers() {
+            request = request.header(key, value);
+        }
+
+        let response = request
+            .json(&token_body)
+            .send()
+            .await
+            .context("exchange claude authorization code")?;
+
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        if !status.is_success() {
+            let detail = Self::parse_error(&body).unwrap_or(body);
+            bail!("claude oauth token exchange failed: HTTP {status} {detail}");
+        }
+
+        Self::normalize_token_response(&body, None, &config.runtime)
+    }
+
+    async fn refresh(
+        &self,
+        credential: &StoredCredential,
+        ctx: RefreshAuthContext,
+    ) -> Result<CredentialBundle> {
+        let config = Self::claude_code_config()?;
+        let refresh_token = credential
+            .refresh_token
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| anyhow!("claude oauth refresh token is missing"))?;
+        let client = required_http_client(ctx.http_client)?;
+
+        let token_body = serde_json::json!({
+            "grant_type": "refresh_token",
+            "client_id": config.oauth.client_id,
+            "refresh_token": refresh_token,
+        });
+
+        let mut request = client
+            .post(config.oauth.token_url.as_str())
+            .header(CONTENT_TYPE, "application/json")
+            .header(ACCEPT, "application/json");
+
+        for (key, value) in Self::claude_cli_headers() {
+            request = request.header(key, value);
+        }
+
+        let response = request
+            .json(&token_body)
+            .send()
+            .await
+            .context("refresh claude oauth token")?;
+
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        if !status.is_success() {
+            let detail = Self::parse_error(&body).unwrap_or(body);
+            bail!("claude oauth token refresh failed: HTTP {status} {detail}");
+        }
+
+        Self::normalize_token_response(&body, Some(refresh_token), &config.runtime)
+    }
+
+    fn bind_runtime(
+        &self,
+        provider: &Provider,
+        credential: &StoredCredential,
+    ) -> Result<RuntimeBinding> {
+        let config = Self::claude_code_config()?;
+        let mut extra_headers = HashMap::new();
+
+        // Claude OAuth uses Bearer auth instead of x-api-key
+        if let Some(access_token) = credential.access_token.as_deref().filter(|v| !v.trim().is_empty()) {
+            extra_headers.insert(
+                "authorization".to_string(),
+                format!("Bearer {access_token}"),
+            );
+        }
+
+        let base_url_override = credential
+            .resource_url
+            .clone()
+            .filter(|value| !value.trim().is_empty())
+            .or_else(|| Some(config.runtime.api_base_url.clone()));
+
+        let capabilities_source_override = provider
+            .capabilities_source
+            .clone()
+            .filter(|value| !value.trim().is_empty());
+
+        Ok(RuntimeBinding {
+            base_url_override,
+            extra_headers,
+            model_aliases: HashMap::new(),
+            models_source_override: None,
+            capabilities_source_override,
+            disable_default_auth: true,
+        })
+    }
+}
