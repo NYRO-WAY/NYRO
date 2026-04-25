@@ -249,14 +249,15 @@ impl AdminService {
         })?;
 
         let client = self.gw.http_client_for_provider(session.use_proxy).await?;
+        let input_metadata = input.metadata.clone();
         let bundle = match driver
             .exchange(
                 &session,
                 input,
                 ExchangeAuthContext {
                     use_proxy: session.use_proxy,
+                    metadata: input_metadata,
                     http_client: Some(client),
-                    ..Default::default()
                 },
             )
             .await
@@ -941,6 +942,7 @@ impl AdminService {
                         "input": "nyro.embedding.dimensions.probe",
                     }),
                     HeaderMap::new(),
+                    false,
                 )
                 .await;
             if let Ok((payload, status)) = call {

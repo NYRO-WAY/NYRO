@@ -21,9 +21,14 @@ impl ProxyClient {
         api_key: &str,
         body: Value,
         extra_headers: HeaderMap,
+        skip_default_auth: bool,
     ) -> Result<(Value, u16)> {
         let url = adapter.build_url(base_url, path, api_key);
-        let mut headers = adapter.auth_headers(api_key);
+        let mut headers = if skip_default_auth {
+            HeaderMap::new()
+        } else {
+            adapter.auth_headers(api_key)
+        };
         headers.extend(extra_headers);
 
         let resp = self.http.post(&url).headers(headers).json(&body).send().await?;
@@ -40,9 +45,14 @@ impl ProxyClient {
         api_key: &str,
         body: Value,
         extra_headers: HeaderMap,
+        skip_default_auth: bool,
     ) -> Result<(reqwest::Response, u16)> {
         let url = adapter.build_url(base_url, path, api_key);
-        let mut headers = adapter.auth_headers(api_key);
+        let mut headers = if skip_default_auth {
+            HeaderMap::new()
+        } else {
+            adapter.auth_headers(api_key)
+        };
         headers.extend(extra_headers);
 
         let resp = self.http.post(&url).headers(headers).json(&body).send().await?;

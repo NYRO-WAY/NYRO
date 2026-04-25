@@ -146,7 +146,7 @@ impl ClaudeOAuthDriver {
 
     fn claude_cli_headers() -> Vec<(&'static str, &'static str)> {
         vec![
-            ("User-Agent", "claude-cli/1.0.56 (external, cli)"),
+            ("User-Agent", "claude-cli/1.0.98 (external, cli)"),
             ("Referer", "https://claude.ai/"),
             ("Origin", "https://claude.ai"),
         ]
@@ -322,12 +322,16 @@ impl AuthDriver for ClaudeOAuthDriver {
         let mut extra_headers = HashMap::new();
 
         // Claude OAuth uses Bearer auth instead of x-api-key
-        if let Some(access_token) = credential.access_token.as_deref().filter(|v| !v.trim().is_empty()) {
-            extra_headers.insert(
-                "authorization".to_string(),
-                format!("Bearer {access_token}"),
-            );
-        }
+        let access_token = credential
+            .access_token
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| anyhow!("claude oauth access token is empty in bind_runtime"))?;
+        extra_headers.insert(
+            "authorization".to_string(),
+            format!("Bearer {access_token}"),
+        );
 
         let base_url_override = credential
             .resource_url
@@ -348,5 +352,129 @@ impl AuthDriver for ClaudeOAuthDriver {
             capabilities_source_override,
             disable_default_auth: true,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::types::StoredCredential;
+
+    fn test_provider() -> Provider {
+        Provider {
+            id: "test".into(),
+            name: "test".into(),
+            vendor: None,
+            protocol: "anthropic".into(),
+            base_url: String::new(),
+            default_protocol: String::new(),
+            protocol_endpoints: String::new(),
+            preset_key: None,
+            channel: None,
+            models_source: None,
+            capabilities_source: None,
+            static_models: None,
+            api_key: String::new(),
+            auth_mode: "oauth".into(),
+            access_token: None,
+            refresh_token: None,
+            expires_at: None,
+            use_proxy: false,
+            last_test_success: None,
+            last_test_at: None,
+            is_enabled: true,
+            created_at: String::new(),
+            updated_at: String::new(),
+        }
+    }
+
+    #[test]
+    fn config_loads_from_preset() {
+        let config = ClaudeOAuthDriver::claude_code_config().unwrap();
+        assert!(config.oauth.authorize_url.contains("claude.ai"));
+        assert!(config.oauth.token_url.contains("anthropic.com"));
+        assert!(!config.oauth.client_id.is_empty());
+        assert!(!config.oauth.scope.is_empty());
+        assert!(config.runtime.api_base_url.contains("anthropic.com"));
+    }
+
+    #[test]
+    fn normalize_token_response_valid() {
+        let body = r#"{"access_token":"tok_abc","refresh_token":"ref_xyz","expires_in":7200,"scope":"user:inference user:profile"}"#;
+        let runtime = ClaudeRuntimeConfig {
+            api_base_url: "https://api.anthropic.com".into(),
+        };
+        let bundle = ClaudeOAuthDriver::normalize_token_response(body, None, &runtime).unwrap();
+        assert_eq!(bundle.access_token.as_deref(), Some("tok_abc"));
+        assert_eq!(bundle.refresh_token.as_deref(), Some("ref_xyz"));
+        assert_eq!(bundle.scopes, vec!["user:inference", "user:profile"]);
+        assert_eq!(bundle.resource_url.as_deref(), Some("https://api.anthropic.com"));
+        assert!(bundle.expires_at.is_some());
+    }
+
+    #[test]
+    fn normalize_token_response_missing_access_token() {
+        let body = r#"{"refresh_token":"ref"}"#;
+        let runtime = ClaudeRuntimeConfig {
+            api_base_url: "https://api.anthropic.com".into(),
+        };
+        assert!(ClaudeOAuthDriver::normalize_token_response(body, None, &runtime).is_err());
+    }
+
+    #[test]
+    fn normalize_token_response_fallback_refresh_token() {
+        let body = r#"{"access_token":"tok"}"#;
+        let runtime = ClaudeRuntimeConfig {
+            api_base_url: "https://api.anthropic.com".into(),
+        };
+        let bundle = ClaudeOAuthDriver::normalize_token_response(body, Some("fallback_ref"), &runtime).unwrap();
+        assert_eq!(bundle.refresh_token.as_deref(), Some("fallback_ref"));
+    }
+
+    #[test]
+    fn parse_error_with_description() {
+        let body = r#"{"error":"invalid_grant","error_description":"code expired"}"#;
+        assert_eq!(ClaudeOAuthDriver::parse_error(body).as_deref(), Some("code expired"));
+    }
+
+    #[test]
+    fn parse_error_without_description() {
+        let body = r#"{"error":"server_error"}"#;
+        assert_eq!(ClaudeOAuthDriver::parse_error(body).as_deref(), Some("server_error"));
+    }
+
+    #[test]
+    fn parse_error_empty_body() {
+        assert!(ClaudeOAuthDriver::parse_error("{}").is_none());
+    }
+
+    #[test]
+    fn bind_runtime_sets_bearer_and_disables_default_auth() {
+        let provider = test_provider();
+        let credential = StoredCredential {
+            access_token: Some("my_token".into()),
+            ..Default::default()
+        };
+        let binding = ClaudeOAuthDriver.bind_runtime(&provider, &credential).unwrap();
+        assert_eq!(binding.extra_headers.get("authorization").unwrap(), "Bearer my_token");
+        assert!(binding.disable_default_auth);
+        assert!(binding.base_url_override.is_some());
+    }
+
+    #[test]
+    fn bind_runtime_errors_on_empty_token() {
+        let provider = test_provider();
+        let credential = StoredCredential {
+            access_token: Some("".into()),
+            ..Default::default()
+        };
+        assert!(ClaudeOAuthDriver.bind_runtime(&provider, &credential).is_err());
+    }
+
+    #[test]
+    fn bind_runtime_errors_on_missing_token() {
+        let provider = test_provider();
+        let credential = StoredCredential::default();
+        assert!(ClaudeOAuthDriver.bind_runtime(&provider, &credential).is_err());
     }
 }

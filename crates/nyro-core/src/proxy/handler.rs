@@ -253,6 +253,7 @@ pub async fn embeddings_proxy(
                         continue;
                     }
                 },
+                provider_runtime.binding.disable_default_auth,
             )
             .await;
         match call {
@@ -1025,6 +1026,7 @@ async fn proxy_pipeline(
                 &credential,
                 egress_body,
                 request_headers.clone(),
+                provider_runtime.binding.disable_default_auth,
                 &ingress_str,
                 &egress_str,
                 &request_model,
@@ -1057,6 +1059,7 @@ async fn proxy_pipeline(
                 &credential,
                 egress_body,
                 request_headers,
+                provider_runtime.binding.disable_default_auth,
                 &ingress_str,
                 &egress_str,
                 &request_model,
@@ -1083,6 +1086,7 @@ async fn proxy_pipeline(
                 &credential,
                 egress_body,
                 request_headers,
+                provider_runtime.binding.disable_default_auth,
                 &ingress_str,
                 &egress_str,
                 &request_model,
@@ -1163,6 +1167,7 @@ async fn handle_non_stream(
     credential: &str,
     body: Value,
     extra_headers: reqwest::header::HeaderMap,
+    skip_default_auth: bool,
     ingress_str: &str,
     egress_str: &str,
     request_model: &str,
@@ -1196,6 +1201,7 @@ async fn handle_non_stream(
             &credential_to_use,
             body.clone(),
             extra_headers.clone(),
+            skip_default_auth,
         )
         .await
     {
@@ -1337,6 +1343,7 @@ async fn handle_non_stream_via_upstream_stream(
     credential: &str,
     body: Value,
     extra_headers: reqwest::header::HeaderMap,
+    skip_default_auth: bool,
     ingress_str: &str,
     egress_str: &str,
     request_model: &str,
@@ -1358,6 +1365,7 @@ async fn handle_non_stream_via_upstream_stream(
             &credential_to_use,
             body.clone(),
             extra_headers.clone(),
+            skip_default_auth,
         )
         .await
     {
@@ -1513,6 +1521,7 @@ async fn handle_stream(
     credential: &str,
     body: Value,
     extra_headers: reqwest::header::HeaderMap,
+    skip_default_auth: bool,
     ingress_str: &str,
     egress_str: &str,
     request_model: &str,
@@ -1554,6 +1563,7 @@ async fn handle_stream(
             &credential_to_use,
             body.clone(),
             extra_headers.clone(),
+            skip_default_auth,
         )
         .await
     {
@@ -2090,6 +2100,7 @@ async fn compute_embedding(gw: &Gateway, text: &str) -> anyhow::Result<Vec<f32>>
                     Ok(headers) => headers,
                     Err(_) => continue,
                 },
+                provider_runtime.binding.disable_default_auth,
             )
             .await
         {
