@@ -109,7 +109,7 @@ def render_standalone_yaml(
     text = template_path.read_text(encoding="utf-8")
     # Replace proxy_port value
     text = re.sub(r"(proxy_port\s*:\s*)\d+", rf"\g<1>{proxy_port}", text)
-    # Replace {KEY} placeholders (e.g. {AIMOCK_OPENAI_PORT})
+    # Replace {KEY} placeholders supplied via port_map
     for key, val in (port_map or {}).items():
         text = text.replace(f"{{{key}}}", str(val))
 
