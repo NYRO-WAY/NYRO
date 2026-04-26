@@ -249,14 +249,15 @@ impl AdminService {
         })?;
 
         let client = self.gw.http_client_for_provider(session.use_proxy).await?;
+        let input_metadata = input.metadata.clone();
         let bundle = match driver
             .exchange(
                 &session,
                 input,
                 ExchangeAuthContext {
                     use_proxy: session.use_proxy,
+                    metadata: input_metadata,
                     http_client: Some(client),
-                    ..Default::default()
                 },
             )
             .await
@@ -768,15 +769,19 @@ impl AdminService {
             return Ok(models);
         }
 
-        let mut headers = build_model_headers(
-            &provider.protocol,
-            provider.vendor.as_deref(),
-            &credential,
-        )?;
+        let mut headers = if runtime.binding.disable_default_auth {
+            HeaderMap::new()
+        } else {
+            build_model_headers(
+                &provider.protocol,
+                provider.vendor.as_deref(),
+                &credential,
+            )?
+        };
         headers.extend(runtime_binding_headers(&runtime.binding)?);
         let mut request = self.gw.http_client.get(&endpoint).headers(headers).timeout(Duration::from_secs(10));
 
-        if provider.protocol == "gemini" {
+        if provider.protocol == "gemini" && !runtime.binding.disable_default_auth {
             let separator = if endpoint.contains('?') { '&' } else { '?' };
             let mut headers = build_model_headers(
                 &provider.protocol,
@@ -830,15 +835,19 @@ impl AdminService {
                 }
             }
 
-            let mut headers = build_model_headers(
-                &provider.protocol,
-                provider.vendor.as_deref(),
-                &credential,
-            )?;
+            let mut headers = if runtime.binding.disable_default_auth {
+                HeaderMap::new()
+            } else {
+                build_model_headers(
+                    &provider.protocol,
+                    provider.vendor.as_deref(),
+                    &credential,
+                )?
+            };
             headers.extend(runtime_binding_headers(&runtime.binding)?);
             let mut request = self.gw.http_client.get(&endpoint).headers(headers);
 
-            if provider.protocol == "gemini" {
+            if provider.protocol == "gemini" && !runtime.binding.disable_default_auth {
                 let separator = if endpoint.contains('?') { '&' } else { '?' };
                 let mut headers = build_model_headers(
                     &provider.protocol,
@@ -941,6 +950,7 @@ impl AdminService {
                         "input": "nyro.embedding.dimensions.probe",
                     }),
                     HeaderMap::new(),
+                    false,
                 )
                 .await;
             if let Ok((payload, status)) = call {

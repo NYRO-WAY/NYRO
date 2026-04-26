@@ -9,8 +9,8 @@ use serde_json::Value;
 
 use super::shared::{
     PkceAuthState, build_authorize_url, encode_scopes, expires_at_after, generate_code_challenge,
-    generate_code_verifier, generate_state, parse_oauth_callback, parse_session_state,
-    required_http_client, validate_callback_state,
+    generate_code_verifier, generate_state, load_channel_config, parse_oauth_callback,
+    parse_session_state, required_http_client, validate_callback_state,
 };
 use crate::auth::types::{
     AuthDriver, AuthDriverMetadata, AuthExchangeInput, AuthScheme, AuthSession, CreateAuthSession,
@@ -19,22 +19,12 @@ use crate::auth::types::{
 };
 use crate::db::models::Provider;
 
-const PROVIDER_PRESETS_SNAPSHOT: &str = include_str!("../../../assets/providers.json");
 const OPENAI_PRESET_ID: &str = "openai";
 const CODEX_CHANNEL_ID: &str = "codex";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct OpenAIPresetSnapshot {
-    id: String,
-    #[serde(default)]
-    channels: Vec<OpenAIChannelSnapshot>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct OpenAIChannelSnapshot {
-    id: String,
+struct CodexChannelConfig {
     #[serde(default)]
     oauth: Option<OpenAIOAuthConfig>,
     #[serde(default)]
@@ -92,19 +82,8 @@ struct OpenAIAuthState {
 
 impl OpenAIOAuthDriver {
     fn codex_config() -> Result<OpenAICodexConfig> {
-        let presets: Vec<OpenAIPresetSnapshot> = serde_json::from_str(PROVIDER_PRESETS_SNAPSHOT)
-            .context("parse provider presets snapshot for codex oauth")?;
-        let preset = presets
-            .into_iter()
-            .find(|item| item.id == OPENAI_PRESET_ID)
-            .ok_or_else(|| anyhow!("missing provider preset: {OPENAI_PRESET_ID}"))?;
-        let channel = preset
-            .channels
-            .into_iter()
-            .find(|item| item.id == CODEX_CHANNEL_ID)
-            .ok_or_else(|| {
-                anyhow!("missing provider channel: {OPENAI_PRESET_ID}/{CODEX_CHANNEL_ID}")
-            })?;
+        let channel: CodexChannelConfig =
+            load_channel_config(OPENAI_PRESET_ID, CODEX_CHANNEL_ID)?;
         Ok(OpenAICodexConfig {
             oauth: channel.oauth.ok_or_else(|| {
                 anyhow!("missing oauth config for {OPENAI_PRESET_ID}/{CODEX_CHANNEL_ID}")
