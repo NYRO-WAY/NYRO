@@ -55,11 +55,21 @@ jobs:
       - name: Build nyro-server (debug)
         run: cargo build -p nyro-server
 
+      - name: Build nyro-tools (debug)
+        run: cargo build -p nyro-tools
+
       - name: Upload nyro-server binary
         uses: actions/upload-artifact@v4
         with:
           name: nyro-server-linux-x86_64
           path: target/debug/nyro-server
+          retention-days: 1
+
+      - name: Upload nyro-tools binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: nyro-tools-linux-x86_64
+          path: target/debug/nyro-tools
           retention-days: 1
 
   unit-tests:
@@ -87,11 +97,12 @@ jobs:
       - name: Run unit tests
         run: cargo test --workspace --exclude nyro-desktop --exclude nyro-server
 
-  e2e-static-tests:
+  e2e-proxy-tests:
     needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
@@ -103,61 +114,23 @@ jobs:
           name: nyro-server-linux-x86_64
           path: target/debug
 
-      - name: Make binary executable
-        run: chmod +x target/debug/nyro-server
-
-      - name: Install Python test deps
-        run: python3 -m pip install -r requirements-dev.txt
-
-      - name: Pull aimock image
-        # Pin SHA in production; update via Dependabot weekly.
-        # To pin: docker pull ghcr.io/copilotkit/aimock:latest && docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/copilotkit/aimock:latest
-        run: docker pull ghcr.io/copilotkit/aimock:latest
-
-      - name: Run static E2E tests
-        run: python3 -m pytest tests/e2e/aimock -vv -s -rA -m aimock
-        env:
-          NYRO_BINARY: target/debug/nyro-server
-
-  e2e-inference-tests:
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    timeout-minutes: 20
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download nyro-server binary
+      - name: Download nyro-tools binary
         uses: actions/download-artifact@v4
         with:
-          name: nyro-server-linux-x86_64
+          name: nyro-tools-linux-x86_64
           path: target/debug
 
-      - name: Make binary executable
-        run: chmod +x target/debug/nyro-server
+      - name: Make binaries executable
+        run: chmod +x target/debug/nyro-server target/debug/nyro-tools
 
       - name: Install Python test deps
         run: python3 -m pip install -r requirements-dev.txt
 
-      - name: Start Ollama
-        run: |
-          docker run -d --name ollama -p 11434:11434 ollama/ollama
-          timeout 60 bash -c 'until curl -sf http://localhost:11434/api/version; do sleep 2; done'
-
-      - name: Pull qwen3.5 model and warmup
-        run: |
-          docker exec ollama ollama pull qwen3.5:0.8b
-          curl -s -o /dev/null http://localhost:11434/api/generate \
-            -d '{"model":"qwen3.5:0.8b","prompt":"hi","stream":false}'
-
-      - name: Run inference E2E tests
-        run: python3 -m pytest tests/e2e/ollama -vv -s -rA -m ollama
+      - name: Run proxy E2E protocol-matrix tests
+        run: python3 -m pytest tests/e2e/proxy -vv -s -rA -m proxy
         env:
           NYRO_BINARY: target/debug/nyro-server
-          OLLAMA_HOST: "http://127.0.0.1:11434"
+          NYRO_TOOLS_BINARY: target/debug/nyro-tools
 
   e2e-admin-tests:
     needs: build
