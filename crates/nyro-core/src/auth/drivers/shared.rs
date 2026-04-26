@@ -5,9 +5,48 @@ use rand::RngCore;
 use reqwest::Url;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::auth::types::{AuthExchangeInput, AuthSession};
+
+const PROVIDER_PRESETS_SNAPSHOT: &str = include_str!("../../../assets/providers.json");
+
+#[derive(Debug, Deserialize)]
+struct PresetIndex {
+    id: String,
+    #[serde(default)]
+    channels: Vec<ChannelIndex>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ChannelIndex {
+    id: String,
+    #[serde(flatten)]
+    raw: Value,
+}
+
+/// Locate a single channel from providers.json by preset id + channel id,
+/// then deserialize its content into the caller's typed struct.
+/// Each driver calls this instead of parsing the entire JSON with its own types.
+pub fn load_channel_config<T: DeserializeOwned>(
+    preset_id: &str,
+    channel_id: &str,
+) -> Result<T> {
+    let presets: Vec<PresetIndex> = serde_json::from_str(PROVIDER_PRESETS_SNAPSHOT)
+        .context("parse provider presets index")?;
+    let preset = presets
+        .into_iter()
+        .find(|p| p.id == preset_id)
+        .ok_or_else(|| anyhow!("missing provider preset: {preset_id}"))?;
+    let channel = preset
+        .channels
+        .into_iter()
+        .find(|c| c.id == channel_id)
+        .ok_or_else(|| anyhow!("missing provider channel: {preset_id}/{channel_id}"))?;
+    serde_json::from_value(channel.raw)
+        .with_context(|| format!("parse channel config: {preset_id}/{channel_id}"))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PkceAuthState {

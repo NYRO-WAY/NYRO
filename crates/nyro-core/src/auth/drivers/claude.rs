@@ -7,8 +7,8 @@ use serde::{Deserialize, Serialize};
 
 use super::shared::{
     PkceAuthState, build_authorize_url, encode_scopes, expires_at_after, generate_code_challenge,
-    generate_code_verifier, generate_state, parse_oauth_callback, parse_session_state,
-    required_http_client, validate_callback_state,
+    generate_code_verifier, generate_state, load_channel_config, parse_oauth_callback,
+    parse_session_state, required_http_client, validate_callback_state,
 };
 use crate::auth::types::{
     AuthDriver, AuthDriverMetadata, AuthExchangeInput, AuthScheme, AuthSession, CreateAuthSession,
@@ -17,22 +17,12 @@ use crate::auth::types::{
 };
 use crate::db::models::Provider;
 
-const PROVIDER_PRESETS_SNAPSHOT: &str = include_str!("../../../assets/providers.json");
 const ANTHROPIC_PRESET_ID: &str = "anthropic";
 const CLAUDE_CODE_CHANNEL_ID: &str = "claude-code";
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct ClaudePresetSnapshot {
-    id: String,
-    #[serde(default)]
-    channels: Vec<ClaudeChannelSnapshot>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ClaudeChannelSnapshot {
-    id: String,
+struct ClaudeCodeChannelConfig {
     #[serde(default)]
     oauth: Option<ClaudeOAuthConfig>,
     #[serde(default)]
@@ -86,19 +76,8 @@ struct ClaudeAuthState {
 
 impl ClaudeOAuthDriver {
     fn claude_code_config() -> Result<ClaudeCodeConfig> {
-        let presets: Vec<ClaudePresetSnapshot> = serde_json::from_str(PROVIDER_PRESETS_SNAPSHOT)
-            .context("parse provider presets snapshot for claude oauth")?;
-        let preset = presets
-            .into_iter()
-            .find(|item| item.id == ANTHROPIC_PRESET_ID)
-            .ok_or_else(|| anyhow!("missing provider preset: {ANTHROPIC_PRESET_ID}"))?;
-        let channel = preset
-            .channels
-            .into_iter()
-            .find(|item| item.id == CLAUDE_CODE_CHANNEL_ID)
-            .ok_or_else(|| {
-                anyhow!("missing provider channel: {ANTHROPIC_PRESET_ID}/{CLAUDE_CODE_CHANNEL_ID}")
-            })?;
+        let channel: ClaudeCodeChannelConfig =
+            load_channel_config(ANTHROPIC_PRESET_ID, CLAUDE_CODE_CHANNEL_ID)?;
         Ok(ClaudeCodeConfig {
             oauth: channel.oauth.ok_or_else(|| {
                 anyhow!("missing oauth config for {ANTHROPIC_PRESET_ID}/{CLAUDE_CODE_CHANNEL_ID}")
