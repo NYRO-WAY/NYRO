@@ -1,0 +1,34 @@
+[package]
+name = "nyro-tools"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CLI suite (proxy / record / replay) for Nyro e2e testing — drives real LLM recording and offline byte-stream replay"
+
+[[bin]]
+name = "nyro-tools"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { workspace = true }
+axum = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+chrono = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+
+clap = { version = "4", features = ["derive", "env"] }
+base64 = "0.22"
+bytes = "1"
+futures = "0.3"
+tokio-stream = "0.1"
+walkdir = "2"
+url = "2"
+
+[dev-dependencies]
+tempfile = "3"

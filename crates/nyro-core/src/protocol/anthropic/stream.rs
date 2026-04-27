@@ -25,12 +25,21 @@ impl ResponseParser for AnthropicResponseParser {
         let mut content_text = String::new();
         let mut tool_calls = Vec::new();
 
+        let mut thinking_parts: Vec<String> = Vec::new();
         if let Some(blocks) = resp.get("content").and_then(|c| c.as_array()) {
             for block in blocks {
                 match block.get("type").and_then(|t| t.as_str()) {
                     Some("text") => {
                         if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
                             content_text.push_str(text);
+                        }
+                    }
+                    Some("thinking") => {
+                        // Present in responses from Ollama and native Anthropic thinking models.
+                        if let Some(text) = block.get("thinking").and_then(|t| t.as_str()) {
+                            if !text.is_empty() {
+                                thinking_parts.push(text.to_string());
+                            }
                         }
                     }
                     Some("tool_use") => {
@@ -50,6 +59,11 @@ impl ResponseParser for AnthropicResponseParser {
                 }
             }
         }
+        let reasoning_content = if thinking_parts.is_empty() {
+            None
+        } else {
+            Some(thinking_parts.join("\n"))
+        };
 
         let stop_reason = resp
             .get("stop_reason")
@@ -66,7 +80,7 @@ impl ResponseParser for AnthropicResponseParser {
             id,
             model,
             content: content_text,
-            reasoning_content: None,
+            reasoning_content,
             tool_calls,
             response_items: None,
             stop_reason,
@@ -237,6 +251,16 @@ fn parse_anthropic_event(event_type: Option<&str>, data: &Value, deltas: &mut Ve
                             deltas.push(StreamDelta::TextDelta(text.to_string()));
                         }
                     }
+                    Some("thinking_delta") => {
+                        // Produced by Ollama and native Anthropic thinking models.
+                        // signature_delta events (native Anthropic only) are silently
+                        // ignored below — the parser must not depend on them.
+                        if let Some(text) = delta.get("thinking").and_then(|t| t.as_str()) {
+                            if !text.is_empty() {
+                                deltas.push(StreamDelta::ReasoningDelta(text.to_string()));
+                            }
+                        }
+                    }
                     Some("input_json_delta") => {
                         if let Some(json) = delta.get("partial_json").and_then(|t| t.as_str()) {
                             let idx = data
@@ -250,6 +274,8 @@ fn parse_anthropic_event(event_type: Option<&str>, data: &Value, deltas: &mut Ve
                             });
                         }
                     }
+                    // signature_delta (native Anthropic) and other unknown types are
+                    // intentionally ignored.
                     _ => {}
                 }
             }
@@ -530,5 +556,239 @@ fn extract_anthropic_usage(v: &Value) -> TokenUsage {
         }
     } else {
         TokenUsage::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::{ResponseParser, StreamParser};
+
+    fn make_sse_block(event: &str, data: &str) -> String {
+        format!("event: {event}\ndata: {data}\n\n")
+    }
+
+    // ── AnthropicResponseParser ──
+
+    #[test]
+    fn test_parse_response_text_only() {
+        let resp = serde_json::json!({
+            "id": "msg_1",
+            "model": "claude-3-5-sonnet",
+            "content": [{"type": "text", "text": "hello"}],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 5, "output_tokens": 3}
+        });
+        let r = AnthropicResponseParser.parse_response(resp).unwrap();
+        assert_eq!(r.content, "hello");
+        assert!(r.reasoning_content.is_none());
+        assert_eq!(r.stop_reason.as_deref(), Some("stop"));
+    }
+
+    #[test]
+    fn test_parse_response_thinking_and_text() {
+        // Ollama returns thinking + text blocks in non-stream response.
+        let resp = serde_json::json!({
+            "id": "msg_2",
+            "model": "qwen3",
+            "content": [
+                {"type": "thinking", "thinking": "let me think..."},
+                {"type": "text", "text": "hi there"}
+            ],
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 10, "output_tokens": 20}
+        });
+        let r = AnthropicResponseParser.parse_response(resp).unwrap();
+        assert_eq!(r.content, "hi there");
+        assert_eq!(r.reasoning_content.as_deref(), Some("let me think..."));
+    }
+
+    #[test]
+    fn test_parse_response_tool_use() {
+        let resp = serde_json::json!({
+            "id": "msg_3",
+            "model": "claude-3-5-sonnet",
+            "content": [{
+                "type": "tool_use",
+                "id": "toolu_01",
+                "name": "get_weather",
+                "input": {"city": "Paris"}
+            }],
+            "stop_reason": "tool_use",
+            "usage": {"input_tokens": 15, "output_tokens": 8}
+        });
+        let r = AnthropicResponseParser.parse_response(resp).unwrap();
+        assert_eq!(r.tool_calls.len(), 1);
+        assert_eq!(r.tool_calls[0].name, "get_weather");
+        assert_eq!(r.stop_reason.as_deref(), Some("tool_calls"));
+    }
+
+    // ── AnthropicStreamParser ──
+
+    #[test]
+    fn test_stream_basic_text() {
+        let sse = [
+            make_sse_block(
+                "message_start",
+                r#"{"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"claude-3-5-sonnet","stop_reason":null,"usage":{"input_tokens":9,"output_tokens":0}}}"#,
+            ),
+            make_sse_block(
+                "content_block_start",
+                r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+            ),
+            make_sse_block(
+                "content_block_delta",
+                r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}"#,
+            ),
+            make_sse_block("content_block_stop", r#"{"type":"content_block_stop","index":0}"#),
+            make_sse_block(
+                "message_delta",
+                r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}"#,
+            ),
+            make_sse_block("message_stop", r#"{"type":"message_stop"}"#),
+        ]
+        .concat();
+
+        let mut parser = AnthropicStreamParser::new();
+        let deltas = parser.parse_chunk(&sse).unwrap();
+
+        let has_text = deltas.iter().any(|d| matches!(d, StreamDelta::TextDelta(t) if t == "hello"));
+        let has_done = deltas.iter().any(|d| matches!(d, StreamDelta::Done { stop_reason } if stop_reason == "stop"));
+        assert!(has_text, "expected TextDelta('hello'), got: {deltas:?}");
+        assert!(has_done, "expected Done(stop), got: {deltas:?}");
+    }
+
+    #[test]
+    fn test_stream_thinking_delta_no_signature_delta() {
+        // Ollama sends thinking_delta events but omits signature_delta entirely.
+        // Parser must not fail and must emit ReasoningDelta.
+        let sse = [
+            make_sse_block(
+                "message_start",
+                r#"{"type":"message_start","message":{"id":"msg_2","type":"message","role":"assistant","content":[],"model":"qwen3","stop_reason":null,"usage":{"input_tokens":10,"output_tokens":0}}}"#,
+            ),
+            make_sse_block(
+                "content_block_start",
+                r#"{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}"#,
+            ),
+            make_sse_block(
+                "content_block_delta",
+                r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"step one"}}"#,
+            ),
+            make_sse_block(
+                "content_block_delta",
+                r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":" step two"}}"#,
+            ),
+            // No signature_delta here (Ollama omits it)
+            make_sse_block("content_block_stop", r#"{"type":"content_block_stop","index":0}"#),
+            make_sse_block(
+                "content_block_start",
+                r#"{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}"#,
+            ),
+            make_sse_block(
+                "content_block_delta",
+                r#"{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"answer"}}"#,
+            ),
+            make_sse_block("content_block_stop", r#"{"type":"content_block_stop","index":1}"#),
+            make_sse_block(
+                "message_delta",
+                r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":15}}"#,
+            ),
+            make_sse_block("message_stop", r#"{"type":"message_stop"}"#),
+        ]
+        .concat();
+
+        let mut parser = AnthropicStreamParser::new();
+        let deltas = parser.parse_chunk(&sse).unwrap();
+
+        let reasoning: Vec<_> = deltas
+            .iter()
+            .filter_map(|d| if let StreamDelta::ReasoningDelta(t) = d { Some(t.as_str()) } else { None })
+            .collect();
+        assert!(!reasoning.is_empty(), "expected ReasoningDelta events, got: {deltas:?}");
+        assert!(reasoning.contains(&"step one"), "expected 'step one', got: {reasoning:?}");
+
+        let has_text = deltas.iter().any(|d| matches!(d, StreamDelta::TextDelta(t) if t == "answer"));
+        assert!(has_text, "expected TextDelta('answer'), got: {deltas:?}");
+    }
+
+    #[test]
+    fn test_stream_signature_delta_is_silently_ignored() {
+        // Native Anthropic sends signature_delta after thinking block.
+        // Parser must not fail, just ignore it.
+        let sse = [
+            make_sse_block(
+                "message_start",
+                r#"{"type":"message_start","message":{"id":"msg_3","model":"claude-3-7-sonnet","content":[],"stop_reason":null,"usage":{"input_tokens":8,"output_tokens":0}}}"#,
+            ),
+            make_sse_block(
+                "content_block_delta",
+                r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"think"}}"#,
+            ),
+            // signature_delta must be silently ignored
+            make_sse_block(
+                "content_block_delta",
+                r#"{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"abc123"}}"#,
+            ),
+            make_sse_block(
+                "message_delta",
+                r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}"#,
+            ),
+        ]
+        .concat();
+
+        let mut parser = AnthropicStreamParser::new();
+        let result = parser.parse_chunk(&sse);
+        assert!(result.is_ok(), "parser must not fail on signature_delta");
+
+        let deltas = result.unwrap();
+        let no_unknown = deltas
+            .iter()
+            .all(|d| !matches!(d, StreamDelta::TextDelta(t) if t.contains("abc123")));
+        assert!(no_unknown, "signature_delta content must not appear in output");
+    }
+
+    #[test]
+    fn test_stream_tool_use() {
+        let sse = [
+            make_sse_block(
+                "message_start",
+                r#"{"type":"message_start","message":{"id":"msg_4","model":"claude-3-5-sonnet","content":[],"stop_reason":null,"usage":{"input_tokens":20,"output_tokens":0}}}"#,
+            ),
+            make_sse_block(
+                "content_block_start",
+                r#"{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01","name":"get_weather","input":{}}}"#,
+            ),
+            make_sse_block(
+                "content_block_delta",
+                r#"{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"city\":"}}"#,
+            ),
+            make_sse_block(
+                "content_block_delta",
+                r#"{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"\"Paris\"}"}}"#,
+            ),
+            make_sse_block("content_block_stop", r#"{"type":"content_block_stop","index":0}"#),
+            make_sse_block(
+                "message_delta",
+                r#"{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":12}}"#,
+            ),
+        ]
+        .concat();
+
+        let mut parser = AnthropicStreamParser::new();
+        let deltas = parser.parse_chunk(&sse).unwrap();
+
+        let has_tool_start = deltas
+            .iter()
+            .any(|d| matches!(d, StreamDelta::ToolCallStart { name, .. } if name == "get_weather"));
+        let has_tool_delta = deltas
+            .iter()
+            .any(|d| matches!(d, StreamDelta::ToolCallDelta { .. }));
+        let has_done_tool = deltas
+            .iter()
+            .any(|d| matches!(d, StreamDelta::Done { stop_reason } if stop_reason == "tool_calls"));
+        assert!(has_tool_start, "expected ToolCallStart(get_weather), got: {deltas:?}");
+        assert!(has_tool_delta, "expected ToolCallDelta, got: {deltas:?}");
+        assert!(has_done_tool, "expected Done(tool_calls), got: {deltas:?}");
     }
 }

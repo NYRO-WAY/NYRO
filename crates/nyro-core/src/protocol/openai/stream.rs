@@ -491,7 +491,7 @@ fn first_u64(obj: &Value, keys: &[&str]) -> Option<u64> {
         .find_map(|k| obj.get(*k).and_then(|v| v.as_u64()))
 }
 
-fn extract_reasoning_from_message(message: &Value) -> Option<String> {
+pub(crate) fn extract_reasoning_from_message(message: &Value) -> Option<String> {
     if let Some(reasoning) = message.get("reasoning_content").and_then(|v| v.as_str()) {
         return Some(reasoning.to_string());
     }
@@ -513,5 +513,140 @@ fn extract_reasoning_from_message(message: &Value) -> Option<String> {
         None
     } else {
         Some(parts.join("\n"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::{ResponseParser, StreamParser};
+
+    fn data_sse(json: &str) -> String {
+        format!("data: {json}\n\n")
+    }
+
+    // ── OpenAIResponseParser ──
+
+    #[test]
+    fn test_parse_response_basic() {
+        let resp = serde_json::json!({
+            "id": "chatcmpl-1",
+            "model": "gpt-4o",
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "hi"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7}
+        });
+        let r = OpenAIResponseParser.parse_response(resp).unwrap();
+        assert_eq!(r.content, "hi");
+        assert_eq!(r.stop_reason.as_deref(), Some("stop"));
+        assert_eq!(r.usage.input_tokens, 5);
+        assert_eq!(r.usage.output_tokens, 2);
+    }
+
+    #[test]
+    fn test_parse_response_with_reasoning_content() {
+        let resp = serde_json::json!({
+            "id": "chatcmpl-2",
+            "model": "deepseek-r1",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "answer",
+                    "reasoning_content": "my reasoning"
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        });
+        let r = OpenAIResponseParser.parse_response(resp).unwrap();
+        assert_eq!(r.content, "answer");
+        assert_eq!(r.reasoning_content.as_deref(), Some("my reasoning"));
+    }
+
+    // ── OpenAIStreamParser – tool call streaming ──
+
+    #[test]
+    fn test_stream_tool_call_fragments() {
+        // First chunk carries id + name with empty arguments.
+        // Subsequent chunks carry only argument fragments (no id).
+        let chunks = [
+            data_sse(r#"{"id":"chatcmpl-1","model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}"#),
+            data_sse(r#"{"id":"chatcmpl-1","model":"gpt-4o","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_abc","type":"function","function":{"name":"get_weather","arguments":""}}]},"finish_reason":null}]}"#),
+            data_sse(r#"{"id":"chatcmpl-1","model":"gpt-4o","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"cit"}}]},"finish_reason":null}]}"#),
+            data_sse(r#"{"id":"chatcmpl-1","model":"gpt-4o","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"y\":\"Paris\"}"}}]},"finish_reason":null}]}"#),
+            data_sse(r#"{"id":"chatcmpl-1","model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}"#),
+            data_sse("[DONE]"),
+        ]
+        .concat();
+
+        let mut parser = OpenAIStreamParser::new();
+        let deltas = parser.parse_chunk(&chunks).unwrap();
+
+        let has_tool_start = deltas
+            .iter()
+            .any(|d| matches!(d, StreamDelta::ToolCallStart { id, name, .. } if id == "call_abc" && name == "get_weather"));
+        assert!(has_tool_start, "expected ToolCallStart with id+name, got: {deltas:?}");
+
+        let args: String = deltas
+            .iter()
+            .filter_map(|d| if let StreamDelta::ToolCallDelta { arguments, .. } = d { Some(arguments.as_str()) } else { None })
+            .collect();
+        assert!(args.contains("Paris"), "tool call arguments fragments not accumulated: {args}");
+    }
+
+    #[test]
+    fn test_stream_think_tags_across_chunks() {
+        // <think> and </think> may span chunk boundaries.
+        let chunks = [
+            data_sse(r#"{"id":"chatcmpl-2","model":"qwen3","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}"#),
+            data_sse(r#"{"id":"chatcmpl-2","model":"qwen3","choices":[{"index":0,"delta":{"content":"<think>rea"},"finish_reason":null}]}"#),
+            data_sse(r#"{"id":"chatcmpl-2","model":"qwen3","choices":[{"index":0,"delta":{"content":"soning</think>answer"},"finish_reason":null}]}"#),
+            data_sse(r#"{"id":"chatcmpl-2","model":"qwen3","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#),
+            data_sse("[DONE]"),
+        ]
+        .concat();
+
+        let mut parser = OpenAIStreamParser::new();
+        let mut deltas = parser.parse_chunk(&chunks).unwrap();
+        deltas.extend(parser.finish().unwrap());
+
+        let reasoning: Vec<_> = deltas
+            .iter()
+            .filter_map(|d| if let StreamDelta::ReasoningDelta(t) = d { Some(t.as_str()) } else { None })
+            .collect();
+        let full_reasoning = reasoning.concat();
+        assert!(
+            full_reasoning.contains("reasoning"),
+            "expected reasoning content in ReasoningDelta, got: {full_reasoning}"
+        );
+
+        let text: Vec<_> = deltas
+            .iter()
+            .filter_map(|d| if let StreamDelta::TextDelta(t) = d { Some(t.as_str()) } else { None })
+            .collect();
+        assert!(
+            text.iter().any(|t| t.contains("answer")),
+            "expected 'answer' in TextDelta, got: {text:?}"
+        );
+    }
+
+    #[test]
+    fn test_stream_no_think_tags() {
+        let chunks = [
+            data_sse(r#"{"id":"chatcmpl-3","model":"gpt-4o","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}"#),
+            data_sse(r#"{"id":"chatcmpl-3","model":"gpt-4o","choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":null}]}"#),
+            data_sse(r#"{"id":"chatcmpl-3","model":"gpt-4o","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#),
+            data_sse("[DONE]"),
+        ]
+        .concat();
+
+        let mut parser = OpenAIStreamParser::new();
+        let mut deltas = parser.parse_chunk(&chunks).unwrap();
+        deltas.extend(parser.finish().unwrap());
+
+        let has_text = deltas.iter().any(|d| matches!(d, StreamDelta::TextDelta(t) if t.contains("hello")));
+        let has_reasoning = deltas.iter().any(|d| matches!(d, StreamDelta::ReasoningDelta(_)));
+        assert!(has_text, "expected TextDelta('hello'), got: {deltas:?}");
+        assert!(!has_reasoning, "should not have ReasoningDelta when no think tags, got: {deltas:?}");
     }
 }

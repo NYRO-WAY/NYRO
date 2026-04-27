@@ -2,11 +2,18 @@ name: CI
 
 on:
   push:
+    branches:
+      - master
+      - 'release/**'
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  build-and-smoke:
+  build:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -17,6 +24,9 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -42,8 +52,109 @@ jobs:
       - name: Cargo check
         run: cargo check --workspace --exclude nyro-desktop
 
-      - name: Build nyro-server
+      - name: Build nyro-server (debug)
         run: cargo build -p nyro-server
 
-      - name: Run smoke tests
-        run: python3 scripts/smoke/server_smoke.py
+      - name: Build nyro-tools (debug)
+        run: cargo build -p nyro-tools
+
+      - name: Upload nyro-server binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: nyro-server-linux-x86_64
+          path: target/debug/nyro-server
+          retention-days: 1
+
+      - name: Upload nyro-tools binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: nyro-tools-linux-x86_64
+          path: target/debug/nyro-tools
+          retention-days: 1
+
+  unit-tests:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Linux system deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config libssl-dev
+
+      - name: Run unit tests
+        run: cargo test --workspace --exclude nyro-desktop --exclude nyro-server
+
+  e2e-proxy-tests:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download nyro-server binary
+        uses: actions/download-artifact@v4
+        with:
+          name: nyro-server-linux-x86_64
+          path: target/debug
+
+      - name: Download nyro-tools binary
+        uses: actions/download-artifact@v4
+        with:
+          name: nyro-tools-linux-x86_64
+          path: target/debug
+
+      - name: Make binaries executable
+        run: chmod +x target/debug/nyro-server target/debug/nyro-tools
+
+      - name: Install Python test deps
+        run: python3 -m pip install -r requirements-dev.txt
+
+      - name: Run proxy E2E protocol-matrix tests
+        run: python3 -m pytest tests/e2e/proxy -vv -s -rA -m proxy
+        env:
+          NYRO_BINARY: target/debug/nyro-server
+          NYRO_TOOLS_BINARY: target/debug/nyro-tools
+
+  e2e-admin-tests:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download nyro-server binary
+        uses: actions/download-artifact@v4
+        with:
+          name: nyro-server-linux-x86_64
+          path: target/debug
+
+      - name: Make binary executable
+        run: chmod +x target/debug/nyro-server
+
+      - name: Install Python test deps
+        run: python3 -m pip install -r requirements-dev.txt
+
+      - name: Run admin E2E tests
+        run: python3 -m pytest tests/e2e/admin -vv -s -rA -m admin
+        env:
+          NYRO_BINARY: target/debug/nyro-server

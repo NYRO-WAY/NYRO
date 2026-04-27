@@ -129,3 +129,137 @@ fn extract_tool_result_hint(content: &MessageContent) -> Option<String> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::types::MessageContent;
+    use crate::protocol::Protocol;
+
+    fn make_req(messages: Vec<InternalMessage>) -> InternalRequest {
+        InternalRequest {
+            messages,
+            model: "test".to_string(),
+            stream: false,
+            temperature: None,
+            max_tokens: None,
+            top_p: None,
+            tools: None,
+            tool_choice: None,
+            source_protocol: Protocol::OpenAI,
+            extra: Default::default(),
+        }
+    }
+
+    fn assistant_with_tool(tool_id: &str, tool_name: &str) -> InternalMessage {
+        InternalMessage {
+            role: Role::Assistant,
+            content: MessageContent::Text(String::new()),
+            tool_calls: Some(vec![ToolCall {
+                id: tool_id.to_string(),
+                name: tool_name.to_string(),
+                arguments: "{}".to_string(),
+            }]),
+            tool_call_id: None,
+        }
+    }
+
+    fn tool_result_with_id(tool_call_id: &str) -> InternalMessage {
+        InternalMessage {
+            role: Role::Tool,
+            content: MessageContent::Text("result".to_string()),
+            tool_calls: None,
+            tool_call_id: Some(tool_call_id.to_string()),
+        }
+    }
+
+    fn tool_result_no_id() -> InternalMessage {
+        InternalMessage {
+            role: Role::Tool,
+            content: MessageContent::Text("result".to_string()),
+            tool_calls: None,
+            tool_call_id: None,
+        }
+    }
+
+    #[test]
+    fn test_correlation_by_matching_id() {
+        let mut req = make_req(vec![
+            assistant_with_tool("call_1", "get_weather"),
+            tool_result_with_id("call_1"),
+        ]);
+        normalize_request_tool_results(&mut req);
+
+        let tool_msg = req.messages.iter().find(|m| m.role == Role::Tool).unwrap();
+        assert_eq!(tool_msg.tool_call_id.as_deref(), Some("call_1"));
+    }
+
+    #[test]
+    fn test_correlation_fifo_when_no_id() {
+        // Tool result has no tool_call_id — should match the pending call by FIFO.
+        let mut req = make_req(vec![
+            assistant_with_tool("call_abc", "search"),
+            tool_result_no_id(),
+        ]);
+        normalize_request_tool_results(&mut req);
+
+        let tool_msg = req.messages.iter().find(|m| m.role == Role::Tool).unwrap();
+        assert_eq!(
+            tool_msg.tool_call_id.as_deref(),
+            Some("call_abc"),
+            "FIFO fallback should correlate to the single pending call"
+        );
+    }
+
+    #[test]
+    fn test_generated_id_for_empty_tool_call_id() {
+        // Assistant tool_call with blank id → must be assigned a generated id.
+        let mut req = make_req(vec![
+            InternalMessage {
+                role: Role::Assistant,
+                content: MessageContent::Text(String::new()),
+                tool_calls: Some(vec![ToolCall {
+                    id: "".to_string(),
+                    name: "my_tool".to_string(),
+                    arguments: "{}".to_string(),
+                }]),
+                tool_call_id: None,
+            },
+            tool_result_no_id(),
+        ]);
+        normalize_request_tool_results(&mut req);
+
+        let asst = req.messages.iter().find(|m| m.role == Role::Assistant).unwrap();
+        let tc_id = &asst.tool_calls.as_ref().unwrap()[0].id;
+        assert!(!tc_id.is_empty(), "blank tool_call_id must be replaced with generated id");
+
+        let tool_msg = req.messages.iter().find(|m| m.role == Role::Tool).unwrap();
+        assert_eq!(
+            tool_msg.tool_call_id.as_deref(),
+            Some(tc_id.as_str()),
+            "tool result id must match the generated assistant tool_call id"
+        );
+    }
+
+    #[test]
+    fn test_multiple_tool_calls_fifo_order() {
+        let mut req = make_req(vec![
+            InternalMessage {
+                role: Role::Assistant,
+                content: MessageContent::Text(String::new()),
+                tool_calls: Some(vec![
+                    ToolCall { id: "call_1".to_string(), name: "tool_a".to_string(), arguments: "{}".to_string() },
+                    ToolCall { id: "call_2".to_string(), name: "tool_b".to_string(), arguments: "{}".to_string() },
+                ]),
+                tool_call_id: None,
+            },
+            tool_result_no_id(), // first result → call_1 (FIFO)
+            tool_result_no_id(), // second result → call_2 (FIFO)
+        ]);
+        normalize_request_tool_results(&mut req);
+
+        let tool_msgs: Vec<_> = req.messages.iter().filter(|m| m.role == Role::Tool).collect();
+        assert_eq!(tool_msgs[0].tool_call_id.as_deref(), Some("call_1"), "first tool result should map to call_1");
+        assert_eq!(tool_msgs[1].tool_call_id.as_deref(), Some("call_2"), "second tool result should map to call_2");
+    }
+}

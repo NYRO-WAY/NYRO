@@ -39,3 +39,16 @@ Thumbs.db
 
 # pnpm
 .pnpm-store/
+
+# Python (pytest / tooling caches)
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.venv/
+venv/
