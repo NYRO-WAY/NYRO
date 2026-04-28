@@ -1334,6 +1334,23 @@ END $$;"#,
         .execute(self.adapter.pool())
         .await?;
         ensure_semantic_cache_vectors_table(self.adapter.pool(), self.vector_dimensions).await?;
+        // PR2B: rename legacy vendor / preset_key values to their new
+        // canonical form (`custom` → `nyro`, `zhipu` → `zhipuai`).
+        // Idempotent: a no-op on already-normalized rows.
+        for (from, to) in [("custom", "nyro"), ("zhipu", "zhipuai")] {
+            sqlx::query("UPDATE providers SET vendor = $1 WHERE lower(btrim(vendor)) = $2")
+                .bind(to)
+                .bind(from)
+                .execute(self.adapter.pool())
+                .await?;
+            sqlx::query(
+                "UPDATE providers SET preset_key = $1 WHERE lower(btrim(preset_key)) = $2",
+            )
+            .bind(to)
+            .bind(from)
+            .execute(self.adapter.pool())
+            .await?;
+        }
         Ok(())
     }
 
@@ -1483,7 +1500,7 @@ fn api_key_with_bindings(row: ApiKey, route_ids: Vec<String>) -> ApiKeyWithBindi
 fn normalize_provider_vendor(vendor: Option<&str>) -> Option<String> {
     vendor
         .map(str::trim)
-        .filter(|v| !v.is_empty() && *v != "custom")
+        .filter(|v| !v.is_empty() && *v != "nyro")
         .map(|v| v.to_lowercase())
 }
 

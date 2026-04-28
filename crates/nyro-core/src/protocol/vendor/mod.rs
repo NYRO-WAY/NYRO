@@ -34,10 +34,30 @@
 //! need.
 
 pub mod defaults;
-pub mod ollama;
-pub mod openai;
 pub mod registry;
 pub mod types;
+
+// ── Phase 1: vendors backed by `assets/providers.json` (PR2A + PR2B) ──
+pub mod anthropic;
+pub mod deepseek;
+pub mod google;
+pub mod minimax;
+pub mod moonshotai;
+pub mod nvidia;
+pub mod nyro;
+pub mod ollama;
+pub mod openai;
+pub mod openrouter;
+pub mod xai;
+pub mod zai;
+pub mod zhipuai;
+
+// ── Phase 2: placeholders. Modules exist to reserve the layout but
+//    are not registered with `inventory` until their auth/runtime
+//    implementations land in follow-up PRs. ──
+pub mod aws_bedrock;
+pub mod azure_foundry;
+pub mod google_vertex;
 
 use async_trait::async_trait;
 use reqwest::header::HeaderMap;

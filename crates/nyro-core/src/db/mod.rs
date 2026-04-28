@@ -87,6 +87,7 @@ pub async fn migrate(pool: &SqlitePool, vector_dimensions: usize) -> anyhow::Res
     migrate_oauth_credentials_from_providers(pool).await?;
     ensure_semantic_cache_vectors_table(pool, vector_dimensions).await?;
     backfill_provider_vendor(pool).await?;
+    migrate_vendor_renames(pool).await?;
     backfill_route_fields(pool).await?;
     backfill_route_targets(pool).await?;
     Ok(())
@@ -102,10 +103,47 @@ async fn backfill_provider_vendor(pool: &SqlitePool) -> anyhow::Result<()> {
              WHERE (vendor IS NULL OR trim(vendor) = '') \
                AND preset_key IS NOT NULL \
                AND trim(preset_key) != '' \
-               AND lower(trim(preset_key)) != 'custom'",
+               AND lower(trim(preset_key)) != 'nyro'",
         )
         .execute(pool)
         .await?;
+    }
+    Ok(())
+}
+
+/// Rename legacy vendor / preset_key values to their new canonical
+/// form (PR2B):
+///
+/// - `custom` → `nyro`
+/// - `zhipu`  → `zhipuai`
+///
+/// Idempotent: re-running the migration on already-normalized data is
+/// a no-op.
+async fn migrate_vendor_renames(pool: &SqlitePool) -> anyhow::Result<()> {
+    const RENAMES: &[(&str, &str)] = &[("custom", "nyro"), ("zhipu", "zhipuai")];
+
+    if column_exists(pool, "providers", "vendor").await? {
+        for (from, to) in RENAMES {
+            sqlx::query(
+                "UPDATE providers SET vendor = ?1 WHERE lower(trim(vendor)) = ?2",
+            )
+            .bind(to)
+            .bind(from)
+            .execute(pool)
+            .await?;
+        }
+    }
+
+    if column_exists(pool, "providers", "preset_key").await? {
+        for (from, to) in RENAMES {
+            sqlx::query(
+                "UPDATE providers SET preset_key = ?1 WHERE lower(trim(preset_key)) = ?2",
+            )
+            .bind(to)
+            .bind(from)
+            .execute(pool)
+            .await?;
+        }
     }
     Ok(())
 }

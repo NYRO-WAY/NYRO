@@ -197,88 +197,115 @@ fn openai_compat_strips_v1_when_base_already_has_path() {
     assert_eq!(preserved, "https://api.openai.com/v1/chat/completions");
 }
 
-// ── 3. list_metadata field-level equivalence ──────────────────────────────
+// ── 3. list_metadata field-level equivalence with providers.json ──────────
 
-#[test]
-fn list_metadata_contains_openai_and_ollama() {
-    let reg = VendorRegistry::global();
-    let metas = reg.list_metadata();
-    let ids: Vec<&str> = metas.iter().map(|m| m.id).collect();
-    assert!(ids.contains(&"openai"), "missing openai metadata: {ids:?}");
-    assert!(ids.contains(&"ollama"), "missing ollama metadata: {ids:?}");
+const PROVIDERS_JSON: &str = include_str!("../assets/providers.json");
+
+fn providers_json() -> Vec<Value> {
+    let v: Value = serde_json::from_str(PROVIDERS_JSON).unwrap();
+    v.as_array().unwrap().clone()
 }
 
 #[test]
-fn openai_metadata_matches_providers_json() {
+fn list_metadata_covers_every_providers_json_entry() {
     let reg = VendorRegistry::global();
-    let meta = reg.metadata("openai").expect("openai metadata");
-    let ours: Value = serde_json::to_value(meta).unwrap();
+    let registered: std::collections::HashSet<&str> =
+        reg.list_metadata().into_iter().map(|m| m.id).collect();
 
-    let presets: Value = serde_json::from_str(include_str!(
-        "../assets/providers.json"
-    ))
-    .unwrap();
-    let theirs = presets
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|p| p["id"] == "openai")
-        .expect("openai entry in providers.json");
+    let mut missing = Vec::new();
+    for entry in providers_json() {
+        let id = entry["id"].as_str().unwrap();
+        if !registered.contains(id) {
+            missing.push(id.to_string());
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "providers.json entries not migrated to vendor metadata: {missing:?}"
+    );
+}
 
-    assert_field_eq(&ours, theirs, "id");
-    assert_field_eq(&ours, theirs, "label");
-    assert_field_eq(&ours, theirs, "icon");
-    assert_field_eq(&ours, theirs, "defaultProtocol");
+#[test]
+fn metadata_field_equivalence_for_every_vendor() {
+    let reg = VendorRegistry::global();
+    for entry in providers_json() {
+        let id = entry["id"].as_str().unwrap();
+        let meta = reg
+            .metadata(id)
+            .unwrap_or_else(|| panic!("missing vendor metadata: {id}"));
+        let ours = serde_json::to_value(meta).unwrap();
 
-    let ours_channels = ours["channels"].as_array().unwrap();
-    let theirs_channels = theirs["channels"].as_array().unwrap();
-    assert_eq!(ours_channels.len(), theirs_channels.len());
-    for (oc, tc) in ours_channels.iter().zip(theirs_channels.iter()) {
-        assert_field_eq(oc, tc, "id");
-        assert_field_eq(oc, tc, "label");
-        assert_field_eq(oc, tc, "baseUrls");
-        assert_field_eq(oc, tc, "modelsSource");
-        assert_field_eq(oc, tc, "capabilitiesSource");
-        assert_field_eq(oc, tc, "authMode");
-        assert_field_eq(oc, tc, "oauth");
-        assert_field_eq(oc, tc, "runtime");
+        // top-level vendor fields
+        for k in ["id", "label", "icon", "defaultProtocol"] {
+            assert_field_eq(&ours, &entry, k, id);
+        }
+
+        // channels: structural compare
+        let ours_channels = ours["channels"].as_array().unwrap();
+        let theirs_channels = entry["channels"].as_array().unwrap();
+        assert_eq!(
+            ours_channels.len(),
+            theirs_channels.len(),
+            "{id}: channel count differs",
+        );
+        for (oc, tc) in ours_channels.iter().zip(theirs_channels.iter()) {
+            let ctx = format!("{id}/{}", oc["id"].as_str().unwrap_or("?"));
+            for k in [
+                "id",
+                "label",
+                "baseUrls",
+                "apiKey",
+                "modelsSource",
+                "capabilitiesSource",
+                "authMode",
+                "oauth",
+                "runtime",
+            ] {
+                assert_field_eq(oc, tc, k, &ctx);
+            }
+            // staticModels is normalized: missing == empty array
+            let ours_sm = oc.get("staticModels").cloned().unwrap_or(Value::Null);
+            let theirs_sm = tc.get("staticModels").cloned().unwrap_or(Value::Null);
+            assert!(
+                static_models_equal(&ours_sm, &theirs_sm),
+                "{ctx}: staticModels differs:\n  ours   = {ours_sm}\n  theirs = {theirs_sm}",
+            );
+        }
     }
 }
 
-#[test]
-fn ollama_metadata_matches_providers_json() {
-    let reg = VendorRegistry::global();
-    let meta = reg.metadata("ollama").expect("ollama metadata");
-    let ours: Value = serde_json::to_value(meta).unwrap();
-
-    let presets: Value = serde_json::from_str(include_str!(
-        "../assets/providers.json"
-    ))
-    .unwrap();
-    let theirs = presets
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|p| p["id"] == "ollama")
-        .expect("ollama entry in providers.json");
-
-    assert_field_eq(&ours, theirs, "id");
-    assert_field_eq(&ours, theirs, "label");
-    assert_field_eq(&ours, theirs, "icon");
-    assert_field_eq(&ours, theirs, "defaultProtocol");
-
-    let oc = &ours["channels"][0];
-    let tc = &theirs["channels"][0];
-    assert_field_eq(oc, tc, "id");
-    assert_field_eq(oc, tc, "baseUrls");
-    assert_field_eq(oc, tc, "apiKey");
-    assert_field_eq(oc, tc, "modelsSource");
-    assert_field_eq(oc, tc, "capabilitiesSource");
-    assert_field_eq(oc, tc, "authMode");
+fn static_models_equal(a: &Value, b: &Value) -> bool {
+    let normalize = |v: &Value| -> Value {
+        match v {
+            Value::Null => Value::Array(vec![]),
+            Value::Array(arr) => Value::Array(arr.clone()),
+            other => other.clone(),
+        }
+    };
+    normalize(a) == normalize(b)
 }
 
-fn assert_field_eq(a: &Value, b: &Value, key: &str) {
+fn assert_field_eq(a: &Value, b: &Value, key: &str, ctx: &str) {
     let av = a.get(key).cloned().unwrap_or(Value::Null);
     let bv = b.get(key).cloned().unwrap_or(Value::Null);
-    assert_eq!(av, bv, "field `{key}` differs:\n  ours   = {av}\n  theirs = {bv}");
+    assert_eq!(
+        av, bv,
+        "{ctx}: field `{key}` differs:\n  ours   = {av}\n  theirs = {bv}",
+    );
+}
+
+// ── 4. Phase-2 placeholder vendors must NOT be auto-registered ────────────
+
+#[test]
+fn placeholder_vendors_are_not_registered() {
+    let reg = VendorRegistry::global();
+    let registered: std::collections::HashSet<&str> =
+        reg.list_metadata().into_iter().map(|m| m.id).collect();
+
+    for placeholder in ["azure-foundry", "aws-bedrock", "google-vertex"] {
+        assert!(
+            !registered.contains(placeholder),
+            "placeholder vendor `{placeholder}` should not yet be registered"
+        );
+    }
 }

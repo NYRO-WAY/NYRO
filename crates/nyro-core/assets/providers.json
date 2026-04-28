@@ -1,6 +1,6 @@
 [
   {
-    "id": "custom",
+    "id": "nyro",
     "label": { "zh": "自定义", "en": "Custom" },
     "icon": "nyro",
     "defaultProtocol": "openai",
@@ -183,7 +183,7 @@
     ]
   },
   {
-    "id": "zhipu",
+    "id": "zhipuai",
     "label": { "zh": "Zhipu AI", "en": "Zhipu AI" },
     "icon": "zhipu",
     "defaultProtocol": "openai",

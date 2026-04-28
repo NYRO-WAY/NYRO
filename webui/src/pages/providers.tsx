@@ -83,7 +83,7 @@ const emptyCreate: CreateProvider = {
   api_key: "",
 };
 const PAGE_SIZE = 7;
-const DEFAULT_PRESET_ID = "custom";
+const DEFAULT_PRESET_ID = "nyro";
 const protocolOptions = [
   { label: "OpenAI", value: "openai" },
   { label: "OpenAI Responses", value: "openai_responses" },

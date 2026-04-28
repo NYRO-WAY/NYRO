@@ -468,7 +468,7 @@ impl ProviderStore for SqliteProviderStore {
 fn normalize_provider_vendor(vendor: Option<&str>) -> Option<String> {
     vendor
         .map(str::trim)
-        .filter(|v| !v.is_empty() && *v != "custom")
+        .filter(|v| !v.is_empty() && *v != "nyro")
         .map(|v| v.to_lowercase())
 }
 

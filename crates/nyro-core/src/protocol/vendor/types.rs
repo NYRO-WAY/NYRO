@@ -66,8 +66,12 @@ pub struct ChannelDef {
     pub id: &'static str,
     pub label: Label,
     /// Per-protocol base URLs — empty slice means "inherit vendor / let
-    /// the user configure manually".
-    #[serde(serialize_with = "serialize_base_urls")]
+    /// the user configure manually" and is omitted from the serialized
+    /// metadata so it lines up with the legacy `providers.json` shape.
+    #[serde(
+        serialize_with = "serialize_base_urls",
+        skip_serializing_if = "<[ProtocolBaseUrl]>::is_empty"
+    )]
     pub base_urls: &'static [ProtocolBaseUrl],
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_key: Option<&'static str>,

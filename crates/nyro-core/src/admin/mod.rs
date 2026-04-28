@@ -2488,7 +2488,7 @@ fn normalize_name(name: &str, field: &str) -> anyhow::Result<String> {
 fn normalize_vendor(vendor: Option<&str>) -> Option<String> {
     vendor
         .map(str::trim)
-        .filter(|v| !v.is_empty() && *v != "custom")
+        .filter(|v| !v.is_empty() && *v != "nyro")
         .map(|v| v.to_lowercase())
 }
 
