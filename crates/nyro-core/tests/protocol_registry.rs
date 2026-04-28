@@ -1,12 +1,20 @@
-//! PR1 acceptance: new ProtocolRegistry behaves equivalently to the legacy
-//! `Protocol` enum + factory functions for all four currently registered
-//! handlers (OpenAI Chat / OpenAI Responses / Anthropic Messages / Google
-//! Generate). Embeddings is intentionally excluded — it does not go through
-//! the codec pipeline and will be handled in PR3.
+//! Protocol registry acceptance.
+//!
+//! Five handlers are registered:
+//! - OpenAI Chat / OpenAI Responses (PR1)
+//! - Anthropic Messages / Google Generate (PR1)
+//! - OpenAI Embeddings (PR3 — passthrough codec, registered for
+//!   `find_by_ingress_route` and capability discovery; the standard
+//!   request pipeline still bypasses its codec)
+//!
+//! The codec-equivalence tests skip embeddings because the legacy
+//! factory functions don't have an embeddings variant to compare
+//! against — the parity guarantee for this handler is its routing /
+//! capability surface, asserted below.
 
 use nyro_core::protocol::ids::{
-    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GENERATE_V1BETA, OPENAI_CHAT_V1, OPENAI_RESPONSES_V1,
-    ProtocolFamily, ProtocolId,
+    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GENERATE_V1BETA, OPENAI_CHAT_V1, OPENAI_EMBEDDINGS_V1,
+    OPENAI_RESPONSES_V1, ProtocolFamily, ProtocolId,
 };
 use nyro_core::protocol::registry::ProtocolRegistry;
 use nyro_core::protocol::types::Role;
@@ -17,13 +25,14 @@ use nyro_core::protocol::{
 use serde_json::json;
 
 #[test]
-fn registers_four_handlers_with_correct_ids() {
+fn registers_all_handlers_with_correct_ids() {
     let reg = ProtocolRegistry::global();
-    assert_eq!(reg.list().len(), 4);
+    assert_eq!(reg.list().len(), 5);
 
     for id in [
         OPENAI_CHAT_V1,
         OPENAI_RESPONSES_V1,
+        OPENAI_EMBEDDINGS_V1,
         ANTHROPIC_MESSAGES_2023_06_01,
         GOOGLE_GENERATE_V1BETA,
     ] {
@@ -35,7 +44,7 @@ fn registers_four_handlers_with_correct_ids() {
 #[test]
 fn list_by_family_segments() {
     let reg = ProtocolRegistry::global();
-    assert_eq!(reg.list_by_family(ProtocolFamily::OpenAI).len(), 2);
+    assert_eq!(reg.list_by_family(ProtocolFamily::OpenAI).len(), 3);
     assert_eq!(reg.list_by_family(ProtocolFamily::Anthropic).len(), 1);
     assert_eq!(reg.list_by_family(ProtocolFamily::Google).len(), 1);
 }
@@ -233,6 +242,70 @@ fn parser_and_formatter_factories_construct() {
         let _ = get_stream_parser(legacy_for(id));
         let _ = get_stream_formatter(legacy_for(id));
     }
+}
+
+// ── Embeddings (PR3) — registered for routing/capability surface only ──
+
+#[test]
+fn embeddings_handler_advertises_passthrough_capabilities() {
+    let reg = ProtocolRegistry::global();
+    let caps = reg.get(&OPENAI_EMBEDDINGS_V1).unwrap().capabilities();
+    assert!(caps.embeddings);
+    assert!(!caps.streaming);
+    assert!(!caps.tools);
+    assert!(!caps.force_upstream_stream);
+    assert!(!caps.override_model_in_body);
+}
+
+#[test]
+fn embeddings_routes_resolve_to_handler() {
+    let reg = ProtocolRegistry::global();
+    for path in ["/v1/embeddings", "/embeddings"] {
+        let h = reg
+            .find_by_ingress_route("POST", path)
+            .unwrap_or_else(|| panic!("no handler for POST {path}"));
+        assert_eq!(h.id(), OPENAI_EMBEDDINGS_V1);
+    }
+}
+
+#[test]
+fn embeddings_aliases_resolve() {
+    let reg = ProtocolRegistry::global();
+    assert_eq!(
+        reg.resolve_alias("openai-embeddings"),
+        Some(OPENAI_EMBEDDINGS_V1)
+    );
+    assert_eq!(reg.resolve_alias("embeddings"), Some(OPENAI_EMBEDDINGS_V1));
+    assert_eq!(
+        reg.resolve_alias("openai/embeddings/v1"),
+        Some(OPENAI_EMBEDDINGS_V1)
+    );
+}
+
+#[test]
+fn embeddings_decoder_round_trips_body() {
+    let reg = ProtocolRegistry::global();
+    let body = json!({
+        "model": "text-embedding-3-small",
+        "input": ["hello", "world"],
+        "encoding_format": "float"
+    });
+    let internal = reg
+        .get(&OPENAI_EMBEDDINGS_V1)
+        .unwrap()
+        .make_decoder()
+        .decode_request(body.clone())
+        .unwrap();
+    assert_eq!(internal.model, "text-embedding-3-small");
+    assert!(!internal.stream);
+
+    let (encoded, _headers) = reg
+        .get(&OPENAI_EMBEDDINGS_V1)
+        .unwrap()
+        .make_encoder()
+        .encode_request(&internal)
+        .unwrap();
+    assert_eq!(encoded, body, "encoder must round-trip the original body");
 }
 
 fn legacy_for(id: ProtocolId) -> Protocol {

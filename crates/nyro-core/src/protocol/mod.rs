@@ -64,6 +64,29 @@ impl Protocol {
             Protocol::Gemini => "gemini",
         }
     }
+
+    /// Bridge from the legacy enum to the new `ProtocolId`.
+    ///
+    /// PR3 plumbing only — once PR4 deletes the enum, every call site
+    /// will already use `ProtocolId` natively and this disappears.
+    pub fn to_protocol_id(self) -> ids::ProtocolId {
+        match self {
+            Protocol::OpenAI => ids::OPENAI_CHAT_V1,
+            Protocol::ResponsesAPI => ids::OPENAI_RESPONSES_V1,
+            Protocol::Anthropic => ids::ANTHROPIC_MESSAGES_2023_06_01,
+            Protocol::Gemini => ids::GOOGLE_GENERATE_V1BETA,
+        }
+    }
+
+    /// Resolve this protocol's registered handler. Panics only if the
+    /// `inventory::submit!` registration is missing — a build-time
+    /// invariant covered by `tests/protocol_registry.rs`.
+    pub fn handler(self) -> &'static std::sync::Arc<dyn traits::ProtocolHandler> {
+        let id = self.to_protocol_id();
+        registry::ProtocolRegistry::global()
+            .get(&id)
+            .unwrap_or_else(|| panic!("ProtocolHandler for {id} not registered"))
+    }
 }
 
 impl std::fmt::Display for Protocol {
@@ -242,19 +265,46 @@ pub struct ResolvedEgress {
 }
 
 impl ProviderProtocols {
+    /// Best-effort string → `Protocol` resolver. Accepts:
+    ///
+    /// - legacy strings (`openai` / `openai_responses` / `anthropic` / `gemini`),
+    /// - the new alias table (`openai-chat`, `responses`, `claude`, …),
+    /// - canonical [`ids::ProtocolId`] strings (`openai/chat/v1`, …).
+    ///
+    /// Used to read `provider.protocol_endpoints` JSON during runtime — DB
+    /// rows may carry any of the three forms during the PR3/PR4 transition.
+    fn parse_protocol_key(s: &str) -> Option<Protocol> {
+        if let Ok(p) = s.parse::<Protocol>() {
+            return Some(p);
+        }
+        let id = registry::ProtocolRegistry::global().resolve_alias(s)?;
+        if id == ids::OPENAI_CHAT_V1 {
+            Some(Protocol::OpenAI)
+        } else if id == ids::OPENAI_RESPONSES_V1 {
+            Some(Protocol::ResponsesAPI)
+        } else if id == ids::ANTHROPIC_MESSAGES_2023_06_01 {
+            Some(Protocol::Anthropic)
+        } else if id == ids::GOOGLE_GENERATE_V1BETA {
+            Some(Protocol::Gemini)
+        } else {
+            // Embeddings and other dialects are not part of the legacy
+            // `Protocol` enum surface; they bypass `ProviderProtocols`.
+            None
+        }
+    }
+
     pub fn from_provider(provider: &Provider) -> Self {
         let raw_map = provider.parsed_protocol_endpoints();
-        let mut endpoints = HashMap::new();
+        let mut endpoints: HashMap<Protocol, ProtocolEndpointEntry> = HashMap::new();
         for (key, entry) in &raw_map {
-            if let Ok(p) = key.parse::<Protocol>() {
+            if let Some(p) = Self::parse_protocol_key(key)
+                && !endpoints.contains_key(&p)
+            {
                 endpoints.insert(p, entry.clone());
             }
         }
 
-        let declared_default = provider
-            .effective_default_protocol()
-            .parse::<Protocol>()
-            .ok();
+        let declared_default = Self::parse_protocol_key(&provider.effective_default_protocol());
         let default = declared_default
             .filter(|p| endpoints.contains_key(p))
             .or_else(|| endpoints.keys().next().copied())
@@ -268,18 +318,32 @@ impl ProviderProtocols {
         self.endpoints.contains_key(&protocol)
     }
 
-    /// Resolve egress protocol and base_url for an incoming ingress protocol.
+    /// Three-tier egress resolution:
     ///
-    /// Each declared `protocol_endpoints` key is considered an independent
-    /// egress target. If the ingress protocol has a direct match, use it;
-    /// otherwise fall back to the provider's default and mark the request
-    /// as needing protocol conversion.
+    /// 1. **Exact `ProtocolId` match** — same wire format on both sides.
+    /// 2. **Same-family fallback** — e.g. ingress `openai-responses` against
+    ///    a provider that only declares `openai-chat`; we still talk OpenAI,
+    ///    but the codec layer must translate.
+    /// 3. **Global default** — last resort, also conversion needed.
     pub fn resolve_egress(&self, ingress: Protocol) -> ResolvedEgress {
         if let Some(ep) = self.endpoints.get(&ingress) {
             return ResolvedEgress {
                 protocol: ingress,
                 base_url: ep.base_url.clone(),
                 needs_conversion: false,
+            };
+        }
+
+        let target_family = ingress.to_protocol_id().family;
+        if let Some((p, ep)) = self
+            .endpoints
+            .iter()
+            .find(|(p, _)| p.to_protocol_id().family == target_family)
+        {
+            return ResolvedEgress {
+                protocol: *p,
+                base_url: ep.base_url.clone(),
+                needs_conversion: true,
             };
         }
 

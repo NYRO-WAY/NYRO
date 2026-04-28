@@ -9,8 +9,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
 use crate::protocol::ids::{
-    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GENERATE_V1BETA, OPENAI_CHAT_V1, OPENAI_RESPONSES_V1,
-    ProtocolFamily, ProtocolId,
+    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GENERATE_V1BETA, OPENAI_CHAT_V1, OPENAI_EMBEDDINGS_V1,
+    OPENAI_RESPONSES_V1, ProtocolFamily, ProtocolId,
 };
 use crate::protocol::traits::ProtocolHandler;
 
@@ -157,11 +157,13 @@ fn default_aliases() -> HashMap<&'static str, ProtocolId> {
     // Primary short names (preferred for new configs).
     m.insert("openai-chat", OPENAI_CHAT_V1);
     m.insert("openai-responses", OPENAI_RESPONSES_V1);
+    m.insert("openai-embeddings", OPENAI_EMBEDDINGS_V1);
     m.insert("anthropic-messages", ANTHROPIC_MESSAGES_2023_06_01);
     m.insert("google-generate", GOOGLE_GENERATE_V1BETA);
 
     // Friendly aliases.
     m.insert("responses", OPENAI_RESPONSES_V1);
+    m.insert("embeddings", OPENAI_EMBEDDINGS_V1);
     m.insert("claude", ANTHROPIC_MESSAGES_2023_06_01);
 
     // Legacy values from the soon-to-be-removed `Protocol` enum.
@@ -178,13 +180,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn registers_four_handlers() {
+    fn registers_five_handlers() {
         let reg = ProtocolRegistry::global();
         assert!(reg.get(&OPENAI_CHAT_V1).is_some());
         assert!(reg.get(&OPENAI_RESPONSES_V1).is_some());
+        assert!(reg.get(&OPENAI_EMBEDDINGS_V1).is_some());
         assert!(reg.get(&ANTHROPIC_MESSAGES_2023_06_01).is_some());
         assert!(reg.get(&GOOGLE_GENERATE_V1BETA).is_some());
-        assert_eq!(reg.list().len(), 4);
+        assert_eq!(reg.list().len(), 5);
     }
 
     #[test]
@@ -243,9 +246,10 @@ mod tests {
     fn list_by_family_groups_correctly() {
         let reg = ProtocolRegistry::global();
         let openai = reg.list_by_family(ProtocolFamily::OpenAI);
-        assert_eq!(openai.len(), 2);
+        assert_eq!(openai.len(), 3);
         assert!(openai.iter().any(|h| h.id() == OPENAI_CHAT_V1));
         assert!(openai.iter().any(|h| h.id() == OPENAI_RESPONSES_V1));
+        assert!(openai.iter().any(|h| h.id() == OPENAI_EMBEDDINGS_V1));
 
         assert_eq!(reg.list_by_family(ProtocolFamily::Anthropic).len(), 1);
         assert_eq!(reg.list_by_family(ProtocolFamily::Google).len(), 1);

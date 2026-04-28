@@ -24,9 +24,11 @@ use crate::cache::entry::CacheEntry;
 use crate::cache::key::{build_cache_key, build_semantic_partition};
 use crate::logging::LogEntry;
 use crate::protocol::gemini::decoder::GeminiDecoder;
+use crate::protocol::ids::{OPENAI_EMBEDDINGS_V1, ProtocolCapabilities};
+use crate::protocol::registry::ProtocolRegistry;
 use crate::protocol::types::*;
+use crate::protocol::vendor::{VendorCtx, VendorRegistry};
 use crate::protocol::{Protocol, ProviderProtocols};
-use crate::proxy::adapter::{self, ProviderAdapter};
 use crate::proxy::client::ProxyClient;
 use crate::router::TargetSelector;
 use crate::storage::traits::{ApiKeyAccessRecord, UsageWindow};
@@ -215,8 +217,46 @@ pub async fn embeddings_proxy(
             obj.insert("model".into(), Value::String(actual_model.clone()));
         }
         let forwarded_body_str = serde_json::to_string(&body).ok();
-        let adapter = adapter::get_adapter(&provider, Protocol::OpenAI);
+
+        // [PR3] Embeddings is registered as a passthrough protocol; we only
+        // need the vendor extension's URL + auth hooks. The body is shipped
+        // verbatim because no codec rewrites are necessary for /v1/embeddings.
+        let extension = match VendorRegistry::global().resolve(&provider, OPENAI_EMBEDDINGS_V1) {
+            Some(ext) => ext.clone(),
+            None => {
+                let msg = format!(
+                    "no vendor extension for provider {} on protocol {}",
+                    provider.name, OPENAI_EMBEDDINGS_V1
+                );
+                last_error = Some(error_response(500, &msg));
+                last_error_message = Some(msg);
+                last_error_status = 500;
+                last_error_provider = provider.name.clone();
+                continue;
+            }
+        };
         let credential = provider_runtime.access_token.clone();
+        let upstream_url;
+        let mut request_headers;
+        {
+            let ctx = VendorCtx {
+                provider: &provider,
+                protocol_id: OPENAI_EMBEDDINGS_V1,
+                api_key: &credential,
+                actual_model: &actual_model,
+                credential: None,
+            };
+            upstream_url = extension.build_url(&ctx, &openai_base_url, EMB_PATH);
+            request_headers = match runtime_binding_headers(&provider_runtime.binding) {
+                Ok(h) => h,
+                Err(e) => {
+                    last_error =
+                        Some(error_response(502, &format!("provider runtime binding error: {e}")));
+                    continue;
+                }
+            };
+            request_headers.extend(extension.auth_headers(&ctx));
+        }
         let client = match gw.http_client_for_provider(provider.use_proxy).await {
             Ok(http_client) => ProxyClient::new(http_client),
             Err(e) => {
@@ -240,20 +280,7 @@ pub async fn embeddings_proxy(
             }
         };
         let call = client
-            .call_non_stream(
-                adapter.as_ref(),
-                &openai_base_url,
-                EMB_PATH,
-                &credential,
-                body.clone(),
-                match runtime_binding_headers(&provider_runtime.binding) {
-                    Ok(headers) => headers,
-                    Err(e) => {
-                        last_error = Some(error_response(502, &format!("provider runtime binding error: {e}")));
-                        continue;
-                    }
-                },
-            )
+            .call_non_stream(&upstream_url, request_headers, body.clone())
             .await;
         match call {
             Ok((payload, status)) if status < 400 => {
@@ -488,7 +515,7 @@ async fn universal_proxy(
 ) -> Response {
     let request_headers = headers_to_json(&headers);
     let request_body = serde_json::to_string(&body).ok();
-    let decoder = crate::protocol::get_decoder(ingress);
+    let decoder = ingress.handler().make_decoder();
     let internal = match decoder.decode_request(body) {
         Ok(r) => r,
         Err(e) => {
@@ -974,12 +1001,54 @@ async fn proxy_pipeline(
             resolved.base_url
         };
 
-        let adapter = adapter::get_adapter(&provider, egress);
-        adapter
-            .pre_request(&mut internal_for_target, &actual_model, &gw, &provider)
-            .await;
+        // [PR3] Resolve protocol handler + vendor extension. Both are
+        // process-global registrations; lookup is O(1) for handlers and
+        // small linear scans for extensions.
+        let egress_id = egress.to_protocol_id();
+        let egress_handler = match ProtocolRegistry::global().get(&egress_id) {
+            Some(h) => h.clone(),
+            None => {
+                last_response = Some(error_response(
+                    500,
+                    &format!("no protocol handler for {egress_id}"),
+                ));
+                continue;
+            }
+        };
+        let extension = match VendorRegistry::global().resolve(&provider, egress_id) {
+            Some(ext) => ext.clone(),
+            None => {
+                last_response = Some(error_response(
+                    500,
+                    &format!(
+                        "no vendor extension for provider {} on protocol {}",
+                        provider.name, egress_id
+                    ),
+                ));
+                continue;
+            }
+        };
 
-        let encoder = crate::protocol::get_encoder(egress);
+        let credential = provider_runtime.access_token.clone();
+        {
+            let ctx = VendorCtx {
+                provider: &provider,
+                protocol_id: egress_id,
+                api_key: &credential,
+                actual_model: &actual_model,
+                credential: None,
+            };
+            if let Err(e) = extension
+                .pre_request(&ctx, &mut internal_for_target, &gw)
+                .await
+            {
+                last_response =
+                    Some(error_response(502, &format!("vendor pre_request error: {e}")));
+                continue;
+            }
+        }
+
+        let encoder = egress_handler.make_encoder();
         let (egress_body, extra_headers) = match encoder.encode_request(&internal_for_target) {
             Ok(r) => r,
             Err(e) => {
@@ -987,10 +1056,38 @@ async fn proxy_pipeline(
                 continue;
             }
         };
-        
-        let egress_body = override_model(egress_body, &actual_model, egress);
+
+        let egress_caps = egress_handler.capabilities();
+        let egress_body = override_model(egress_body, &actual_model, egress_caps);
         let egress_path = encoder.egress_path(&actual_model, is_stream);
-        let credential = provider_runtime.access_token.clone();
+
+        // Build the final URL + header set up-front so the helpers stay
+        // adapter-agnostic (PR3: ProxyClient takes (url, headers, body)).
+        let upstream_url;
+        let mut request_headers;
+        {
+            let ctx = VendorCtx {
+                provider: &provider,
+                protocol_id: egress_id,
+                api_key: &credential,
+                actual_model: &actual_model,
+                credential: None,
+            };
+            upstream_url = extension.build_url(&ctx, &egress_base_url, &egress_path);
+            request_headers = match runtime_binding_headers(&provider_runtime.binding) {
+                Ok(h) => h,
+                Err(e) => {
+                    last_response = Some(error_response(
+                        502,
+                        &format!("provider runtime binding error: {e}"),
+                    ));
+                    continue;
+                }
+            };
+            request_headers.extend(extra_headers.clone());
+            request_headers.extend(extension.auth_headers(&ctx));
+        }
+
         let client = match gw.http_client_for_provider(provider.use_proxy).await {
             Ok(http_client) => ProxyClient::new(http_client),
             Err(e) => {
@@ -999,32 +1096,21 @@ async fn proxy_pipeline(
                 continue;
             }
         };
-        let mut request_headers = match runtime_binding_headers(&provider_runtime.binding) {
-            Ok(headers) => headers,
-            Err(e) => {
-                last_response = Some(error_response(502, &format!("provider runtime binding error: {e}")));
-                continue;
-            }
-        };
-        request_headers.extend(extra_headers.clone());
         let egress_str = egress.to_string();
 
         let miss_expose_headers =
             cache_config.exact.expose_headers || cache_config.semantic.expose_headers;
-        let upstream_forces_stream = matches!(egress, Protocol::ResponsesAPI);
+        let upstream_forces_stream = egress_caps.force_upstream_stream;
         let response = if is_stream {
             handle_stream(
                 gw.clone(),
                 client,
-                adapter.as_ref(),
+                &upstream_url,
+                request_headers.clone(),
                 &provider,
-                &egress_base_url,
                 egress,
                 ingress,
-                &egress_path,
-                &credential,
                 egress_body,
-                request_headers.clone(),
                 &ingress_str,
                 &egress_str,
                 &request_model,
@@ -1048,15 +1134,12 @@ async fn proxy_pipeline(
             handle_non_stream_via_upstream_stream(
                 gw.clone(),
                 client,
-                adapter.as_ref(),
+                &upstream_url,
+                request_headers,
                 &provider,
-                &egress_base_url,
                 egress,
                 ingress,
-                &egress_path,
-                &credential,
                 egress_body,
-                request_headers,
                 &ingress_str,
                 &egress_str,
                 &request_model,
@@ -1074,15 +1157,12 @@ async fn proxy_pipeline(
             handle_non_stream(
                 gw.clone(),
                 client,
-                adapter.as_ref(),
+                &upstream_url,
+                request_headers,
                 &provider,
-                &egress_base_url,
                 egress,
                 ingress,
-                &egress_path,
-                &credential,
                 egress_body,
-                request_headers,
                 &ingress_str,
                 &egress_str,
                 &request_model,
@@ -1154,15 +1234,12 @@ async fn proxy_pipeline(
 async fn handle_non_stream(
     gw: Gateway,
     client: ProxyClient,
-    adapter: &dyn ProviderAdapter,
+    url: &str,
+    headers: reqwest::header::HeaderMap,
     provider: &Provider,
-    egress_base_url: &str,
     egress: Protocol,
     ingress: Protocol,
-    path: &str,
-    credential: &str,
     body: Value,
-    extra_headers: reqwest::header::HeaderMap,
     ingress_str: &str,
     egress_str: &str,
     request_model: &str,
@@ -1179,7 +1256,6 @@ async fn handle_non_stream(
     request_headers_str: Option<String>,
     request_body_str: Option<String>,
 ) -> Response {
-    let credential_to_use = credential.to_string();
     let make_extras = |response_body: Option<String>| LogExtras {
         method: Some(ingress_method.to_string()),
         path: Some(ingress_path.to_string()),
@@ -1188,17 +1264,7 @@ async fn handle_non_stream(
         response_headers: None,
         response_body,
     };
-    let call_result = match client
-        .call_non_stream(
-            adapter,
-            egress_base_url,
-            path,
-            &credential_to_use,
-            body.clone(),
-            extra_headers.clone(),
-        )
-        .await
-    {
+    let call_result = match client.call_non_stream(url, headers, body.clone()).await {
         Ok(r) => r,
         Err(e) => {
             emit_log(
@@ -1235,8 +1301,8 @@ async fn handle_non_stream(
             .into_response();
     }
 
-    let parser = crate::protocol::get_response_parser(egress);
-    let formatter = crate::protocol::get_response_formatter(ingress);
+    let parser = egress.handler().make_response_parser();
+    let formatter = ingress.handler().make_response_formatter();
 
     let mut internal_resp = match parser.parse_response(resp) {
         Ok(r) => r,
@@ -1328,15 +1394,12 @@ async fn handle_non_stream(
 async fn handle_non_stream_via_upstream_stream(
     gw: Gateway,
     client: ProxyClient,
-    adapter: &dyn ProviderAdapter,
+    url: &str,
+    headers: reqwest::header::HeaderMap,
     provider: &Provider,
-    egress_base_url: &str,
     egress: Protocol,
     ingress: Protocol,
-    path: &str,
-    credential: &str,
     body: Value,
-    extra_headers: reqwest::header::HeaderMap,
     ingress_str: &str,
     egress_str: &str,
     request_model: &str,
@@ -1349,18 +1412,7 @@ async fn handle_non_stream_via_upstream_stream(
     semantic_write_ctx: Option<SemanticWriteContext>,
     expose_headers: bool,
 ) -> Response {
-    let credential_to_use = credential.to_string();
-    let call_result = match client
-        .call_stream(
-            adapter,
-            egress_base_url,
-            path,
-            &credential_to_use,
-            body.clone(),
-            extra_headers.clone(),
-        )
-        .await
-    {
+    let call_result = match client.call_stream(url, headers, body.clone()).await {
         Ok(r) => r,
         Err(e) => {
             emit_log(
@@ -1397,7 +1449,7 @@ async fn handle_non_stream_via_upstream_stream(
             .into_response();
     }
 
-    let mut stream_parser = crate::protocol::get_stream_parser(egress);
+    let mut stream_parser = egress.handler().make_stream_parser();
     let mut byte_stream = resp.bytes_stream();
     let mut accumulator = StreamResponseAccumulator::default();
 
@@ -1441,7 +1493,7 @@ async fn handle_non_stream_via_upstream_stream(
 
     let is_tool = !internal_resp.tool_calls.is_empty();
     let usage = internal_resp.usage.clone();
-    let formatter = crate::protocol::get_response_formatter(ingress);
+    let formatter = ingress.handler().make_response_formatter();
     let output = formatter.format_response(&internal_resp);
 
     let response_preview = serde_json::to_string(&output)
@@ -1504,15 +1556,12 @@ async fn handle_non_stream_via_upstream_stream(
 async fn handle_stream(
     gw: Gateway,
     client: ProxyClient,
-    adapter: &dyn ProviderAdapter,
+    url: &str,
+    headers: reqwest::header::HeaderMap,
     provider: &Provider,
-    egress_base_url: &str,
     egress: Protocol,
     ingress: Protocol,
-    path: &str,
-    credential: &str,
     body: Value,
-    extra_headers: reqwest::header::HeaderMap,
     ingress_str: &str,
     egress_str: &str,
     request_model: &str,
@@ -1531,7 +1580,6 @@ async fn handle_stream(
     request_headers_str: Option<String>,
     request_body_str: Option<String>,
 ) -> Response {
-    let credential_to_use = credential.to_string();
     let make_extras_owned = {
         let method = ingress_method.to_string();
         let path_s = ingress_path.to_string();
@@ -1546,17 +1594,7 @@ async fn handle_stream(
             response_body,
         }
     };
-    let call_result = match client
-        .call_stream(
-            adapter,
-            egress_base_url,
-            path,
-            &credential_to_use,
-            body.clone(),
-            extra_headers.clone(),
-        )
-        .await
-    {
+    let call_result = match client.call_stream(url, headers, body.clone()).await {
         Ok(r) => r,
         Err(e) => {
             emit_log(
@@ -1596,8 +1634,8 @@ async fn handle_stream(
             .into_response();
     }
 
-    let mut stream_parser = crate::protocol::get_stream_parser(egress);
-    let mut stream_formatter = crate::protocol::get_stream_formatter(ingress);
+    let mut stream_parser = egress.handler().make_stream_parser();
+    let mut stream_formatter = ingress.handler().make_stream_formatter();
 
     let mut byte_stream = resp.bytes_stream();
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<String, Infallible>>(64);
@@ -1668,7 +1706,7 @@ async fn handle_stream(
 
         // For streaming responses, aggregate the final internal response and render
         // an equivalent non-streaming JSON for response_body logging.
-        let aggregated_formatter = crate::protocol::get_response_formatter(ingress);
+        let aggregated_formatter = ingress.handler().make_response_formatter();
         let aggregated_output = aggregated_formatter.format_response(&internal);
         let aggregated_body_str = serde_json::to_string(&aggregated_output).ok();
         emit_log(
@@ -1690,7 +1728,7 @@ async fn handle_stream(
         if allow_exact_store && internal.tool_calls.is_empty() {
             let cache_backend = gw_log.cache_backend.read().await.clone();
             if let (Some(cache_backend), Some(cache_key)) = (cache_backend.as_ref(), cache_key_owned.as_deref()) {
-                let formatter = crate::protocol::get_response_formatter(ingress);
+                let formatter = ingress.handler().make_response_formatter();
                 let payload = formatter.format_response(&internal);
                 let entry = CacheEntry {
                     payload,
@@ -1727,7 +1765,7 @@ async fn handle_stream(
         } else if internal.tool_calls.is_empty() {
             let vector_store = gw_log.vector_store.read().await.clone();
             if let (Some(vector_store), Some(ctx)) = (vector_store.as_ref(), semantic_write_ctx_owned.as_ref()) {
-                let formatter = crate::protocol::get_response_formatter(ingress);
+                let formatter = ingress.handler().make_response_formatter();
                 let payload = formatter.format_response(&internal);
                 let entry = CacheEntry {
                     payload,
@@ -1959,16 +1997,17 @@ async fn get_provider<S: ProxyAccessStore + ?Sized>(access_store: &S, id: &str) 
         .ok_or_else(|| anyhow::anyhow!("provider not found or inactive: {id}"))
 }
 
-fn override_model(mut body: Value, model: &str, protocol: Protocol) -> Value {
-    match protocol {
-        Protocol::Gemini => body,
-        _ => {
-            if let Some(obj) = body.as_object_mut() {
-                obj.insert("model".into(), Value::String(model.to_string()));
-            }
-            body
-        }
+/// Inject the actual model name into the egress body unless the
+/// protocol's encoder has already placed it elsewhere (e.g. Google
+/// Generate writes the model into the URL path, not the body).
+fn override_model(mut body: Value, model: &str, caps: &ProtocolCapabilities) -> Value {
+    if caps.override_model_in_body {
+        return body;
     }
+    if let Some(obj) = body.as_object_mut() {
+        obj.insert("model".into(), Value::String(model.to_string()));
+    }
+    body
 }
 
 fn error_type_for_status(status: u16) -> &'static str {
@@ -2069,8 +2108,28 @@ async fn compute_embedding(gw: &Gateway, text: &str) -> anyhow::Result<Vec<f32>>
         } else {
             target.model.clone()
         };
-        let adapter = adapter::get_adapter(&provider, Protocol::OpenAI);
+        let extension = match VendorRegistry::global().resolve(&provider, OPENAI_EMBEDDINGS_V1) {
+            Some(ext) => ext.clone(),
+            None => continue,
+        };
         let credential = provider_runtime.access_token.clone();
+        let upstream_url;
+        let mut request_headers;
+        {
+            let ctx = VendorCtx {
+                provider: &provider,
+                protocol_id: OPENAI_EMBEDDINGS_V1,
+                api_key: &credential,
+                actual_model: &actual_model,
+                credential: None,
+            };
+            upstream_url = extension.build_url(&ctx, &openai_base_url, "/v1/embeddings");
+            request_headers = match runtime_binding_headers(&provider_runtime.binding) {
+                Ok(h) => h,
+                Err(_) => continue,
+            };
+            request_headers.extend(extension.auth_headers(&ctx));
+        }
         let client = match gw.http_client_for_provider(provider.use_proxy).await {
             Ok(http_client) => ProxyClient::new(http_client),
             Err(_) => continue,
@@ -2080,17 +2139,7 @@ async fn compute_embedding(gw: &Gateway, text: &str) -> anyhow::Result<Vec<f32>>
             "input": text,
         });
         match client
-            .call_non_stream(
-                adapter.as_ref(),
-                &openai_base_url,
-                "/v1/embeddings",
-                &credential,
-                request_body,
-                match runtime_binding_headers(&provider_runtime.binding) {
-                    Ok(headers) => headers,
-                    Err(_) => continue,
-                },
-            )
+            .call_non_stream(&upstream_url, request_headers, request_body)
             .await
         {
             Ok((payload, status)) if status < 400 => {
@@ -2302,7 +2351,7 @@ fn replay_cached_stream(
     stream_replay_tps: u32,
     expose_headers: bool,
 ) -> Response {
-    let mut formatter = crate::protocol::get_stream_formatter(ingress);
+    let mut formatter = ingress.handler().make_stream_formatter();
     let deltas = internal_response_to_deltas(internal);
     // When TPS throttle is enabled, split large text chunks to ~1 token each (4 chars).
     let deltas = if stream_replay_tps > 0 {

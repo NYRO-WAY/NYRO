@@ -91,6 +91,9 @@ pub const ANTHROPIC_MESSAGES_2023_06_01: ProtocolId =
 pub const GOOGLE_GENERATE_V1BETA: ProtocolId =
     ProtocolId::new(ProtocolFamily::Google, "generate", "v1beta");
 
+pub const OPENAI_EMBEDDINGS_V1: ProtocolId =
+    ProtocolId::new(ProtocolFamily::OpenAI, "embeddings", "v1");
+
 /// Static, declarative description of what a `ProtocolHandler` can do.
 ///
 /// Replaces scattered `match` statements (e.g. `matches!(egress, ResponsesAPI)`,

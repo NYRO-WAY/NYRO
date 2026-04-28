@@ -17,7 +17,8 @@ use crate::auth::types::{
 };
 use crate::db::models::*;
 use crate::protocol::{Protocol, ProviderProtocols};
-use crate::proxy::adapter;
+use crate::protocol::ids::OPENAI_EMBEDDINGS_V1;
+use crate::protocol::vendor::{VendorCtx, VendorRegistry};
 use crate::proxy::client::ProxyClient;
 use crate::router::TargetSelector;
 use crate::storage::traits::ProviderTestResult;
@@ -921,26 +922,42 @@ impl AdminService {
             } else {
                 target.model.clone()
             };
-            let adapter = adapter::get_adapter(&provider, Protocol::OpenAI);
+            let extension = match VendorRegistry::global()
+                .resolve(&provider, OPENAI_EMBEDDINGS_V1)
+            {
+                Some(ext) => ext.clone(),
+                None => continue,
+            };
             let credential = match resolve_provider_credential(&provider) {
                 Ok(value) => value,
                 Err(_) => continue,
             };
+            let upstream_url;
+            let mut request_headers;
+            {
+                let ctx = VendorCtx {
+                    provider: &provider,
+                    protocol_id: OPENAI_EMBEDDINGS_V1,
+                    api_key: &credential,
+                    actual_model: &actual_model,
+                    credential: None,
+                };
+                upstream_url = extension.build_url(&ctx, &openai_base_url, "/v1/embeddings");
+                request_headers = HeaderMap::new();
+                request_headers.extend(extension.auth_headers(&ctx));
+            }
             let client = match self.gw.http_client_for_provider(provider.use_proxy).await {
                 Ok(http_client) => ProxyClient::new(http_client),
                 Err(_) => continue,
             };
             let call = client
                 .call_non_stream(
-                    adapter.as_ref(),
-                    &openai_base_url,
-                    "/v1/embeddings",
-                    &credential,
+                    &upstream_url,
+                    request_headers,
                     serde_json::json!({
                         "model": actual_model,
                         "input": "nyro.embedding.dimensions.probe",
                     }),
-                    HeaderMap::new(),
                 )
                 .await;
             if let Ok((payload, status)) = call {
