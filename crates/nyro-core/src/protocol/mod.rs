@@ -1,8 +1,39 @@
+//! Protocol layer.
+//!
+//! # Two-layer identity (PR1+)
+//!
+//! Canonical form: `{family}/{dialect}/{wire_version}`.
+//!
+//! - `family`: closed enum `openai` / `anthropic` / `google`.
+//! - `dialect`: wire-format verb/noun (`chat`, `responses`, `messages`, `generate`).
+//! - `wire_version`: schema version as the vendor labels it (`v1`, `2023-06-01`, `v1beta`).
+//!
+//! See [`ids`], [`traits`], [`registry`], and [`family`] for the new model.
+//! The legacy [`Protocol`] enum, factory functions, and [`ProviderProtocols`]
+//! below remain in place during PR1; PR3/PR4 migrate the call sites and
+//! delete them.
+//!
+//! ## Default alias table (resolved at runtime in [`registry::ProtocolRegistry::resolve_alias`])
+//!
+//! Primary short names: `openai-chat`, `openai-responses`, `anthropic-messages`,
+//! `google-generate` (kebab-case `{family}-{dialect}` form).
+//!
+//! Friendly aliases: `responses` → OpenAI Responses, `claude` → Anthropic Messages.
+//!
+//! Legacy values from the old `Protocol` enum: `openai`, `openai_responses`,
+//! `anthropic`, `gemini` — still resolvable for back-compat with old DB rows
+//! and yaml configs until PR4 normalizes the write paths.
+
 pub mod types;
 pub mod openai;
 pub mod anthropic;
 pub mod gemini;
 pub mod semantic;
+
+pub mod ids;
+pub mod traits;
+pub mod registry;
+pub mod family;
 
 use std::collections::HashMap;
 
