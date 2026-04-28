@@ -34,6 +34,7 @@ pub mod ids;
 pub mod traits;
 pub mod registry;
 pub mod family;
+pub mod vendor;
 
 use std::collections::HashMap;
 
