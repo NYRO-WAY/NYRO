@@ -64,6 +64,16 @@ impl ProtocolId {
     ) -> Self {
         Self { family, dialect, version }
     }
+
+    /// Look up the registered handler for this id.
+    ///
+    /// Panics only if no `inventory::submit!` registration exists — a
+    /// build-time invariant covered by `tests/protocol_registry.rs`.
+    pub fn handler(self) -> &'static std::sync::Arc<dyn super::traits::ProtocolHandler> {
+        super::registry::ProtocolRegistry::global()
+            .get(&self)
+            .unwrap_or_else(|| panic!("ProtocolHandler for {self} not registered"))
+    }
 }
 
 impl fmt::Display for ProtocolId {

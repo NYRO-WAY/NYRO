@@ -1351,6 +1351,9 @@ END $$;"#,
             .execute(self.adapter.pool())
             .await?;
         }
+        // PR4: rewrite provider protocol identifiers into canonical
+        // `family/dialect/version` form. Idempotent.
+        normalize_provider_protocols_pg(self.adapter.pool()).await?;
         Ok(())
     }
 
@@ -1363,6 +1366,57 @@ END $$;"#,
             writable: health.can_connect,
         })
     }
+}
+
+/// Postgres counterpart of `crate::db::normalize_provider_protocols` —
+/// rewrites legacy / alias protocol identifiers in `providers` rows to
+/// canonical [`ProtocolId`](crate::protocol::ids::ProtocolId) strings.
+///
+/// Touches `providers.default_protocol` (single value) and
+/// `providers.protocol_endpoints` (JSON object keys). Idempotent: a row
+/// with already-canonical values is skipped without an UPDATE.
+async fn normalize_provider_protocols_pg(pool: &Pool<Postgres>) -> anyhow::Result<()> {
+    use crate::protocol::normalize::{
+        normalize_protocol_endpoints_json, normalize_protocol_string,
+    };
+    use crate::protocol::registry::ProtocolRegistry;
+
+    let reg = ProtocolRegistry::global();
+    let rows: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT id, default_protocol, protocol_endpoints FROM providers",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    for (id, raw_default, raw_endpoints) in rows {
+        let raw_default = raw_default.unwrap_or_default();
+        let raw_endpoints = raw_endpoints.unwrap_or_default();
+        let new_default = normalize_protocol_string(&raw_default, reg);
+        let new_endpoints = normalize_protocol_endpoints_json(&raw_endpoints, reg);
+
+        let default_changed = new_default != raw_default;
+        let endpoints_changed = new_endpoints != raw_endpoints;
+        if !default_changed && !endpoints_changed {
+            continue;
+        }
+
+        tracing::info!(
+            provider_id = %id,
+            default_changed,
+            endpoints_changed,
+            "normalizing provider protocol identifiers to canonical ProtocolId form (postgres)"
+        );
+
+        sqlx::query(
+            "UPDATE providers SET default_protocol = $1, protocol_endpoints = $2 WHERE id = $3",
+        )
+        .bind(&new_default)
+        .bind(&new_endpoints)
+        .bind(&id)
+        .execute(pool)
+        .await?;
+    }
+    Ok(())
 }
 
 async fn ensure_semantic_cache_vectors_table(

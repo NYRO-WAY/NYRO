@@ -8,6 +8,11 @@ use sqlx::Row;
 use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
+use crate::protocol::normalize::{
+    normalize_protocol_endpoints_json, normalize_protocol_string,
+};
+use crate::protocol::registry::ProtocolRegistry;
+
 static SQLITE_VEC_INIT: Once = Once::new();
 const VECTOR_DIMENSIONS_SETTING_KEY: &str = "vector_embedding_dimensions";
 
@@ -88,8 +93,63 @@ pub async fn migrate(pool: &SqlitePool, vector_dimensions: usize) -> anyhow::Res
     ensure_semantic_cache_vectors_table(pool, vector_dimensions).await?;
     backfill_provider_vendor(pool).await?;
     migrate_vendor_renames(pool).await?;
+    normalize_provider_protocols(pool).await?;
     backfill_route_fields(pool).await?;
     backfill_route_targets(pool).await?;
+    Ok(())
+}
+
+/// Rewrites legacy / alias protocol identifiers in `providers` rows into
+/// canonical [`ProtocolId`](crate::protocol::ids::ProtocolId) strings.
+///
+/// Two columns are touched:
+///
+/// - `providers.default_protocol` — single value, e.g. `"openai"` →
+///   `"openai/chat/v1"`.
+/// - `providers.protocol_endpoints` — JSON object, e.g.
+///   `{ "openai": {...}, "openai_responses": {...} }` →
+///   `{ "openai/chat/v1": {...}, "openai/responses/v1": {...} }`.
+///
+/// Idempotent: re-running on already-normalized rows is a no-op (the
+/// row signature is unchanged so no UPDATE is issued). Unknown keys are
+/// preserved verbatim with a `tracing::warn` so a foreign yaml import
+/// can still be inspected manually.
+async fn normalize_provider_protocols(pool: &SqlitePool) -> anyhow::Result<()> {
+    let reg = ProtocolRegistry::global();
+    let rows = sqlx::query("SELECT id, default_protocol, protocol_endpoints FROM providers")
+        .fetch_all(pool)
+        .await?;
+
+    for row in rows {
+        let id: String = row.try_get("id")?;
+        let raw_default: String = row.try_get("default_protocol").unwrap_or_default();
+        let raw_endpoints: String = row.try_get("protocol_endpoints").unwrap_or_default();
+
+        let new_default = normalize_protocol_string(&raw_default, reg);
+        let new_endpoints = normalize_protocol_endpoints_json(&raw_endpoints, reg);
+
+        let default_changed = new_default != raw_default;
+        let endpoints_changed = new_endpoints != raw_endpoints;
+        if !default_changed && !endpoints_changed {
+            continue;
+        }
+
+        tracing::info!(
+            provider_id = %id,
+            default_changed,
+            endpoints_changed,
+            "normalizing provider protocol identifiers to canonical ProtocolId form"
+        );
+
+        sqlx::query(
+            "UPDATE providers SET default_protocol = ?1, protocol_endpoints = ?2 WHERE id = ?3",
+        )
+        .bind(&new_default)
+        .bind(&new_endpoints)
+        .bind(&id)
+        .execute(pool)
+        .await?;
+    }
     Ok(())
 }
 

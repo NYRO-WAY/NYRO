@@ -1,8 +1,9 @@
 use anyhow::Result;
 use serde_json::Value;
 
+use crate::protocol::IngressDecoder;
+use crate::protocol::ids::ANTHROPIC_MESSAGES_2023_06_01;
 use crate::protocol::types::*;
-use crate::protocol::{IngressDecoder, Protocol};
 
 use super::types::*;
 
@@ -58,7 +59,7 @@ impl IngressDecoder for AnthropicDecoder {
             top_p: req.top_p,
             tools,
             tool_choice: req.tool_choice,
-            source_protocol: Protocol::Anthropic,
+            source_protocol: ANTHROPIC_MESSAGES_2023_06_01,
             extra: Default::default(),
         })
     }

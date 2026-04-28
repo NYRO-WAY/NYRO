@@ -30,7 +30,7 @@ use crate::protocol::ids::{OPENAI_EMBEDDINGS_V1, ProtocolCapabilities, ProtocolI
 use crate::protocol::registry::ProtocolRegistration;
 use crate::protocol::traits::*;
 use crate::protocol::types::{InternalRequest, InternalResponse, StreamDelta, TokenUsage};
-use crate::protocol::{Protocol, SseEvent};
+use crate::protocol::SseEvent;
 
 pub const EMBEDDINGS_BODY_KEY: &str = "__embeddings_passthrough_body__";
 
@@ -104,7 +104,7 @@ impl IngressDecoder for EmbeddingsPassthroughDecoder {
             top_p: None,
             tools: None,
             tool_choice: None,
-            source_protocol: Protocol::OpenAI,
+            source_protocol: OPENAI_EMBEDDINGS_V1,
             extra,
         })
     }

@@ -3016,6 +3016,7 @@ dependencies = [
  "sha2",
  "sqlite-vec",
  "sqlx",
+ "tempfile",
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",

@@ -133,8 +133,8 @@ fn extract_tool_result_hint(content: &MessageContent) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::ids::OPENAI_CHAT_V1;
     use crate::protocol::types::MessageContent;
-    use crate::protocol::Protocol;
 
     fn make_req(messages: Vec<InternalMessage>) -> InternalRequest {
         InternalRequest {
@@ -146,7 +146,7 @@ mod tests {
             top_p: None,
             tools: None,
             tool_choice: None,
-            source_protocol: Protocol::OpenAI,
+            source_protocol: OPENAI_CHAT_V1,
             extra: Default::default(),
         }
     }

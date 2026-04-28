@@ -24,11 +24,14 @@ use crate::cache::entry::CacheEntry;
 use crate::cache::key::{build_cache_key, build_semantic_partition};
 use crate::logging::LogEntry;
 use crate::protocol::gemini::decoder::GeminiDecoder;
-use crate::protocol::ids::{OPENAI_EMBEDDINGS_V1, ProtocolCapabilities};
+use crate::protocol::ids::{
+    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GENERATE_V1BETA, OPENAI_CHAT_V1, OPENAI_EMBEDDINGS_V1,
+    OPENAI_RESPONSES_V1, ProtocolCapabilities, ProtocolId,
+};
 use crate::protocol::registry::ProtocolRegistry;
 use crate::protocol::types::*;
 use crate::protocol::vendor::{VendorCtx, VendorRegistry};
-use crate::protocol::{Protocol, ProviderProtocols};
+use crate::protocol::ProviderProtocols;
 use crate::proxy::client::ProxyClient;
 use crate::router::TargetSelector;
 use crate::storage::traits::{ApiKeyAccessRecord, UsageWindow};
@@ -41,7 +44,7 @@ pub async fn openai_proxy(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
-    universal_proxy(gw, headers, body, Protocol::OpenAI, "/v1/chat/completions").await
+    universal_proxy(gw, headers, body, OPENAI_CHAT_V1, "/v1/chat/completions").await
 }
 
 // ── OpenAI Responses API ingress: POST /v1/responses ──
@@ -51,7 +54,7 @@ pub async fn responses_proxy(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
-    universal_proxy(gw, headers, body, Protocol::ResponsesAPI, "/v1/responses").await
+    universal_proxy(gw, headers, body, OPENAI_RESPONSES_V1, "/v1/responses").await
 }
 
 // ── OpenAI embeddings ingress: POST /v1/embeddings ──
@@ -384,7 +387,7 @@ pub async fn anthropic_proxy(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
-    universal_proxy(gw, headers, body, Protocol::Anthropic, "/v1/messages").await
+    universal_proxy(gw, headers, body, ANTHROPIC_MESSAGES_2023_06_01, "/v1/messages").await
 }
 
 // ── Gemini ingress: POST /v1beta/models/:model_action ──
@@ -443,7 +446,7 @@ pub async fn gemini_proxy(
         gw,
         headers,
         internal,
-        Protocol::Gemini,
+        GOOGLE_GENERATE_V1BETA,
         "POST",
         &path,
         request_headers,
@@ -510,7 +513,7 @@ async fn universal_proxy(
     gw: Gateway,
     headers: HeaderMap,
     body: Value,
-    ingress: Protocol,
+    ingress: ProtocolId,
     path: &'static str,
 ) -> Response {
     let request_headers = headers_to_json(&headers);
@@ -566,7 +569,7 @@ async fn proxy_pipeline(
     gw: Gateway,
     headers: HeaderMap,
     internal: InternalRequest,
-    ingress: Protocol,
+    ingress: ProtocolId,
     method: &str,
     path: &str,
     request_headers_str: Option<String>,
@@ -1001,10 +1004,10 @@ async fn proxy_pipeline(
             resolved.base_url
         };
 
-        // [PR3] Resolve protocol handler + vendor extension. Both are
+        // Resolve protocol handler + vendor extension. Both are
         // process-global registrations; lookup is O(1) for handlers and
         // small linear scans for extensions.
-        let egress_id = egress.to_protocol_id();
+        let egress_id = egress;
         let egress_handler = match ProtocolRegistry::global().get(&egress_id) {
             Some(h) => h.clone(),
             None => {
@@ -1237,8 +1240,8 @@ async fn handle_non_stream(
     url: &str,
     headers: reqwest::header::HeaderMap,
     provider: &Provider,
-    egress: Protocol,
-    ingress: Protocol,
+    egress: ProtocolId,
+    ingress: ProtocolId,
     body: Value,
     ingress_str: &str,
     egress_str: &str,
@@ -1397,8 +1400,8 @@ async fn handle_non_stream_via_upstream_stream(
     url: &str,
     headers: reqwest::header::HeaderMap,
     provider: &Provider,
-    egress: Protocol,
-    ingress: Protocol,
+    egress: ProtocolId,
+    ingress: ProtocolId,
     body: Value,
     ingress_str: &str,
     egress_str: &str,
@@ -1559,8 +1562,8 @@ async fn handle_stream(
     url: &str,
     headers: reqwest::header::HeaderMap,
     provider: &Provider,
-    egress: Protocol,
-    ingress: Protocol,
+    egress: ProtocolId,
+    ingress: ProtocolId,
     body: Value,
     ingress_str: &str,
     egress_str: &str,
@@ -2177,10 +2180,10 @@ fn parse_embedding_vector(payload: &Value) -> Option<Vec<f32>> {
 
 fn resolve_openai_base_url(provider: &Provider) -> Option<String> {
     let protocols = ProviderProtocols::from_provider(provider);
-    if !protocols.supports(Protocol::OpenAI) {
+    if !protocols.supports(OPENAI_CHAT_V1) {
         return None;
     }
-    let resolved = protocols.resolve_egress(Protocol::OpenAI);
+    let resolved = protocols.resolve_egress(OPENAI_CHAT_V1);
     let trimmed = resolved.base_url.trim();
     if trimmed.is_empty() {
         return None;
@@ -2311,7 +2314,7 @@ fn set_cache_headers(
 }
 
 fn cached_entry_to_response(
-    ingress: Protocol,
+    ingress: ProtocolId,
     entry: &CacheEntry,
     is_stream: bool,
     cache_key: Option<&str>,
@@ -2343,7 +2346,7 @@ fn cached_entry_to_response(
 }
 
 fn replay_cached_stream(
-    ingress: Protocol,
+    ingress: ProtocolId,
     internal: &InternalResponse,
     cache_key: Option<&str>,
     cache_status: &str,

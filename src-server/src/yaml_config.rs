@@ -308,20 +308,42 @@ impl YamlCacheConfig {
 use nyro_core::db::models::{Provider, Route, RouteTarget};
 
 pub fn build_providers(yaml: &YamlConfig) -> Vec<Provider> {
+    use nyro_core::protocol::registry::ProtocolRegistry;
+    let reg = ProtocolRegistry::global();
+
     yaml.providers
         .iter()
         .enumerate()
         .map(|(i, yp)| {
             let id = format!("yaml-provider-{i}");
-            let resolved_protocol = yp.resolved_protocol().unwrap_or_default().to_string();
-            let default_ep = yp.endpoints.get(&resolved_protocol);
+            let raw_protocol = yp.resolved_protocol().unwrap_or_default().to_string();
+            // Normalize the yaml-declared protocol to canonical ProtocolId
+            // form so storage rows are consistent with admin / preset writes.
+            let resolved_protocol = reg
+                .resolve_alias(&raw_protocol)
+                .map(|id| id.to_string())
+                .unwrap_or(raw_protocol);
+            let default_ep = yp
+                .endpoints
+                .iter()
+                .find(|(proto, _)| {
+                    reg.resolve_alias(proto)
+                        .map(|id| id.to_string())
+                        .as_deref()
+                        == Some(&resolved_protocol)
+                })
+                .map(|(_, ep)| ep);
             let base_url = default_ep.map(|e| e.base_url.clone()).unwrap_or_default();
             let endpoints_json: HashMap<String, serde_json::Value> = yp
                 .endpoints
                 .iter()
                 .map(|(proto, ep)| {
+                    let canonical = reg
+                        .resolve_alias(proto)
+                        .map(|id| id.to_string())
+                        .unwrap_or_else(|| proto.clone());
                     (
-                        proto.clone(),
+                        canonical,
                         serde_json::json!({ "base_url": ep.base_url }),
                     )
                 })
@@ -555,6 +577,38 @@ routes:
 "#;
         let cfg: YamlConfig = serde_yaml::from_str(yaml).expect("parse");
         cfg.validate().expect("validate");
+    }
+
+    #[test]
+    fn build_providers_normalizes_legacy_protocol_keys_to_canonical_ids() {
+        // Legacy YAML uses short aliases (`openai`, `anthropic`). The
+        // builder must canonicalize them into `family/dialect/version`
+        // form so storage rows match what admin / preset writes produce.
+        let yaml = r#"
+providers:
+  - name: vendor1
+    protocol: openai
+    endpoints:
+      openai:
+        base_url: https://a.example/v1
+      anthropic:
+        base_url: https://b.example/v1
+    api_key: sk-x
+"#;
+        let cfg: YamlConfig = serde_yaml::from_str(yaml).expect("parse");
+        cfg.validate().expect("validate");
+        let providers = build_providers(&cfg);
+        assert_eq!(providers.len(), 1);
+        let p = &providers[0];
+        assert_eq!(p.protocol, "openai/chat/v1");
+        assert_eq!(p.default_protocol, "openai/chat/v1");
+        let endpoints: serde_json::Value =
+            serde_json::from_str(&p.protocol_endpoints).expect("valid json");
+        let obj = endpoints.as_object().expect("object");
+        assert!(obj.contains_key("openai/chat/v1"));
+        assert!(obj.contains_key("anthropic/messages/2023-06-01"));
+        assert!(!obj.contains_key("openai"));
+        assert!(!obj.contains_key("anthropic"));
     }
 
     #[test]

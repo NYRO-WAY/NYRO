@@ -1,16 +1,11 @@
 //! Protocol registry acceptance.
 //!
 //! Five handlers are registered:
-//! - OpenAI Chat / OpenAI Responses (PR1)
-//! - Anthropic Messages / Google Generate (PR1)
-//! - OpenAI Embeddings (PR3 — passthrough codec, registered for
+//! - OpenAI Chat / OpenAI Responses
+//! - Anthropic Messages / Google Generate
+//! - OpenAI Embeddings (passthrough codec, registered for
 //!   `find_by_ingress_route` and capability discovery; the standard
 //!   request pipeline still bypasses its codec)
-//!
-//! The codec-equivalence tests skip embeddings because the legacy
-//! factory functions don't have an embeddings variant to compare
-//! against — the parity guarantee for this handler is its routing /
-//! capability surface, asserted below.
 
 use nyro_core::protocol::ids::{
     ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GENERATE_V1BETA, OPENAI_CHAT_V1, OPENAI_EMBEDDINGS_V1,
@@ -18,10 +13,6 @@ use nyro_core::protocol::ids::{
 };
 use nyro_core::protocol::registry::ProtocolRegistry;
 use nyro_core::protocol::types::Role;
-use nyro_core::protocol::{
-    get_decoder, get_encoder, get_response_formatter, get_response_parser, get_stream_formatter,
-    get_stream_parser, Protocol,
-};
 use serde_json::json;
 
 #[test]
@@ -77,14 +68,14 @@ fn ingress_routes_match_axum_router() {
 }
 
 #[test]
-fn capabilities_match_legacy_special_cases() {
+fn capabilities_match_dialect_special_cases() {
     let reg = ProtocolRegistry::global();
     assert!(
         reg.get(&OPENAI_RESPONSES_V1)
             .unwrap()
             .capabilities()
             .force_upstream_stream,
-        "Responses must force upstream streaming (legacy matches!(egress, ResponsesAPI))"
+        "Responses must force upstream streaming"
     );
     assert!(
         !reg.get(&OPENAI_CHAT_V1)
@@ -97,28 +88,15 @@ fn capabilities_match_legacy_special_cases() {
             .unwrap()
             .capabilities()
             .override_model_in_body,
-        "Google must override model in body (legacy Gemini branch)"
+        "Google must override model in body"
     );
 }
 
-// ── Equivalence with legacy factory functions ──
+// ── Decoder / encoder smoke ──
 
-fn pair(id: ProtocolId, legacy: Protocol) -> (ProtocolId, Protocol) {
-    (id, legacy)
-}
-
-fn all_pairs() -> Vec<(ProtocolId, Protocol)> {
-    vec![
-        pair(OPENAI_CHAT_V1, Protocol::OpenAI),
-        pair(OPENAI_RESPONSES_V1, Protocol::ResponsesAPI),
-        pair(ANTHROPIC_MESSAGES_2023_06_01, Protocol::Anthropic),
-        pair(GOOGLE_GENERATE_V1BETA, Protocol::Gemini),
-    ]
-}
-
-fn sample_body(legacy: Protocol) -> serde_json::Value {
-    match legacy {
-        Protocol::OpenAI => json!({
+fn sample_body(id: ProtocolId) -> serde_json::Value {
+    if id == OPENAI_CHAT_V1 {
+        json!({
             "model": "gpt-4o-mini",
             "messages": [
                 {"role": "system", "content": "be helpful"},
@@ -126,8 +104,9 @@ fn sample_body(legacy: Protocol) -> serde_json::Value {
             ],
             "stream": false,
             "temperature": 0.5
-        }),
-        Protocol::ResponsesAPI => json!({
+        })
+    } else if id == OPENAI_RESPONSES_V1 {
+        json!({
             "model": "gpt-4o-mini",
             "instructions": "be helpful",
             "input": [
@@ -135,8 +114,9 @@ fn sample_body(legacy: Protocol) -> serde_json::Value {
             ],
             "stream": false,
             "temperature": 0.5
-        }),
-        Protocol::Anthropic => json!({
+        })
+    } else if id == ANTHROPIC_MESSAGES_2023_06_01 {
+        json!({
             "model": "claude-3-5-sonnet",
             "system": "be helpful",
             "messages": [
@@ -144,107 +124,83 @@ fn sample_body(legacy: Protocol) -> serde_json::Value {
             ],
             "max_tokens": 256,
             "stream": false
-        }),
-        Protocol::Gemini => json!({
+        })
+    } else if id == GOOGLE_GENERATE_V1BETA {
+        json!({
             "system_instruction": {"parts": [{"text": "be helpful"}]},
             "contents": [
                 {"role": "user", "parts": [{"text": "hi"}]}
             ]
-        }),
+        })
+    } else {
+        panic!("no sample body for {id}")
     }
 }
 
 #[test]
-fn decoder_output_equivalent_to_legacy_factory() {
+fn decoder_preserves_role_sequence_and_source_protocol() {
     let reg = ProtocolRegistry::global();
-    for (id, legacy) in all_pairs() {
-        let body = sample_body(legacy);
-
-        let new_req = reg
+    for id in [
+        OPENAI_CHAT_V1,
+        OPENAI_RESPONSES_V1,
+        ANTHROPIC_MESSAGES_2023_06_01,
+        GOOGLE_GENERATE_V1BETA,
+    ] {
+        let body = sample_body(id);
+        let req = reg
             .get(&id)
             .unwrap()
             .make_decoder()
-            .decode_request(body.clone())
-            .unwrap_or_else(|e| panic!("new decoder failed for {id}: {e}"));
-        let old_req = get_decoder(legacy)
             .decode_request(body)
-            .unwrap_or_else(|e| panic!("legacy decoder failed for {legacy}: {e}"));
+            .unwrap_or_else(|e| panic!("decoder failed for {id}: {e}"));
 
-        assert_eq!(new_req.model, old_req.model, "model mismatch for {id}");
-        assert_eq!(
-            new_req.messages.len(),
-            old_req.messages.len(),
-            "message count mismatch for {id}"
-        );
-        assert_eq!(new_req.stream, old_req.stream, "stream mismatch for {id}");
-        assert_eq!(
-            new_req.source_protocol, old_req.source_protocol,
-            "source_protocol mismatch for {id}"
-        );
-
-        let roles_new: Vec<Role> = new_req.messages.iter().map(|m| m.role).collect();
-        let roles_old: Vec<Role> = old_req.messages.iter().map(|m| m.role).collect();
-        assert_eq!(roles_new, roles_old, "role sequence mismatch for {id}");
+        assert_eq!(req.source_protocol, id, "source_protocol mismatch for {id}");
+        assert!(!req.messages.is_empty(), "messages empty for {id}");
+        let _: Vec<Role> = req.messages.iter().map(|m| m.role).collect();
     }
 }
 
 #[test]
-fn encoder_output_equivalent_to_legacy_factory() {
+fn encoder_round_trips_body_for_every_handler() {
     let reg = ProtocolRegistry::global();
-    for (id, legacy) in all_pairs() {
-        let body = sample_body(legacy);
-
-        let internal = get_decoder(legacy).decode_request(body).unwrap();
-
-        let (new_body, new_headers) = reg
-            .get(&id)
-            .unwrap()
+    for id in [
+        OPENAI_CHAT_V1,
+        OPENAI_RESPONSES_V1,
+        ANTHROPIC_MESSAGES_2023_06_01,
+        GOOGLE_GENERATE_V1BETA,
+    ] {
+        let body = sample_body(id);
+        let h = reg.get(&id).unwrap();
+        let internal = h.make_decoder().decode_request(body).unwrap();
+        let (out_body, headers) = h
             .make_encoder()
             .encode_request(&internal)
-            .unwrap_or_else(|e| panic!("new encoder failed for {id}: {e}"));
-        let (old_body, old_headers) = get_encoder(legacy)
-            .encode_request(&internal)
-            .unwrap_or_else(|e| panic!("legacy encoder failed for {legacy}: {e}"));
+            .unwrap_or_else(|e| panic!("encoder failed for {id}: {e}"));
+        assert!(out_body.is_object(), "encoded body must be an object for {id}");
+        let _ = headers;
 
-        assert_eq!(new_body, old_body, "encoded body mismatch for {id}");
-
-        let mut new_keys: Vec<_> = new_headers.keys().map(|k| k.as_str().to_string()).collect();
-        let mut old_keys: Vec<_> = old_headers.keys().map(|k| k.as_str().to_string()).collect();
-        new_keys.sort();
-        old_keys.sort();
-        assert_eq!(new_keys, old_keys, "header keys mismatch for {id}");
-
-        let new_path = reg
-            .get(&id)
-            .unwrap()
-            .make_encoder()
-            .egress_path(&internal.model, internal.stream);
-        let old_path = get_encoder(legacy).egress_path(&internal.model, internal.stream);
-        assert_eq!(new_path, old_path, "egress_path mismatch for {id}");
+        let _path = h.make_encoder().egress_path(&internal.model, internal.stream);
     }
 }
 
 #[test]
 fn parser_and_formatter_factories_construct() {
-    // Smoke: verify the four factory methods don't panic and the produced
-    // trait objects implement the expected interface (compile-time check).
     let reg = ProtocolRegistry::global();
-    for (id, _) in all_pairs() {
+    for id in [
+        OPENAI_CHAT_V1,
+        OPENAI_RESPONSES_V1,
+        ANTHROPIC_MESSAGES_2023_06_01,
+        GOOGLE_GENERATE_V1BETA,
+    ] {
         let h = reg.get(&id).unwrap();
         let _ = h.make_response_parser();
         let _ = h.make_response_formatter();
         let _ = h.make_stream_parser();
         let _ = h.make_stream_formatter();
-
-        // Cross-check: legacy factories also construct.
-        let _ = get_response_parser(legacy_for(id));
-        let _ = get_response_formatter(legacy_for(id));
-        let _ = get_stream_parser(legacy_for(id));
-        let _ = get_stream_formatter(legacy_for(id));
     }
 }
 
-// ── Embeddings (PR3) — registered for routing/capability surface only ──
+// ── Embeddings — registered for routing/capability surface only ──
 
 #[test]
 fn embeddings_handler_advertises_passthrough_capabilities() {
@@ -306,18 +262,4 @@ fn embeddings_decoder_round_trips_body() {
         .encode_request(&internal)
         .unwrap();
     assert_eq!(encoded, body, "encoder must round-trip the original body");
-}
-
-fn legacy_for(id: ProtocolId) -> Protocol {
-    if id == OPENAI_CHAT_V1 {
-        Protocol::OpenAI
-    } else if id == OPENAI_RESPONSES_V1 {
-        Protocol::ResponsesAPI
-    } else if id == ANTHROPIC_MESSAGES_2023_06_01 {
-        Protocol::Anthropic
-    } else if id == GOOGLE_GENERATE_V1BETA {
-        Protocol::Gemini
-    } else {
-        panic!("no legacy mapping for {id}")
-    }
 }

@@ -1,8 +1,9 @@
 use anyhow::Result;
 use serde_json::Value;
 
+use crate::protocol::IngressDecoder;
+use crate::protocol::ids::GOOGLE_GENERATE_V1BETA;
 use crate::protocol::types::*;
-use crate::protocol::{IngressDecoder, Protocol};
 
 use super::types::*;
 
@@ -67,7 +68,7 @@ impl GeminiDecoder {
             top_p,
             tools,
             tool_choice: None,
-            source_protocol: Protocol::Gemini,
+            source_protocol: GOOGLE_GENERATE_V1BETA,
             extra: Default::default(),
         })
     }

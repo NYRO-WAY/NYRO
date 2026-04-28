@@ -16,7 +16,8 @@ use crate::auth::types::{
     RefreshAuthContext, RuntimeBinding, StartAuthContext, StoredCredential, UpdateAuthSession,
 };
 use crate::db::models::*;
-use crate::protocol::{Protocol, ProviderProtocols};
+use crate::protocol::ProviderProtocols;
+use crate::protocol::ids::OPENAI_CHAT_V1;
 use crate::protocol::ids::OPENAI_EMBEDDINGS_V1;
 use crate::protocol::vendor::{VendorCtx, VendorRegistry};
 use crate::proxy::client::ProxyClient;
@@ -569,8 +570,8 @@ impl AdminService {
                 vendor,
                 protocol: input.protocol,
                 base_url: input.base_url,
-                default_protocol: input.default_protocol,
-                protocol_endpoints: input.protocol_endpoints,
+                default_protocol: normalize_default_protocol_field(input.default_protocol),
+                protocol_endpoints: normalize_protocol_endpoints_field(input.protocol_endpoints),
                 preset_key: input.preset_key,
                 channel: input.channel,
                 models_source: input.models_source,
@@ -631,8 +632,8 @@ impl AdminService {
                     vendor,
                     protocol: Some(protocol),
                     base_url: Some(base_url),
-                    default_protocol: input.default_protocol,
-                    protocol_endpoints: input.protocol_endpoints,
+                    default_protocol: normalize_default_protocol_field(input.default_protocol),
+                    protocol_endpoints: normalize_protocol_endpoints_field(input.protocol_endpoints),
                     preset_key,
                     channel,
                     models_source,
@@ -2509,6 +2510,36 @@ fn normalize_vendor(vendor: Option<&str>) -> Option<String> {
         .map(|v| v.to_lowercase())
 }
 
+/// Rewrite a `default_protocol` field into canonical
+/// [`ProtocolId`](crate::protocol::ids::ProtocolId) form before
+/// persistence. `None` and empty strings pass through unchanged so we
+/// don't surprise callers that explicitly want to clear the field.
+fn normalize_default_protocol_field(value: Option<String>) -> Option<String> {
+    let s = value?;
+    if s.trim().is_empty() {
+        return Some(s);
+    }
+    Some(crate::protocol::normalize::normalize_protocol_string(
+        &s,
+        crate::protocol::registry::ProtocolRegistry::global(),
+    ))
+}
+
+/// Rewrite a `protocol_endpoints` JSON blob (with possibly legacy /
+/// alias keys) into canonical [`ProtocolId`](crate::protocol::ids::ProtocolId)
+/// keys before persistence. `None` and empty / `{}` strings pass through.
+fn normalize_protocol_endpoints_field(value: Option<String>) -> Option<String> {
+    let s = value?;
+    let trimmed = s.trim();
+    if trimmed.is_empty() || trimmed == "{}" {
+        return Some(s);
+    }
+    Some(crate::protocol::normalize::normalize_protocol_endpoints_json(
+        &s,
+        crate::protocol::registry::ProtocolRegistry::global(),
+    ))
+}
+
 fn resolve_models_endpoint(provider: &Provider) -> Option<String> {
     if let Some(endpoint) = provider.effective_models_source() {
         let trimmed = endpoint.trim();
@@ -2544,10 +2575,10 @@ fn provider_supports_openai_endpoint(provider: &Provider) -> bool {
 
 fn resolve_openai_base_url(provider: &Provider) -> Option<String> {
     let protocols = ProviderProtocols::from_provider(provider);
-    if !protocols.supports(Protocol::OpenAI) {
+    if !protocols.supports(OPENAI_CHAT_V1) {
         return None;
     }
-    let resolved = protocols.resolve_egress(Protocol::OpenAI);
+    let resolved = protocols.resolve_egress(OPENAI_CHAT_V1);
     let trimmed = resolved.base_url.trim();
     if trimmed.is_empty() {
         return None;
@@ -2585,19 +2616,39 @@ fn resolve_provider_credential(provider: &Provider) -> anyhow::Result<String> {
 }
 
 fn sync_runtime_protocol_endpoints(provider: &Provider, base_url: &str) -> anyhow::Result<String> {
-    let mut endpoints = provider.parsed_protocol_endpoints();
-    let runtime_base_url = base_url.trim();
+    use crate::protocol::registry::ProtocolRegistry;
+    let reg = ProtocolRegistry::global();
 
+    // Re-key the existing endpoints map to canonical ProtocolId form so any
+    // legacy / alias keys round-trip into a normalized shape on every sync.
+    let raw = provider.parsed_protocol_endpoints();
+    let mut endpoints: std::collections::HashMap<String, ProtocolEndpointEntry> =
+        std::collections::HashMap::with_capacity(raw.len());
+    for (key, val) in raw {
+        let canonical = reg
+            .resolve_alias(&key)
+            .map(|id| id.to_string())
+            .unwrap_or(key);
+        endpoints.entry(canonical).or_insert(val);
+    }
+
+    let runtime_base_url = base_url.trim();
     if runtime_base_url.is_empty() {
         return Ok(serde_json::to_string(&endpoints)?);
     }
 
-    let default_protocol = provider.effective_default_protocol().trim().to_string();
-    let legacy_protocol = provider.protocol.trim().to_string();
+    let default_protocol = reg
+        .resolve_alias(provider.effective_default_protocol().trim())
+        .map(|id| id.to_string())
+        .unwrap_or_else(|| provider.effective_default_protocol().trim().to_string());
+    let legacy_protocol = reg
+        .resolve_alias(provider.protocol.trim())
+        .map(|id| id.to_string())
+        .unwrap_or_else(|| provider.protocol.trim().to_string());
 
     // If default_protocol differs from the legacy protocol field, the provider
-    // has been upgraded (e.g. openai → openai_responses via OAuth bind).
-    // Remove the stale legacy entry so only the current protocol remains.
+    // has been upgraded (e.g. chat → responses via OAuth bind). Remove the
+    // stale legacy entry so only the current protocol remains.
     if !default_protocol.is_empty()
         && !legacy_protocol.is_empty()
         && default_protocol != legacy_protocol

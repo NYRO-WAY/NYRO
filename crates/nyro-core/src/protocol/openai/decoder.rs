@@ -1,8 +1,9 @@
 use anyhow::Result;
 use serde_json::Value;
 
+use crate::protocol::IngressDecoder;
+use crate::protocol::ids::OPENAI_CHAT_V1;
 use crate::protocol::types::*;
-use crate::protocol::{IngressDecoder, Protocol};
 
 use super::types::*;
 
@@ -41,7 +42,7 @@ impl IngressDecoder for OpenAIDecoder {
             top_p: req.top_p,
             tools,
             tool_choice: req.tool_choice,
-            source_protocol: Protocol::OpenAI,
+            source_protocol: OPENAI_CHAT_V1,
             extra: req.extra,
         })
     }

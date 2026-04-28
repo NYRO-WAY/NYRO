@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::Protocol;
+use super::ids::ProtocolId;
 
 // ── Ingress: client request → internal ──
 
@@ -17,7 +17,7 @@ pub struct InternalRequest {
     pub top_p: Option<f64>,
     pub tools: Option<Vec<ToolDef>>,
     pub tool_choice: Option<Value>,
-    pub source_protocol: Protocol,
+    pub source_protocol: ProtocolId,
     pub extra: HashMap<String, Value>,
 }
 

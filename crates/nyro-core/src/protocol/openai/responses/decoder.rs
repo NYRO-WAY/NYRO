@@ -3,8 +3,9 @@ use std::collections::HashMap;
 use anyhow::Result;
 use serde_json::Value;
 
+use crate::protocol::IngressDecoder;
+use crate::protocol::ids::OPENAI_RESPONSES_V1;
 use crate::protocol::types::*;
-use crate::protocol::{IngressDecoder, Protocol};
 
 pub struct ResponsesDecoder;
 
@@ -96,7 +97,7 @@ impl IngressDecoder for ResponsesDecoder {
             top_p,
             tools,
             tool_choice,
-            source_protocol: Protocol::ResponsesAPI,
+            source_protocol: OPENAI_RESPONSES_V1,
             extra,
         })
     }

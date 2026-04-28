@@ -18,9 +18,11 @@ use nyro_core::protocol::types::{
     StreamDelta,
     TokenUsage, ToolCall, ToolDef,
 };
+use nyro_core::protocol::ids::{
+    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GENERATE_V1BETA, OPENAI_CHAT_V1, OPENAI_RESPONSES_V1,
+};
 use nyro_core::protocol::{
-    EgressEncoder, IngressDecoder, Protocol, ResponseFormatter, ResponseParser, StreamFormatter,
-    StreamParser,
+    EgressEncoder, IngressDecoder, ResponseFormatter, ResponseParser, StreamFormatter, StreamParser,
 };
 
 #[test]
@@ -198,7 +200,7 @@ fn gemini_tool_result_correlation_success() {
         top_p: None,
         tools: None,
         tool_choice: None,
-        source_protocol: Protocol::Gemini,
+        source_protocol: GOOGLE_GENERATE_V1BETA,
         extra: Default::default(),
     };
 
@@ -257,7 +259,7 @@ fn gemini_tool_result_id_hint_matches_out_of_order_calls() {
         top_p: None,
         tools: None,
         tool_choice: None,
-        source_protocol: Protocol::Gemini,
+        source_protocol: GOOGLE_GENERATE_V1BETA,
         extra: Default::default(),
     };
 
@@ -384,7 +386,7 @@ fn openai_encoder_injects_synthetic_tool_call_before_orphan_tool_result() {
         top_p: None,
         tools: None,
         tool_choice: None,
-        source_protocol: Protocol::ResponsesAPI,
+        source_protocol: OPENAI_RESPONSES_V1,
         extra: Default::default(),
     };
 
@@ -441,7 +443,7 @@ fn openai_encoder_injects_adjacent_tool_call_for_non_adjacent_match() {
         top_p: None,
         tools: None,
         tool_choice: None,
-        source_protocol: Protocol::ResponsesAPI,
+        source_protocol: OPENAI_RESPONSES_V1,
         extra: Default::default(),
     };
 
@@ -508,7 +510,7 @@ fn openai_encoder_drops_intermediate_assistant_text_before_tool_result() {
         top_p: None,
         tools: None,
         tool_choice: None,
-        source_protocol: Protocol::ResponsesAPI,
+        source_protocol: OPENAI_RESPONSES_V1,
         extra: Default::default(),
     };
 
@@ -583,7 +585,7 @@ fn openai_encoder_remaps_duplicate_tool_call_ids() {
         top_p: None,
         tools: None,
         tool_choice: None,
-        source_protocol: Protocol::ResponsesAPI,
+        source_protocol: OPENAI_RESPONSES_V1,
         extra: Default::default(),
     };
 
@@ -633,7 +635,7 @@ fn anthropic_encoder_maps_required_tool_choice_to_any() {
             parameters: serde_json::json!({"type":"object","properties":{"command":{"type":"string"}}}),
         }]),
         tool_choice: Some(serde_json::json!("required")),
-        source_protocol: Protocol::ResponsesAPI,
+        source_protocol: OPENAI_RESPONSES_V1,
         extra: Default::default(),
     };
 
@@ -671,7 +673,7 @@ fn anthropic_encoder_maps_function_tool_choice_to_tool_name() {
             "type":"function",
             "function":{"name":"exec_command"}
         })),
-        source_protocol: Protocol::ResponsesAPI,
+        source_protocol: OPENAI_RESPONSES_V1,
         extra: Default::default(),
     };
 
@@ -738,7 +740,7 @@ fn anthropic_encoder_merges_consecutive_roles_and_drops_empty_text() {
         top_p: None,
         tools: None,
         tool_choice: None,
-        source_protocol: Protocol::ResponsesAPI,
+        source_protocol: OPENAI_RESPONSES_V1,
         extra: Default::default(),
     };
 
@@ -804,7 +806,7 @@ fn anthropic_encoder_normalizes_tool_use_ids_for_tool_and_result() {
             parameters: serde_json::json!({"type":"object","properties":{}}),
         }]),
         tool_choice: None,
-        source_protocol: Protocol::Gemini,
+        source_protocol: GOOGLE_GENERATE_V1BETA,
         extra: Default::default(),
     };
 
@@ -900,7 +902,7 @@ fn openai_encoder_remaps_reused_tool_result_id_with_synthetic_adjacent_call() {
             parameters: serde_json::json!({"type":"object","properties":{}}),
         }]),
         tool_choice: None,
-        source_protocol: Protocol::OpenAI,
+        source_protocol: OPENAI_CHAT_V1,
         extra: Default::default(),
     };
 
@@ -970,7 +972,7 @@ fn openai_encoder_rewrites_multi_tool_call_history_to_adjacent_pairs() {
             parameters: serde_json::json!({"type":"object","properties":{}}),
         }]),
         tool_choice: None,
-        source_protocol: Protocol::Anthropic,
+        source_protocol: ANTHROPIC_MESSAGES_2023_06_01,
         extra: Default::default(),
     };
 
@@ -1059,7 +1061,7 @@ fn openai_encoder_drops_orphan_assistant_tool_calls_without_results() {
             parameters: serde_json::json!({"type":"object","properties":{}}),
         }]),
         tool_choice: None,
-        source_protocol: Protocol::Gemini,
+        source_protocol: GOOGLE_GENERATE_V1BETA,
         extra: Default::default(),
     };
 
@@ -1222,7 +1224,7 @@ fn gemini_encoder_sanitizes_unsupported_json_schema_fields() {
             }),
         }]),
         tool_choice: None,
-        source_protocol: Protocol::OpenAI,
+        source_protocol: OPENAI_CHAT_V1,
         extra: Default::default(),
     };
 
@@ -1256,7 +1258,7 @@ fn responses_request(messages: Vec<InternalMessage>, stream: bool) -> InternalRe
         top_p: None,
         tools: None,
         tool_choice: None,
-        source_protocol: Protocol::ResponsesAPI,
+        source_protocol: OPENAI_RESPONSES_V1,
         extra: Default::default(),
     }
 }
