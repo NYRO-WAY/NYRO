@@ -62,6 +62,7 @@ mod tests {
             model: String::new(),
             content: content.to_string(),
             reasoning_content: None,
+            reasoning_signature: None,
             tool_calls: vec![],
             response_items: None,
             stop_reason: None,

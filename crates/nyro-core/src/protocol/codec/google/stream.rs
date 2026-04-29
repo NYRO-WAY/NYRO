@@ -60,6 +60,7 @@ impl ResponseParser for GoogleResponseParser {
             model,
             content: text,
             reasoning_content: None,
+            reasoning_signature: None,
             tool_calls,
             response_items: None,
             stop_reason,
@@ -270,6 +271,7 @@ impl StreamFormatter for GoogleStreamFormatter {
                     });
                     events.push(SseEvent::new(None, chunk.to_string()));
                 }
+                StreamDelta::ReasoningSignature(_) => {}
                 StreamDelta::TextDelta(text) => {
                     let chunk = serde_json::json!({
                         "candidates": [{

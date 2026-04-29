@@ -103,6 +103,7 @@ pub struct InternalResponse {
     pub model: String,
     pub content: String,
     pub reasoning_content: Option<String>,
+    pub reasoning_signature: Option<String>,
     pub tool_calls: Vec<ToolCall>,
     pub response_items: Option<Vec<ResponseItem>>,
     pub stop_reason: Option<String>,
@@ -144,6 +145,7 @@ pub enum ResponseItem {
 pub enum StreamDelta {
     MessageStart { id: String, model: String },
     ReasoningDelta(String),
+    ReasoningSignature(String),
     TextDelta(String),
     ToolCallStart { index: usize, id: String, name: String },
     ToolCallDelta { index: usize, arguments: String },

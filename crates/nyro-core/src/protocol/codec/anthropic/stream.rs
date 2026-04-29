@@ -26,6 +26,7 @@ impl ResponseParser for AnthropicResponseParser {
         let mut tool_calls = Vec::new();
 
         let mut thinking_parts: Vec<String> = Vec::new();
+        let mut signature_parts: Vec<String> = Vec::new();
         if let Some(blocks) = resp.get("content").and_then(|c| c.as_array()) {
             for block in blocks {
                 match block.get("type").and_then(|t| t.as_str()) {
@@ -36,10 +37,19 @@ impl ResponseParser for AnthropicResponseParser {
                     }
                     Some("thinking") => {
                         // Present in responses from Ollama and native Anthropic thinking models.
-                        if let Some(text) = block.get("thinking").and_then(|t| t.as_str()) {
-                            if !text.is_empty() {
-                                thinking_parts.push(text.to_string());
-                            }
+                        if let Some(text) = block
+                            .get("thinking")
+                            .and_then(|t| t.as_str())
+                            .filter(|text| !text.is_empty())
+                        {
+                            thinking_parts.push(text.to_string());
+                        }
+                        if let Some(signature) = block
+                            .get("signature")
+                            .and_then(|t| t.as_str())
+                            .filter(|signature| !signature.is_empty())
+                        {
+                            signature_parts.push(signature.to_string());
                         }
                     }
                     Some("tool_use") => {
@@ -64,6 +74,11 @@ impl ResponseParser for AnthropicResponseParser {
         } else {
             Some(thinking_parts.join("\n"))
         };
+        let reasoning_signature = if signature_parts.is_empty() {
+            None
+        } else {
+            Some(signature_parts.join("\n"))
+        };
 
         let stop_reason = resp
             .get("stop_reason")
@@ -81,6 +96,7 @@ impl ResponseParser for AnthropicResponseParser {
             model,
             content: content_text,
             reasoning_content,
+            reasoning_signature,
             tool_calls,
             response_items: None,
             stop_reason,
@@ -98,10 +114,17 @@ impl ResponseFormatter for AnthropicResponseFormatter {
         let mut content = Vec::new();
 
         if let Some(reasoning) = resp.reasoning_content.as_ref().map(|v| v.trim()).filter(|v| !v.is_empty()) {
-            content.push(serde_json::json!({
+            let mut block = serde_json::json!({
                 "type": "thinking",
                 "thinking": reasoning,
-            }));
+            });
+            if let Some(signature) = resp.reasoning_signature.as_ref().map(|v| v.trim()).filter(|v| !v.is_empty()) {
+                block
+                    .as_object_mut()
+                    .expect("thinking block is an object")
+                    .insert("signature".into(), serde_json::json!(signature));
+            }
+            content.push(block);
         }
 
         if !resp.content.is_empty() {
@@ -253,12 +276,21 @@ fn parse_anthropic_event(event_type: Option<&str>, data: &Value, deltas: &mut Ve
                     }
                     Some("thinking_delta") => {
                         // Produced by Ollama and native Anthropic thinking models.
-                        // signature_delta events (native Anthropic only) are silently
-                        // ignored below — the parser must not depend on them.
-                        if let Some(text) = delta.get("thinking").and_then(|t| t.as_str()) {
-                            if !text.is_empty() {
-                                deltas.push(StreamDelta::ReasoningDelta(text.to_string()));
-                            }
+                        if let Some(text) = delta
+                            .get("thinking")
+                            .and_then(|t| t.as_str())
+                            .filter(|text| !text.is_empty())
+                        {
+                            deltas.push(StreamDelta::ReasoningDelta(text.to_string()));
+                        }
+                    }
+                    Some("signature_delta") => {
+                        if let Some(signature) = delta
+                            .get("signature")
+                            .and_then(|t| t.as_str())
+                            .filter(|signature| !signature.is_empty())
+                        {
+                            deltas.push(StreamDelta::ReasoningSignature(signature.to_string()));
                         }
                     }
                     Some("input_json_delta") => {
@@ -274,8 +306,6 @@ fn parse_anthropic_event(event_type: Option<&str>, data: &Value, deltas: &mut Ve
                             });
                         }
                     }
-                    // signature_delta (native Anthropic) and other unknown types are
-                    // intentionally ignored.
                     _ => {}
                 }
             }
@@ -390,6 +420,31 @@ impl StreamFormatter for AnthropicStreamFormatter {
                         "type": "content_block_delta",
                         "index": self.block_index,
                         "delta": {"type": "thinking_delta", "thinking": text}
+                    });
+                    events.push(SseEvent::new(
+                        Some("content_block_delta"),
+                        delta_ev.to_string(),
+                    ));
+                }
+                StreamDelta::ReasoningSignature(signature) => {
+                    self.ensure_message_start(&mut events);
+                    self.close_text_block_if_open(&mut events);
+                    if !self.in_thinking_block {
+                        self.in_thinking_block = true;
+                        let block_start = serde_json::json!({
+                            "type": "content_block_start",
+                            "index": self.block_index,
+                            "content_block": {"type": "thinking", "thinking": ""}
+                        });
+                        events.push(SseEvent::new(
+                            Some("content_block_start"),
+                            block_start.to_string(),
+                        ));
+                    }
+                    let delta_ev = serde_json::json!({
+                        "type": "content_block_delta",
+                        "index": self.block_index,
+                        "delta": {"type": "signature_delta", "signature": signature}
                     });
                     events.push(SseEvent::new(
                         Some("content_block_delta"),
@@ -562,7 +617,7 @@ fn extract_anthropic_usage(v: &Value) -> TokenUsage {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{ResponseParser, StreamParser};
+    use crate::protocol::{ResponseFormatter, ResponseParser, StreamFormatter, StreamParser};
 
     fn make_sse_block(event: &str, data: &str) -> String {
         format!("event: {event}\ndata: {data}\n\n")
@@ -592,7 +647,7 @@ mod tests {
             "id": "msg_2",
             "model": "qwen3",
             "content": [
-                {"type": "thinking", "thinking": "let me think..."},
+                {"type": "thinking", "thinking": "let me think...", "signature": "sig_resp"},
                 {"type": "text", "text": "hi there"}
             ],
             "stop_reason": "end_turn",
@@ -601,6 +656,34 @@ mod tests {
         let r = AnthropicResponseParser.parse_response(resp).unwrap();
         assert_eq!(r.content, "hi there");
         assert_eq!(r.reasoning_content.as_deref(), Some("let me think..."));
+        assert_eq!(r.reasoning_signature.as_deref(), Some("sig_resp"));
+    }
+
+    #[test]
+    fn test_format_response_includes_thinking_signature() {
+        let resp = InternalResponse {
+            id: "msg_sig".to_string(),
+            model: "claude-3-7-sonnet".to_string(),
+            content: "answer".to_string(),
+            reasoning_content: Some("think".to_string()),
+            reasoning_signature: Some("sig_resp".to_string()),
+            tool_calls: vec![],
+            response_items: None,
+            stop_reason: Some("stop".to_string()),
+            usage: TokenUsage::default(),
+        };
+
+        let out = AnthropicResponseFormatter.format_response(&resp);
+        let thinking = out
+            .get("content")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| arr.first())
+            .expect("thinking block");
+        assert_eq!(thinking.get("type").and_then(|v| v.as_str()), Some("thinking"));
+        assert_eq!(
+            thinking.get("signature").and_then(|v| v.as_str()),
+            Some("sig_resp")
+        );
     }
 
     #[test]
@@ -713,9 +796,8 @@ mod tests {
     }
 
     #[test]
-    fn test_stream_signature_delta_is_silently_ignored() {
+    fn test_stream_signature_delta_is_captured() {
         // Native Anthropic sends signature_delta after thinking block.
-        // Parser must not fail, just ignore it.
         let sse = [
             make_sse_block(
                 "message_start",
@@ -725,7 +807,6 @@ mod tests {
                 "content_block_delta",
                 r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"think"}}"#,
             ),
-            // signature_delta must be silently ignored
             make_sse_block(
                 "content_block_delta",
                 r#"{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"abc123"}}"#,
@@ -742,10 +823,34 @@ mod tests {
         assert!(result.is_ok(), "parser must not fail on signature_delta");
 
         let deltas = result.unwrap();
-        let no_unknown = deltas
+        let signature = deltas
             .iter()
-            .all(|d| !matches!(d, StreamDelta::TextDelta(t) if t.contains("abc123")));
-        assert!(no_unknown, "signature_delta content must not appear in output");
+            .find_map(|d| if let StreamDelta::ReasoningSignature(sig) = d { Some(sig.as_str()) } else { None });
+        assert_eq!(signature, Some("abc123"));
+    }
+
+    #[test]
+    fn test_stream_formatter_emits_signature_delta() {
+        let mut formatter = AnthropicStreamFormatter::new();
+        let events = formatter.format_deltas(&[
+            StreamDelta::MessageStart {
+                id: "msg_4".to_string(),
+                model: "claude-3-7-sonnet".to_string(),
+            },
+            StreamDelta::ReasoningDelta("think".to_string()),
+            StreamDelta::ReasoningSignature("abc123".to_string()),
+        ]);
+
+        let has_signature = events
+            .iter()
+            .filter_map(|event| serde_json::from_str::<Value>(&event.data).ok())
+            .any(|json| {
+                json.get("delta")
+                    .and_then(|delta| delta.get("signature"))
+                    .and_then(|signature| signature.as_str())
+                    == Some("abc123")
+            });
+        assert!(has_signature, "expected signature_delta event");
     }
 
     #[test]

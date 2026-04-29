@@ -321,6 +321,7 @@ impl StreamFormatter for ResponsesStreamFormatter {
                         ev.to_string(),
                     ));
                 }
+                StreamDelta::ReasoningSignature(_) => {}
                 StreamDelta::TextDelta(text) => {
                     self.ensure_started(&mut events);
                     self.accumulated_text.push_str(text);
