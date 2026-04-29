@@ -167,6 +167,10 @@ fn encode_content(msg: &InternalMessage) -> Result<Value> {
                             "functionResponse": {"name": tool_use_id, "response": content}
                         })
                     }
+                    ContentBlock::Reasoning { text, .. } => {
+                        // Gemini does not support thinking blocks; include as text
+                        serde_json::json!({"text": text})
+                    }
                 })
                 .collect()
         }

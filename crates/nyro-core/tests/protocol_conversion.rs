@@ -32,6 +32,7 @@ fn openai_to_anthropic_thinking_blocks() {
         model: "minimax-m2.7".to_string(),
         content: "hello".to_string(),
         reasoning_content: Some("reasoning summary".to_string()),
+        reasoning_signature: None,
         tool_calls: vec![],
         response_items: None,
         stop_reason: Some("stop".to_string()),
@@ -60,6 +61,7 @@ fn openai_to_responses_reasoning_and_function_call_items() {
         model: "minimax-m2.7".to_string(),
         content: "done".to_string(),
         reasoning_content: Some("chain".to_string()),
+        reasoning_signature: None,
         tool_calls: vec![ToolCall {
             id: "call_123".to_string(),
             name: "ls".to_string(),
@@ -111,6 +113,7 @@ fn openai_formatter_sets_tool_calls_finish_reason_when_tool_calls_present() {
         model: "gemini-2.5-flash".to_string(),
         content: String::new(),
         reasoning_content: None,
+        reasoning_signature: None,
         tool_calls: vec![ToolCall {
             id: "call_1".to_string(),
             name: "bash".to_string(),
@@ -275,6 +278,7 @@ fn minimax_reasoning_split_fallback_think_tag() {
         model: "minimax-m2.7".to_string(),
         content: "<think>plan first</think>run ls".to_string(),
         reasoning_content: None,
+        reasoning_signature: None,
         tool_calls: vec![],
         response_items: None,
         stop_reason: Some("stop".to_string()),
@@ -293,6 +297,7 @@ fn non_reasoning_model_no_regression() {
         model: "plain-model".to_string(),
         content: "hello world".to_string(),
         reasoning_content: None,
+        reasoning_signature: None,
         tool_calls: vec![],
         response_items: None,
         stop_reason: Some("stop".to_string()),
@@ -368,6 +373,61 @@ fn anthropic_multi_tool_result_decodes_to_multiple_tool_messages() {
     assert_eq!(req.messages[2].role, Role::Tool);
     assert_eq!(req.messages[1].tool_call_id.as_deref(), Some("call_a"));
     assert_eq!(req.messages[2].tool_call_id.as_deref(), Some("call_b"));
+}
+
+#[test]
+fn anthropic_thinking_block_round_trips_with_signature() {
+    let body = serde_json::json!({
+        "model": "claude-sonnet",
+        "max_tokens": 1024,
+        "messages": [{
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "thinking",
+                    "thinking": "review prior tool output",
+                    "signature": "sig_123"
+                },
+                {
+                    "type": "text",
+                    "text": "Ready."
+                }
+            ]
+        }]
+    });
+
+    let req = AnthropicDecoder
+        .decode_request(body)
+        .expect("decode anthropic request");
+    let MessageContent::Blocks(blocks) = &req.messages[0].content else {
+        panic!("thinking must remain a structured block");
+    };
+    assert!(matches!(
+        &blocks[0],
+        ContentBlock::Reasoning { text, signature }
+            if text == "review prior tool output" && signature.as_deref() == Some("sig_123")
+    ));
+
+    let (encoded, _) = AnthropicEncoder
+        .encode_request(&req)
+        .expect("encode anthropic request");
+    let block = encoded
+        .get("messages")
+        .and_then(|v| v.as_array())
+        .and_then(|messages| messages.first())
+        .and_then(|message| message.get("content"))
+        .and_then(|content| content.as_array())
+        .and_then(|content| content.first())
+        .expect("first content block");
+    assert_eq!(block.get("type").and_then(|v| v.as_str()), Some("thinking"));
+    assert_eq!(
+        block.get("thinking").and_then(|v| v.as_str()),
+        Some("review prior tool output")
+    );
+    assert_eq!(
+        block.get("signature").and_then(|v| v.as_str()),
+        Some("sig_123")
+    );
 }
 
 #[test]

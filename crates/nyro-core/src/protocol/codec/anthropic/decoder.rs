@@ -90,10 +90,11 @@ fn decode_message(msg: AnthropicMessage) -> Result<Vec<InternalMessage>> {
                     AnthropicContentBlock::Text { text } => {
                         content_blocks.push(ContentBlock::Text { text });
                     }
-                    AnthropicContentBlock::Thinking { thinking, .. } => {
-                        if !thinking.trim().is_empty() {
-                            content_blocks.push(ContentBlock::Text { text: thinking });
-                        }
+                    AnthropicContentBlock::Thinking { thinking, signature } => {
+                        content_blocks.push(ContentBlock::Reasoning {
+                            text: thinking,
+                            signature,
+                        });
                     }
                     AnthropicContentBlock::Image { source } => {
                         content_blocks.push(ContentBlock::Image {
@@ -176,11 +177,12 @@ fn decode_user_blocks(blocks: Vec<AnthropicContentBlock>) -> Result<Vec<Internal
                 });
             }
             AnthropicContentBlock::Text { text } => user_blocks.push(ContentBlock::Text { text }),
-            AnthropicContentBlock::Thinking { thinking, .. } => {
-                if !thinking.trim().is_empty() {
-                    user_blocks.push(ContentBlock::Text { text: thinking });
-                }
-            }
+            AnthropicContentBlock::Thinking { thinking, signature } => user_blocks.push(
+                ContentBlock::Reasoning {
+                    text: thinking,
+                    signature,
+                },
+            ),
             AnthropicContentBlock::Image { source } => user_blocks.push(ContentBlock::Image {
                 source: ImageSource {
                     media_type: source.media_type,

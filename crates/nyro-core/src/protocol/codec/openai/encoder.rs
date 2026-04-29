@@ -420,6 +420,10 @@ fn encode_message(msg: &InternalMessage) -> Result<Value> {
                             "tool_call_id": tool_use_id,
                         })
                     }
+                    ContentBlock::Reasoning { text, .. } => {
+                        // OpenAI does not support thinking blocks; pass as plain text
+                        serde_json::json!({"type": "text", "text": text})
+                    }
                 })
                 .collect();
             map.insert("content".into(), Value::Array(parts));

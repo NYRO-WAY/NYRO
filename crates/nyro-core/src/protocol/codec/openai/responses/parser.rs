@@ -91,6 +91,7 @@ impl ResponseParser for ResponsesResponseParser {
             model,
             content,
             reasoning_content: None,
+            reasoning_signature: None,
             tool_calls,
             response_items: None,
             stop_reason,

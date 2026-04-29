@@ -2421,6 +2421,13 @@ fn internal_response_to_deltas(internal: &InternalResponse) -> Vec<StreamDelta> 
     if let Some(reasoning) = &internal.reasoning_content {
         if !reasoning.is_empty() {
             deltas.push(StreamDelta::ReasoningDelta(reasoning.clone()));
+            if let Some(signature) = internal
+                .reasoning_signature
+                .as_ref()
+                .filter(|signature| !signature.is_empty())
+            {
+                deltas.push(StreamDelta::ReasoningSignature(signature.clone()));
+            }
         }
     }
     if !internal.content.is_empty() {
@@ -2511,6 +2518,7 @@ struct StreamResponseAccumulator {
     model: String,
     content: String,
     reasoning_content: String,
+    reasoning_signature: String,
     tool_calls: Vec<Option<ToolCall>>,
     stop_reason: Option<String>,
     usage: TokenUsage,
@@ -2534,6 +2542,9 @@ impl StreamResponseAccumulator {
                 }
             }
             StreamDelta::ReasoningDelta(text) => self.reasoning_content.push_str(text),
+            StreamDelta::ReasoningSignature(signature) => {
+                self.reasoning_signature.push_str(signature)
+            }
             StreamDelta::TextDelta(text) => self.content.push_str(text),
             StreamDelta::ToolCallStart { index, id, name } => {
                 ensure_tool_index(&mut self.tool_calls, *index);
@@ -2575,6 +2586,11 @@ impl StreamResponseAccumulator {
                 None
             } else {
                 Some(self.reasoning_content)
+            },
+            reasoning_signature: if self.reasoning_signature.is_empty() {
+                None
+            } else {
+                Some(self.reasoning_signature)
             },
             tool_calls,
             response_items: None,
