@@ -371,6 +371,61 @@ fn anthropic_multi_tool_result_decodes_to_multiple_tool_messages() {
 }
 
 #[test]
+fn anthropic_thinking_block_round_trips_with_signature() {
+    let body = serde_json::json!({
+        "model": "claude-sonnet",
+        "max_tokens": 1024,
+        "messages": [{
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "thinking",
+                    "thinking": "review prior tool output",
+                    "signature": "sig_123"
+                },
+                {
+                    "type": "text",
+                    "text": "Ready."
+                }
+            ]
+        }]
+    });
+
+    let req = AnthropicDecoder
+        .decode_request(body)
+        .expect("decode anthropic request");
+    let MessageContent::Blocks(blocks) = &req.messages[0].content else {
+        panic!("thinking must remain a structured block");
+    };
+    assert!(matches!(
+        &blocks[0],
+        ContentBlock::Reasoning { text, signature }
+            if text == "review prior tool output" && signature.as_deref() == Some("sig_123")
+    ));
+
+    let (encoded, _) = AnthropicEncoder
+        .encode_request(&req)
+        .expect("encode anthropic request");
+    let block = encoded
+        .get("messages")
+        .and_then(|v| v.as_array())
+        .and_then(|messages| messages.first())
+        .and_then(|message| message.get("content"))
+        .and_then(|content| content.as_array())
+        .and_then(|content| content.first())
+        .expect("first content block");
+    assert_eq!(block.get("type").and_then(|v| v.as_str()), Some("thinking"));
+    assert_eq!(
+        block.get("thinking").and_then(|v| v.as_str()),
+        Some("review prior tool output")
+    );
+    assert_eq!(
+        block.get("signature").and_then(|v| v.as_str()),
+        Some("sig_123")
+    );
+}
+
+#[test]
 fn openai_encoder_injects_synthetic_tool_call_before_orphan_tool_result() {
     let req = InternalRequest {
         messages: vec![InternalMessage {

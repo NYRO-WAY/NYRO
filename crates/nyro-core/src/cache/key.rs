@@ -51,6 +51,14 @@ pub fn build_cache_key(request: &InternalRequest) -> String {
                             source.push_str(&content.to_string());
                         }
                         ContentBlock::Image { .. } => source.push_str("[image]"),
+                        ContentBlock::Reasoning { text, signature } => {
+                            source.push_str("[thinking]");
+                            source.push_str(text);
+                            if let Some(sig) = signature {
+                                source.push_str("[sig]");
+                                source.push_str(sig);
+                            }
+                        }
                     }
                 }
             }

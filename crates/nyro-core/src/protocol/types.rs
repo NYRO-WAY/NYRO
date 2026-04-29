@@ -68,6 +68,10 @@ pub enum ContentBlock {
     Image {
         source: ImageSource,
     },
+    Reasoning {
+        text: String,
+        signature: Option<String>,
+    },
     ToolUse {
         id: String,
         name: String,

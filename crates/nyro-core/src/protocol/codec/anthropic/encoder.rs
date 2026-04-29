@@ -292,6 +292,20 @@ fn encode_message(msg: &InternalMessage) -> Result<Value> {
                             }
                         })
                     }
+                    ContentBlock::Reasoning { text, signature } => {
+                        let mut block = serde_json::json!({
+                            "type": "thinking",
+                            "thinking": text,
+                        });
+                        if let Some(sig) = signature {
+                            if !sig.trim().is_empty() {
+                                if let Some(obj) = block.as_object_mut() {
+                                    obj.insert("signature".into(), serde_json::json!(sig));
+                                }
+                            }
+                        }
+                        block
+                    }
                     ContentBlock::ToolUse { id, name, input } => {
                         serde_json::json!({
                             "type": "tool_use",
