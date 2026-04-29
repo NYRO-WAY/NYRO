@@ -46,13 +46,16 @@ PROTOCOLS: tuple[str, ...] = (
     "google-content",
 )
 
-# Map nyro-tools' kebab-case protocol → key used inside nyro server's
-# YAML `endpoints:` map (snake_case, historical names).
+# Map nyro-tools' kebab-case protocol → canonical ProtocolId string used
+# inside nyro server's YAML `endpoints:` map. The server's write-path
+# normalization (PR4) round-trips legacy short names through aliases,
+# but we feed canonical form so e2e exercises the post-normalization
+# path directly.
 NYRO_PROTOCOL_KEY: dict[str, str] = {
-    "openai-chat": "openai",
-    "openai-responses": "openai_responses",
-    "anthropic-messages": "anthropic",
-    "google-content": "gemini",
+    "openai-chat": "openai/chat/v1",
+    "openai-responses": "openai/responses/v1",
+    "anthropic-messages": "anthropic/messages/2023-06-01",
+    "google-content": "google/generate/v1beta",
 }
 
 # Path suffix appended to the replay base URL inside `endpoints[*].base_url`.

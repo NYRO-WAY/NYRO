@@ -17,6 +17,7 @@ import type {
   UpsertRouteTarget,
 } from "@/lib/types";
 import { useLocale } from "@/lib/i18n";
+import { parseProtocolId } from "@/lib/protocol-id";
 import { ProviderIcon } from "@/components/ui/provider-icon";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -85,12 +86,19 @@ function hasProviderModelsEndpoint(provider?: Provider) {
 
 function providerSupportsOpenAiEndpoint(provider?: Provider) {
   if (!provider) return false;
+  // Accept any protocol identifier whose family resolves to OpenAI —
+  // covers legacy `openai` short name, canonical `openai/chat/v1`, and
+  // future OpenAI dialects (`openai/responses/v1`, `openai/embeddings/v1`).
+  const isOpenAiKey = (raw: string): boolean => {
+    const id = parseProtocolId(raw);
+    return id?.family === "openai";
+  };
   const raw = provider.protocol_endpoints?.trim();
   if (raw) {
     try {
       const parsed = JSON.parse(raw) as Record<string, { base_url?: string }>;
       for (const [key, value] of Object.entries(parsed)) {
-        if (key.trim().toLowerCase() === "openai" && Boolean(value?.base_url?.trim())) {
+        if (isOpenAiKey(key) && Boolean(value?.base_url?.trim())) {
           return true;
         }
       }
@@ -98,7 +106,7 @@ function providerSupportsOpenAiEndpoint(provider?: Provider) {
       // ignore invalid json and fallback to legacy protocol/base_url fields
     }
   }
-  return provider.protocol.trim().toLowerCase() === "openai" && Boolean(provider.base_url.trim());
+  return isOpenAiKey(provider.protocol) && Boolean(provider.base_url.trim());
 }
 
 function normalizeTargetsForRouteType(

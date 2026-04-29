@@ -6,6 +6,7 @@ import { backend } from "@/lib/backend";
 import { useLocale } from "@/lib/i18n";
 import type { RequestLog } from "@/lib/types";
 import { formatDuration, formatLogTime, formatTokenCount, tryPrettyJson } from "@/lib/format";
+import { prettyName } from "@/lib/protocol-id";
 import { cn } from "@/lib/utils";
 import {
   Dialog,
@@ -100,9 +101,7 @@ export function LogDetailDialog({ logId, summary, open, onOpenChange }: LogDetai
             </span>
           ) : null}
           {log?.ingress_protocol || log?.egress_protocol ? (
-            <span className="text-slate-400">
-              {log?.ingress_protocol ?? "–"} → {log?.egress_protocol ?? "–"}
-            </span>
+            <ProtocolLine ingress={log?.ingress_protocol} egress={log?.egress_protocol} />
           ) : null}
         </div>
 
@@ -195,5 +194,33 @@ function PayloadBlock({ title, content, isZh }: PayloadBlockProps) {
         {hasContent ? pretty : <span className="text-slate-400">{isZh ? "（无内容）" : "(empty)"}</span>}
       </pre>
     </div>
+  );
+}
+
+function ProtocolLine({
+  ingress,
+  egress,
+}: {
+  ingress: string | null | undefined;
+  egress: string | null | undefined;
+}) {
+  const inPretty = prettyName(ingress);
+  const outPretty = prettyName(egress);
+  const renderSide = (raw: string | null | undefined, p: ReturnType<typeof prettyName>) => {
+    if (!raw) return <span className="text-slate-400">–</span>;
+    if (!p) return <span className="text-slate-500">{raw}</span>;
+    return (
+      <span className="inline-flex flex-col leading-tight">
+        <span className="font-medium text-slate-600">{p.family}</span>
+        <span className="text-[10px] text-slate-400">{p.detail}</span>
+      </span>
+    );
+  };
+  return (
+    <span className="inline-flex items-center gap-1.5 text-slate-500">
+      {renderSide(ingress, inPretty)}
+      <span className="text-slate-300">→</span>
+      {renderSide(egress, outPretty)}
+    </span>
   );
 }

@@ -6,6 +6,7 @@ import { backend } from "@/lib/backend";
 import type { LogPage, LogQuery, Provider, RequestLog } from "@/lib/types";
 import { getRouteType } from "@/lib/types";
 import { formatDuration, formatLogTime, formatTokenCount } from "@/lib/format";
+import { prettyName } from "@/lib/protocol-id";
 import { cn } from "@/lib/utils";
 import { useLocale } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
@@ -195,9 +196,10 @@ export default function LogsPage() {
                       </td>
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-1.5 text-xs text-slate-500">
-                          <span>
-                            {(log.ingress_protocol ?? "–")} → {(log.egress_protocol ?? "–")}
-                          </span>
+                          <ProtocolLane
+                            ingress={log.ingress_protocol}
+                            egress={log.egress_protocol}
+                          />
                           {routeType === "embedding" ? (
                             <Badge variant="outline" className="text-[10px]">EMB</Badge>
                           ) : null}
@@ -283,5 +285,34 @@ export default function LogsPage() {
         }}
       />
     </div>
+  );
+}
+
+function ProtocolCell({ value }: { value: string | null | undefined }) {
+  const pretty = prettyName(value);
+  if (!pretty) {
+    return <span className="text-slate-400">–</span>;
+  }
+  return (
+    <span className="flex flex-col leading-tight">
+      <span className="font-medium text-slate-700">{pretty.family}</span>
+      <span className="text-[10px] text-slate-400">{pretty.detail}</span>
+    </span>
+  );
+}
+
+function ProtocolLane({
+  ingress,
+  egress,
+}: {
+  ingress: string | null | undefined;
+  egress: string | null | undefined;
+}) {
+  return (
+    <span className="flex items-center gap-1.5">
+      <ProtocolCell value={ingress} />
+      <span className="text-slate-300">→</span>
+      <ProtocolCell value={egress} />
+    </span>
   );
 }
