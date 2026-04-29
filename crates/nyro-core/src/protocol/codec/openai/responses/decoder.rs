@@ -60,10 +60,75 @@ impl IngressDecoder for ResponsesDecoder {
                 });
             }
             Value::Array(items) => {
+                let mut pending_reasoning: Option<String> = None;
                 for item in items {
-                    if let Some(msg) = decode_input_item(item)? {
-                        messages.push(msg);
+                    // Preserve reasoning_content from Responses API "reasoning" items.
+                    // DeepSeek requires that reasoning_content be passed back on the
+                    // assistant message that produced it. Codex represents reasoning as
+                    // a separate "reasoning" item in the input array; we attach it to the
+                    // next assistant message via the `extra` field.
+                    if item
+                        .get("type")
+                        .and_then(|v| v.as_str())
+                        .is_some_and(|t| t == "reasoning")
+                    {
+                        if let Some(summary) = item.get("summary").and_then(|v| v.as_array()) {
+                            for s in summary {
+                                if let Some(text) = s.get("text").and_then(|v| v.as_str()) {
+                                    if !text.is_empty() {
+                                        pending_reasoning = Some(text.to_string());
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        continue;
                     }
+
+                    match decode_input_item(item)? {
+                        Some(mut msg) => {
+                            // Attach any pending reasoning to the next assistant message
+                            if msg.role == Role::Assistant {
+                                if let Some(reasoning) = pending_reasoning.take() {
+                                    msg.extra
+                                        .insert("reasoning_content".to_string(), Value::String(reasoning));
+                                }
+                            } else if pending_reasoning.is_some() {
+                                // Reasoning without a following assistant message:
+                                // emit a standalone assistant message carrying the reasoning.
+                                let reasoning = pending_reasoning.take().unwrap();
+                                let mut extra = HashMap::new();
+                                extra.insert(
+                                    "reasoning_content".to_string(),
+                                    Value::String(reasoning),
+                                );
+                                messages.push(InternalMessage {
+                                    role: Role::Assistant,
+                                    content: MessageContent::Text(String::new()),
+                                    tool_calls: None,
+                                    tool_call_id: None,
+                                    extra,
+                                });
+                            }
+                            messages.push(msg);
+                        }
+                        None => {
+                            // If the item produced no message (e.g., an ignored type)
+                            // but we have pending reasoning, keep it for the next one.
+                        }
+                    }
+                }
+                // Flush any remaining pending reasoning at end of input
+                if let Some(reasoning) = pending_reasoning.take() {
+                    let mut extra = HashMap::new();
+                    extra.insert("reasoning_content".to_string(), Value::String(reasoning));
+                    messages.push(InternalMessage {
+                        role: Role::Assistant,
+                        content: MessageContent::Text(String::new()),
+                        tool_calls: None,
+                        tool_call_id: None,
+                        extra,
+                    });
                 }
             }
             _ => anyhow::bail!("'input' must be a string or array"),
