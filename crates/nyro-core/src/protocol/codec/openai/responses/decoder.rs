@@ -87,28 +87,35 @@ impl IngressDecoder for ResponsesDecoder {
 
                     match decode_input_item(item)? {
                         Some(mut msg) => {
-                            // Attach any pending reasoning to the next assistant message
                             if msg.role == Role::Assistant {
-                                if let Some(reasoning) = pending_reasoning.take() {
-                                    msg.extra
-                                        .insert("reasoning_content".to_string(), Value::String(reasoning));
+                                // Clone reasoning to EACH consecutive assistant message.
+                                // Parallel function_calls produce multiple assistant messages
+                                // that all belong to the same reasoning turn; each must carry
+                                // reasoning_content. Only clear pending when we hit a
+                                // non-assistant message (tool result, etc.).
+                                if let Some(ref reasoning) = pending_reasoning {
+                                    msg.extra.insert(
+                                        "reasoning_content".to_string(),
+                                        Value::String(reasoning.clone()),
+                                    );
                                 }
-                            } else if pending_reasoning.is_some() {
-                                // Reasoning without a following assistant message:
-                                // emit a standalone assistant message carrying the reasoning.
-                                let reasoning = pending_reasoning.take().unwrap();
-                                let mut extra = HashMap::new();
-                                extra.insert(
-                                    "reasoning_content".to_string(),
-                                    Value::String(reasoning),
-                                );
-                                messages.push(InternalMessage {
-                                    role: Role::Assistant,
-                                    content: MessageContent::Text(String::new()),
-                                    tool_calls: None,
-                                    tool_call_id: None,
-                                    extra,
-                                });
+                            } else {
+                                // Non-assistant message: flush any unused pending reasoning
+                                // as a standalone assistant message.
+                                if let Some(reasoning) = pending_reasoning.take() {
+                                    let mut extra = HashMap::new();
+                                    extra.insert(
+                                        "reasoning_content".to_string(),
+                                        Value::String(reasoning),
+                                    );
+                                    messages.push(InternalMessage {
+                                        role: Role::Assistant,
+                                        content: MessageContent::Text(String::new()),
+                                        tool_calls: None,
+                                        tool_call_id: None,
+                                        extra,
+                                    });
+                                }
                             }
                             messages.push(msg);
                         }
