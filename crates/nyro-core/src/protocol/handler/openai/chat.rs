@@ -1,10 +1,10 @@
 //! OpenAI Chat Completions API (`POST /v1/chat/completions`).
 //!
-//! Wraps the existing `protocol::openai::{decoder,encoder,stream}` codecs
+//! Wraps the existing `protocol::codec::openai::{decoder,encoder,stream}` codecs
 //! into a `ProtocolHandler` and registers it via `inventory::submit!`.
 
+use crate::protocol::codec::openai;
 use crate::protocol::ids::{OPENAI_CHAT_V1, ProtocolCapabilities, ProtocolId};
-use crate::protocol::openai;
 use crate::protocol::registry::ProtocolRegistration;
 use crate::protocol::traits::*;
 

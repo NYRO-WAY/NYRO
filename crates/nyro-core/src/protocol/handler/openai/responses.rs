@@ -4,8 +4,8 @@
 //! streaming mode regardless of the client's `stream` flag, matching the
 //! legacy `matches!(egress, Protocol::ResponsesAPI)` branch in `handler.rs`.
 
+use crate::protocol::codec::openai::responses;
 use crate::protocol::ids::{OPENAI_RESPONSES_V1, ProtocolCapabilities, ProtocolId};
-use crate::protocol::openai::responses;
 use crate::protocol::registry::ProtocolRegistration;
 use crate::protocol::traits::*;
 

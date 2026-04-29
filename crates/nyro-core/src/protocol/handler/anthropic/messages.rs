@@ -3,7 +3,7 @@
 //! Wire version is the schema date `2023-06-01` (the `anthropic-version` header
 //! the API requires), not the URL prefix `v1`.
 
-use crate::protocol::anthropic;
+use crate::protocol::codec::anthropic;
 use crate::protocol::ids::{ANTHROPIC_MESSAGES_2023_06_01, ProtocolCapabilities, ProtocolId};
 use crate::protocol::registry::ProtocolRegistration;
 use crate::protocol::traits::*;

@@ -7,11 +7,11 @@ use crate::protocol::types::*;
 
 use super::types::*;
 
-pub struct GeminiDecoder;
+pub struct GoogleDecoder;
 
-impl GeminiDecoder {
+impl GoogleDecoder {
     pub fn decode_with_model(&self, body: Value, model: &str, stream: bool) -> Result<InternalRequest> {
-        let req: GeminiRequest = serde_json::from_value(body)?;
+        let req: GoogleRequest = serde_json::from_value(body)?;
 
         let mut messages = Vec::new();
 
@@ -20,7 +20,7 @@ impl GeminiDecoder {
                 .parts
                 .iter()
                 .filter_map(|p| match p {
-                    GeminiPart::Text { text } => Some(text.as_str()),
+                    GooglePart::Text { text } => Some(text.as_str()),
                     _ => None,
                 })
                 .collect::<Vec<_>>()
@@ -74,13 +74,13 @@ impl GeminiDecoder {
     }
 }
 
-impl IngressDecoder for GeminiDecoder {
+impl IngressDecoder for GoogleDecoder {
     fn decode_request(&self, body: Value) -> Result<InternalRequest> {
         self.decode_with_model(body, "gemini-2.0-flash", false)
     }
 }
 
-fn decode_content(content: &GeminiContent) -> Result<InternalMessage> {
+fn decode_content(content: &GoogleContent) -> Result<InternalMessage> {
     let mut role = match content.role.as_deref() {
         Some("user") | None => Role::User,
         Some("model") => Role::Assistant,
@@ -94,11 +94,11 @@ fn decode_content(content: &GeminiContent) -> Result<InternalMessage> {
 
     for part in &content.parts {
         match part {
-            GeminiPart::Text { text } => {
+            GooglePart::Text { text } => {
                 text_parts.push(text.clone());
                 blocks.push(ContentBlock::Text { text: text.clone() });
             }
-            GeminiPart::InlineData { inline_data } => {
+            GooglePart::InlineData { inline_data } => {
                 blocks.push(ContentBlock::Image {
                     source: ImageSource {
                         media_type: inline_data.mime_type.clone(),
@@ -106,7 +106,7 @@ fn decode_content(content: &GeminiContent) -> Result<InternalMessage> {
                     },
                 });
             }
-            GeminiPart::FunctionCall { function_call } => {
+            GooglePart::FunctionCall { function_call } => {
                 let id = format!("call_{}", uuid::Uuid::new_v4().simple());
                 tool_calls.push(ToolCall {
                     id: id.clone(),
@@ -119,7 +119,7 @@ fn decode_content(content: &GeminiContent) -> Result<InternalMessage> {
                     input: function_call.args.clone(),
                 });
             }
-            GeminiPart::FunctionResponse { function_response } => {
+            GooglePart::FunctionResponse { function_response } => {
                 has_function_response = true;
                 blocks.push(ContentBlock::ToolResult {
                     tool_use_id: function_response.name.clone(),

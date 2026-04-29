@@ -1,14 +1,14 @@
-use nyro_core::protocol::anthropic::stream::AnthropicResponseFormatter;
-use nyro_core::protocol::anthropic::decoder::AnthropicDecoder;
-use nyro_core::protocol::anthropic::encoder::AnthropicEncoder;
-use nyro_core::protocol::gemini::encoder::GeminiEncoder;
-use nyro_core::protocol::gemini::stream::GeminiStreamFormatter;
-use nyro_core::protocol::openai::stream::OpenAIStreamFormatter;
-use nyro_core::protocol::openai::encoder::OpenAIEncoder;
-use nyro_core::protocol::openai::responses::decoder::ResponsesDecoder;
-use nyro_core::protocol::openai::responses::encoder::ResponsesEncoder;
-use nyro_core::protocol::openai::responses::formatter::ResponsesResponseFormatter;
-use nyro_core::protocol::openai::responses::parser::{
+use nyro_core::protocol::codec::anthropic::stream::AnthropicResponseFormatter;
+use nyro_core::protocol::codec::anthropic::decoder::AnthropicDecoder;
+use nyro_core::protocol::codec::anthropic::encoder::AnthropicEncoder;
+use nyro_core::protocol::codec::google::encoder::GoogleEncoder;
+use nyro_core::protocol::codec::google::stream::GoogleStreamFormatter;
+use nyro_core::protocol::codec::openai::stream::OpenAIStreamFormatter;
+use nyro_core::protocol::codec::openai::encoder::OpenAIEncoder;
+use nyro_core::protocol::codec::openai::responses::decoder::ResponsesDecoder;
+use nyro_core::protocol::codec::openai::responses::encoder::ResponsesEncoder;
+use nyro_core::protocol::codec::openai::responses::formatter::ResponsesResponseFormatter;
+use nyro_core::protocol::codec::openai::responses::parser::{
     ResponsesResponseParser, ResponsesStreamParser,
 };
 use nyro_core::protocol::semantic::reasoning::normalize_response_reasoning;
@@ -124,7 +124,7 @@ fn openai_formatter_sets_tool_calls_finish_reason_when_tool_calls_present() {
         },
     };
 
-    let out = nyro_core::protocol::openai::stream::OpenAIResponseFormatter.format_response(&resp);
+    let out = nyro_core::protocol::codec::openai::stream::OpenAIResponseFormatter.format_response(&resp);
     let finish_reason = out
         .get("choices")
         .and_then(|v| v.as_array())
@@ -1086,7 +1086,7 @@ fn openai_encoder_drops_orphan_assistant_tool_calls_without_results() {
 
 #[test]
 fn gemini_stream_formatter_keeps_tool_name_for_argument_deltas() {
-    let mut fmt = GeminiStreamFormatter::new();
+    let mut fmt = GoogleStreamFormatter::new();
     let deltas = vec![
         StreamDelta::MessageStart {
             id: "x".to_string(),
@@ -1138,7 +1138,7 @@ fn gemini_stream_formatter_keeps_tool_name_for_argument_deltas() {
 
 #[test]
 fn gemini_stream_formatter_normalizes_common_tool_argument_aliases() {
-    let mut fmt = GeminiStreamFormatter::new();
+    let mut fmt = GoogleStreamFormatter::new();
     let deltas = vec![
         StreamDelta::MessageStart {
             id: "x".to_string(),
@@ -1228,7 +1228,7 @@ fn gemini_encoder_sanitizes_unsupported_json_schema_fields() {
         extra: Default::default(),
     };
 
-    let (body, _) = GeminiEncoder.encode_request(&req).expect("encode");
+    let (body, _) = GoogleEncoder.encode_request(&req).expect("encode");
     let params = body
         .get("tools")
         .and_then(|v| v.as_array())

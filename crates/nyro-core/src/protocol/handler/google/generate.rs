@@ -6,9 +6,9 @@
 //!
 //! `override_model_in_body` is true: the encoder embeds the actual model name
 //! in the request body / URL path rather than a top-level `model` field,
-//! matching the legacy Gemini branch in `handler.rs`.
+//! matching the legacy Google branch in `proxy/handler.rs`.
 
-use crate::protocol::gemini;
+use crate::protocol::codec::google;
 use crate::protocol::ids::{GOOGLE_GENERATE_V1BETA, ProtocolCapabilities, ProtocolId};
 use crate::protocol::registry::ProtocolRegistration;
 use crate::protocol::traits::*;
@@ -36,22 +36,22 @@ impl ProtocolHandler for GoogleGenerateV1Beta {
         &CAPS
     }
     fn make_decoder(&self) -> Box<dyn IngressDecoder + Send> {
-        Box::new(gemini::decoder::GeminiDecoder)
+        Box::new(google::decoder::GoogleDecoder)
     }
     fn make_encoder(&self) -> Box<dyn EgressEncoder + Send> {
-        Box::new(gemini::encoder::GeminiEncoder)
+        Box::new(google::encoder::GoogleEncoder)
     }
     fn make_response_parser(&self) -> Box<dyn ResponseParser> {
-        Box::new(gemini::stream::GeminiResponseParser)
+        Box::new(google::stream::GoogleResponseParser)
     }
     fn make_response_formatter(&self) -> Box<dyn ResponseFormatter> {
-        Box::new(gemini::stream::GeminiResponseFormatter)
+        Box::new(google::stream::GoogleResponseFormatter)
     }
     fn make_stream_parser(&self) -> Box<dyn StreamParser> {
-        Box::new(gemini::stream::GeminiStreamParser::new())
+        Box::new(google::stream::GoogleStreamParser::new())
     }
     fn make_stream_formatter(&self) -> Box<dyn StreamFormatter> {
-        Box::new(gemini::stream::GeminiStreamFormatter::new())
+        Box::new(google::stream::GoogleStreamFormatter::new())
     }
 }
 

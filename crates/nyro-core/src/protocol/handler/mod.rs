@@ -1,9 +1,11 @@
-//! Family handlers — one module per protocol family, with one submodule per
-//! dialect that emits an `inventory::submit!` registration.
+//! `ProtocolHandler` registration shells. One file per dialect; each
+//! wraps a [`codec`](super::codec) implementation, declares its
+//! [`ProtocolCapabilities`](super::ids::ProtocolCapabilities), and
+//! registers via `inventory::submit!`.
 //!
-//! Adding a new dialect = create `family/<family>/<dialect>.rs`, implement
-//! `ProtocolHandler`, append one `inventory::submit!`, and reference the
-//! module from `family/<family>/mod.rs`. No `match` updates anywhere.
+//! Adding a new dialect = create `handler/<family>/<dialect>.rs` plus
+//! one `inventory::submit!`. The `family/dialect/version` identity in
+//! [`ids`](super::ids) is unchanged by this layout.
 
 pub mod openai;
 pub mod anthropic;

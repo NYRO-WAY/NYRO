@@ -8,7 +8,7 @@
 //! - `dialect`: wire-format verb/noun (`chat`, `responses`, `messages`, `generate`).
 //! - `wire_version`: schema version as the vendor labels it (`v1`, `2023-06-01`, `v1beta`).
 //!
-//! See [`ids`], [`traits`], [`registry`], and [`family`] for the model.
+//! See [`ids`], [`traits`], [`registry`], [`codec`], and [`handler`] for the model.
 //!
 //! ## Alias table (resolved at runtime in [`registry::ProtocolRegistry::resolve_alias`])
 //!
@@ -24,15 +24,13 @@
 //! older yaml configs / older DB snapshots may still carry the legacy spellings.
 
 pub mod types;
-pub mod openai;
-pub mod anthropic;
-pub mod gemini;
+pub mod codec;
 pub mod semantic;
 
 pub mod ids;
 pub mod traits;
 pub mod registry;
-pub mod family;
+pub mod handler;
 pub mod vendor;
 pub mod normalize;
 

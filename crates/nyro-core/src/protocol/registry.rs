@@ -1,6 +1,6 @@
 //! Distributed `ProtocolHandler` registration via the `inventory` crate.
 //!
-//! Each `protocol/family/<family>/<dialect>.rs` module emits one
+//! Each `protocol/handler/<family>/<dialect>.rs` module emits one
 //! `inventory::submit!` block. `ProtocolRegistry::global()` walks the
 //! collected registrations once, indexes them by `ProtocolId` and ingress
 //! route, and exposes alias resolution for human-friendly inputs.

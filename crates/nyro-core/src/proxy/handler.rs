@@ -23,7 +23,7 @@ use crate::db::models::{
 use crate::cache::entry::CacheEntry;
 use crate::cache::key::{build_cache_key, build_semantic_partition};
 use crate::logging::LogEntry;
-use crate::protocol::gemini::decoder::GeminiDecoder;
+use crate::protocol::codec::google::decoder::GoogleDecoder;
 use crate::protocol::ids::{
     ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GENERATE_V1BETA, OPENAI_CHAT_V1, OPENAI_EMBEDDINGS_V1,
     OPENAI_RESPONSES_V1, ProtocolCapabilities, ProtocolId,
@@ -407,7 +407,7 @@ pub async fn gemini_proxy(
 
     let request_headers = headers_to_json(&headers);
     let request_body = serde_json::to_string(&body).ok();
-    let decoder = GeminiDecoder;
+    let decoder = GoogleDecoder;
     let internal = match decoder.decode_with_model(body, &model, is_stream) {
         Ok(r) => r,
         Err(e) => {

@@ -7,9 +7,9 @@ use crate::protocol::*;
 
 // ── Non-streaming response parser ──
 
-pub struct GeminiResponseParser;
+pub struct GoogleResponseParser;
 
-impl ResponseParser for GeminiResponseParser {
+impl ResponseParser for GoogleResponseParser {
     fn parse_response(&self, resp: Value) -> Result<InternalResponse> {
         let candidate = resp
             .get("candidates")
@@ -70,9 +70,9 @@ impl ResponseParser for GeminiResponseParser {
 
 // ── Non-streaming response formatter ──
 
-pub struct GeminiResponseFormatter;
+pub struct GoogleResponseFormatter;
 
-impl ResponseFormatter for GeminiResponseFormatter {
+impl ResponseFormatter for GoogleResponseFormatter {
     fn format_response(&self, resp: &InternalResponse) -> Value {
         let mut parts = Vec::new();
 
@@ -111,12 +111,12 @@ impl ResponseFormatter for GeminiResponseFormatter {
 
 // ── Stream parser (upstream Gemini SSE → deltas) ──
 
-pub struct GeminiStreamParser {
+pub struct GoogleStreamParser {
     buffer: String,
     first: bool,
 }
 
-impl GeminiStreamParser {
+impl GoogleStreamParser {
     pub fn new() -> Self {
         Self {
             buffer: String::new(),
@@ -125,7 +125,7 @@ impl GeminiStreamParser {
     }
 }
 
-impl StreamParser for GeminiStreamParser {
+impl StreamParser for GoogleStreamParser {
     fn parse_chunk(&mut self, raw: &str) -> Result<Vec<StreamDelta>> {
         self.buffer.push_str(raw);
         let mut deltas = Vec::new();
@@ -234,14 +234,14 @@ fn parse_gemini_chunk(chunk: &Value, deltas: &mut Vec<StreamDelta>, first: &mut 
 
 // ── Stream formatter (deltas → Gemini SSE) ──
 
-pub struct GeminiStreamFormatter {
+pub struct GoogleStreamFormatter {
     usage: TokenUsage,
     model: String,
     tool_names: HashMap<usize, String>,
     tool_arg_buffers: HashMap<usize, String>,
 }
 
-impl GeminiStreamFormatter {
+impl GoogleStreamFormatter {
     pub fn new() -> Self {
         Self {
             usage: TokenUsage::default(),
@@ -252,7 +252,7 @@ impl GeminiStreamFormatter {
     }
 }
 
-impl StreamFormatter for GeminiStreamFormatter {
+impl StreamFormatter for GoogleStreamFormatter {
     fn format_deltas(&mut self, deltas: &[StreamDelta]) -> Vec<SseEvent> {
         let mut events = Vec::new();
 

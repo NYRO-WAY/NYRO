@@ -85,7 +85,7 @@ impl fmt::Display for ProtocolId {
 // ── Canonical const `ProtocolId` values registered in PR1. ──
 //
 // New dialects added in later PRs append a const here and a matching
-// `inventory::submit!` in `protocol/family/...`. The alias table in
+// `inventory::submit!` in `protocol/handler/...`. The alias table in
 // `registry.rs` is the only place that maps short / legacy names to
 // these canonical ids.
 

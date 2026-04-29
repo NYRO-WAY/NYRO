@@ -5,9 +5,9 @@ use serde_json::Value;
 use crate::protocol::types::*;
 use crate::protocol::EgressEncoder;
 
-pub struct GeminiEncoder;
+pub struct GoogleEncoder;
 
-impl EgressEncoder for GeminiEncoder {
+impl EgressEncoder for GoogleEncoder {
     fn encode_request(&self, req: &InternalRequest) -> Result<(Value, HeaderMap)> {
         let mut contents = Vec::new();
         let mut system_parts = Vec::new();
