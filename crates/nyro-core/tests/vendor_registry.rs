@@ -197,9 +197,15 @@ fn openai_compat_strips_v1_when_base_already_has_path() {
     assert_eq!(preserved, "https://api.openai.com/v1/chat/completions");
 }
 
-// ── 3. list_metadata field-level equivalence with providers.json ──────────
+// ── 3. list_metadata field-level equivalence with the legacy snapshot ─────
+//
+// The snapshot lives in `tests/fixtures/providers_legacy.json` and is the
+// authoritative reference for the `GET /api/admin/provider-presets` JSON
+// shape. Keeping it under `tests/` (instead of `assets/`) means the binary
+// no longer ships any provider config — vendor metadata is the single
+// source of truth at runtime.
 
-const PROVIDERS_JSON: &str = include_str!("../assets/providers.json");
+const PROVIDERS_JSON: &str = include_str!("fixtures/providers_legacy.json");
 
 fn providers_json() -> Vec<Value> {
     let v: Value = serde_json::from_str(PROVIDERS_JSON).unwrap();
@@ -292,6 +298,70 @@ fn assert_field_eq(a: &Value, b: &Value, key: &str, ctx: &str) {
         av, bv,
         "{ctx}: field `{key}` differs:\n  ours   = {av}\n  theirs = {bv}",
     );
+}
+
+// ── 3b. PR5 acceptance: legacy JSON is byte-equivalent ────────────────────
+//
+// `list_metadata_legacy_json` is the runtime replacement for the deleted
+// `assets/providers.json`. The order and structure must match the legacy
+// snapshot field-for-field; otherwise the WebUI provider-presets endpoint
+// changes shape and downstream consumers break.
+
+#[test]
+fn list_metadata_legacy_json_preserves_legacy_order() {
+    let reg = VendorRegistry::global();
+    let ours = reg.list_metadata_legacy_json();
+    let theirs = providers_json();
+    let ours_ids: Vec<&str> = ours.iter().filter_map(|v| v["id"].as_str()).collect();
+    let theirs_ids: Vec<&str> = theirs.iter().filter_map(|v| v["id"].as_str()).collect();
+    assert_eq!(
+        ours_ids, theirs_ids,
+        "legacy JSON ordering must match providers_legacy.json snapshot"
+    );
+}
+
+#[test]
+fn list_metadata_legacy_json_field_equivalent_to_snapshot() {
+    let reg = VendorRegistry::global();
+    let ours = reg.list_metadata_legacy_json();
+    let theirs = providers_json();
+    assert_eq!(ours.len(), theirs.len(), "vendor count differs");
+
+    for (ov, tv) in ours.iter().zip(theirs.iter()) {
+        let id = tv["id"].as_str().unwrap();
+        for k in ["id", "label", "icon", "defaultProtocol"] {
+            assert_field_eq(ov, tv, k, id);
+        }
+        let ours_channels = ov["channels"].as_array().unwrap();
+        let theirs_channels = tv["channels"].as_array().unwrap();
+        assert_eq!(
+            ours_channels.len(),
+            theirs_channels.len(),
+            "{id}: channel count differs"
+        );
+        for (oc, tc) in ours_channels.iter().zip(theirs_channels.iter()) {
+            let ctx = format!("{id}/{}", oc["id"].as_str().unwrap_or("?"));
+            for k in [
+                "id",
+                "label",
+                "baseUrls",
+                "apiKey",
+                "modelsSource",
+                "capabilitiesSource",
+                "authMode",
+                "oauth",
+                "runtime",
+            ] {
+                assert_field_eq(oc, tc, k, &ctx);
+            }
+            let ours_sm = oc.get("staticModels").cloned().unwrap_or(Value::Null);
+            let theirs_sm = tc.get("staticModels").cloned().unwrap_or(Value::Null);
+            assert!(
+                static_models_equal(&ours_sm, &theirs_sm),
+                "{ctx}: staticModels differs:\n  ours   = {ours_sm}\n  theirs = {theirs_sm}",
+            );
+        }
+    }
 }
 
 // ── 4. Phase-2 placeholder vendors must NOT be auto-registered ────────────

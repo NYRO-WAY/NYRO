@@ -18,52 +18,18 @@ use crate::auth::types::{
     StoredCredential,
 };
 use crate::db::models::Provider;
+use crate::protocol::vendor::VendorRegistry;
+use crate::protocol::vendor::types::{OAuthConfig, RuntimeConfig};
 
-const PROVIDER_PRESETS_SNAPSHOT: &str = include_str!("../../../assets/providers.json");
 const OPENAI_PRESET_ID: &str = "openai";
 const CODEX_CHANNEL_ID: &str = "codex";
 
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct OpenAIPresetSnapshot {
-    id: String,
-    #[serde(default)]
-    channels: Vec<OpenAIChannelSnapshot>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct OpenAIChannelSnapshot {
-    id: String,
-    #[serde(default)]
-    oauth: Option<OpenAIOAuthConfig>,
-    #[serde(default)]
-    runtime: Option<OpenAIRuntimeConfig>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct OpenAIOAuthConfig {
-    auth_base_url: String,
-    authorize_url: String,
-    token_url: String,
-    client_id: String,
-    redirect_uri: String,
-    scope: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct OpenAIRuntimeConfig {
-    api_base_url: String,
-    models_url: String,
-    models_client_version: String,
-}
-
-#[derive(Debug, Clone)]
+/// Resolved OAuth + runtime config for the OpenAI / Codex channel,
+/// sourced from the in-process `VendorRegistry`.
+#[derive(Debug, Clone, Copy)]
 struct OpenAICodexConfig {
-    oauth: OpenAIOAuthConfig,
-    runtime: OpenAIRuntimeConfig,
+    oauth: &'static OAuthConfig,
+    runtime: &'static RuntimeConfig,
 }
 
 #[derive(Debug, Default)]
@@ -92,24 +58,21 @@ struct OpenAIAuthState {
 
 impl OpenAIOAuthDriver {
     fn codex_config() -> Result<OpenAICodexConfig> {
-        let presets: Vec<OpenAIPresetSnapshot> = serde_json::from_str(PROVIDER_PRESETS_SNAPSHOT)
-            .context("parse provider presets snapshot for codex oauth")?;
-        let preset = presets
-            .into_iter()
-            .find(|item| item.id == OPENAI_PRESET_ID)
+        let metadata = VendorRegistry::global()
+            .metadata(OPENAI_PRESET_ID)
             .ok_or_else(|| anyhow!("missing provider preset: {OPENAI_PRESET_ID}"))?;
-        let channel = preset
+        let channel = metadata
             .channels
-            .into_iter()
-            .find(|item| item.id == CODEX_CHANNEL_ID)
+            .iter()
+            .find(|c| c.id == CODEX_CHANNEL_ID)
             .ok_or_else(|| {
                 anyhow!("missing provider channel: {OPENAI_PRESET_ID}/{CODEX_CHANNEL_ID}")
             })?;
         Ok(OpenAICodexConfig {
-            oauth: channel.oauth.ok_or_else(|| {
+            oauth: channel.oauth.as_ref().ok_or_else(|| {
                 anyhow!("missing oauth config for {OPENAI_PRESET_ID}/{CODEX_CHANNEL_ID}")
             })?,
-            runtime: channel.runtime.ok_or_else(|| {
+            runtime: channel.runtime.as_ref().ok_or_else(|| {
                 anyhow!("missing runtime config for {OPENAI_PRESET_ID}/{CODEX_CHANNEL_ID}")
             })?,
         })
@@ -118,7 +81,7 @@ impl OpenAIOAuthDriver {
     fn normalize_token_response(
         body: &str,
         fallback_refresh_token: Option<&str>,
-        runtime: &OpenAIRuntimeConfig,
+        runtime: &RuntimeConfig,
     ) -> Result<CredentialBundle> {
         let token: OpenAITokenResponse =
             serde_json::from_str(body).context("parse openai oauth token response")?;
@@ -135,7 +98,7 @@ impl OpenAIOAuthDriver {
                 .filter(|value| !value.trim().is_empty())
                 .or_else(|| fallback_refresh_token.map(ToString::to_string)),
             expires_at: Some(expires_at_after(expires_in)),
-            resource_url: Some(runtime.api_base_url.clone()),
+            resource_url: Some(runtime.api_base_url.to_string()),
             subject_id: None,
             scopes: encode_scopes(token.scope.as_deref()),
             raw: serde_json::from_str(body).unwrap_or(serde_json::Value::Null),
@@ -184,7 +147,7 @@ impl OpenAIOAuthDriver {
             })
     }
 
-    fn codex_models_source(runtime: &OpenAIRuntimeConfig) -> String {
+    fn codex_models_source(runtime: &RuntimeConfig) -> String {
         format!(
             "{}?client_version={}",
             runtime.models_url, runtime.models_client_version
@@ -213,14 +176,14 @@ impl AuthDriver for OpenAIOAuthDriver {
             .redirect_uri
             .as_deref()
             .filter(|v| !v.trim().is_empty())
-            .unwrap_or(config.oauth.redirect_uri.as_str());
+            .unwrap_or(config.oauth.redirect_uri);
         let auth_url = build_authorize_url(
-            config.oauth.authorize_url.as_str(),
+            config.oauth.authorize_url,
             &[
                 ("response_type", "code"),
-                ("client_id", config.oauth.client_id.as_str()),
+                ("client_id", config.oauth.client_id),
                 ("redirect_uri", redirect_uri),
-                ("scope", config.oauth.scope.as_str()),
+                ("scope", config.oauth.scope),
                 ("code_challenge", &code_challenge),
                 ("code_challenge_method", "S256"),
                 ("state", &state),
@@ -243,7 +206,7 @@ impl AuthDriver for OpenAIOAuthDriver {
             status: "pending".to_string(),
             use_proxy: ctx.use_proxy,
             user_code: None,
-            verification_uri: Some(config.oauth.auth_base_url.clone()),
+            verification_uri: Some(config.oauth.auth_base_url.to_string()),
             verification_uri_complete: Some(auth_url),
             state_json: Some(session_state),
             context_json: None,
@@ -273,14 +236,14 @@ impl AuthDriver for OpenAIOAuthDriver {
 
         let client = required_http_client(ctx.http_client)?;
         let response = client
-            .post(config.oauth.token_url.as_str())
+            .post(config.oauth.token_url)
             .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
             .header(ACCEPT, "application/json")
             .form(&[
                 ("grant_type", "authorization_code"),
                 ("code", code),
                 ("redirect_uri", state.pkce.redirect_uri.as_str()),
-                ("client_id", config.oauth.client_id.as_str()),
+                ("client_id", config.oauth.client_id),
                 ("code_verifier", state.pkce.code_verifier.as_str()),
             ])
             .send()
@@ -294,7 +257,7 @@ impl AuthDriver for OpenAIOAuthDriver {
             bail!("openai oauth token exchange failed: HTTP {status} {detail}");
         }
 
-        Self::normalize_token_response(&body, None, &config.runtime)
+        Self::normalize_token_response(&body, None, config.runtime)
     }
 
     async fn refresh(
@@ -312,14 +275,14 @@ impl AuthDriver for OpenAIOAuthDriver {
         let client = required_http_client(ctx.http_client)?;
 
         let response = client
-            .post(config.oauth.token_url.as_str())
+            .post(config.oauth.token_url)
             .header(CONTENT_TYPE, "application/x-www-form-urlencoded")
             .header(ACCEPT, "application/json")
             .form(&[
                 ("grant_type", "refresh_token"),
-                ("client_id", config.oauth.client_id.as_str()),
+                ("client_id", config.oauth.client_id),
                 ("refresh_token", refresh_token),
-                ("scope", config.oauth.scope.as_str()),
+                ("scope", config.oauth.scope),
             ])
             .send()
             .await
@@ -332,7 +295,7 @@ impl AuthDriver for OpenAIOAuthDriver {
             bail!("openai oauth token refresh failed: HTTP {status} {detail}");
         }
 
-        Self::normalize_token_response(&body, Some(refresh_token), &config.runtime)
+        Self::normalize_token_response(&body, Some(refresh_token), config.runtime)
     }
 
     fn bind_runtime(
@@ -350,9 +313,9 @@ impl AuthDriver for OpenAIOAuthDriver {
             .resource_url
             .clone()
             .filter(|value| !value.trim().is_empty())
-            .or_else(|| Some(config.runtime.api_base_url.clone()));
+            .or_else(|| Some(config.runtime.api_base_url.to_string()));
 
-        let models_source_override = Some(Self::codex_models_source(&config.runtime));
+        let models_source_override = Some(Self::codex_models_source(config.runtime));
         let capabilities_source_override = provider
             .capabilities_source
             .clone()

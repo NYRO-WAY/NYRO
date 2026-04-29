@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::Gateway;
@@ -25,24 +25,9 @@ use crate::router::TargetSelector;
 use crate::storage::traits::ProviderTestResult;
 
 const MODELS_DEV_SNAPSHOT: &str = include_str!("../../assets/models.dev.json");
-const PROVIDER_PRESETS_SNAPSHOT: &str = include_str!("../../assets/providers.json");
 const MODELS_DEV_RUNTIME_FILE: &str = "models.dev.json";
 const MODELS_DEV_SOURCE_URL: &str = "https://models.dev/api.json";
 const MODELS_DEV_RUNTIME_TTL: Duration = Duration::from_secs(24 * 60 * 60);
-
-#[derive(Debug, Deserialize)]
-struct ProviderPresetSnapshot {
-    id: String,
-    #[serde(default)]
-    channels: Vec<ProviderChannelPresetSnapshot>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ProviderChannelPresetSnapshot {
-    id: String,
-    #[serde(default = "default_provider_auth_mode", rename = "authMode")]
-    auth_mode: String,
-}
 
 
 #[derive(Debug, Clone, Serialize)]
@@ -2940,50 +2925,11 @@ async fn refresh_models_dev_runtime_cache_inner(
 }
 
 fn parse_provider_presets_snapshot() -> anyhow::Result<Vec<Value>> {
-    let parsed = serde_json::from_str::<Value>(PROVIDER_PRESETS_SNAPSHOT)
-        .map_err(|e| anyhow::anyhow!("invalid providers preset snapshot: {e}"))?;
-    let Some(items) = parsed.as_array() else {
-        anyhow::bail!("invalid providers preset snapshot: root must be array");
-    };
-    Ok(items
-        .iter()
-        .cloned()
-        .map(|mut item| {
-            if let Some(obj) = item.as_object_mut() {
-                if let Some(channels) = obj.get_mut("channels").and_then(Value::as_array_mut) {
-                    for channel in channels {
-                        if let Some(channel_obj) = channel.as_object_mut() {
-                            channel_obj
-                                .entry("authMode".to_string())
-                                .or_insert_with(|| Value::String(default_provider_auth_mode()));
-                        }
-                    }
-                }
-            }
-            item
-        })
-        .collect())
+    Ok(VendorRegistry::global().list_metadata_legacy_json())
 }
 
 fn resolve_preset_channel_auth_mode(preset_key: Option<&str>, channel_id: Option<&str>) -> Option<String> {
-    let preset_key = preset_key?.trim();
-    if preset_key.is_empty() {
-        return None;
-    }
-    let requested_channel = channel_id
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .unwrap_or("default");
-    let presets = serde_json::from_str::<Vec<ProviderPresetSnapshot>>(PROVIDER_PRESETS_SNAPSHOT).ok()?;
-    let preset = presets.into_iter().find(|item| item.id == preset_key)?;
-    let default_channel = preset.channels.iter().find(|item| item.id == "default").map(|item| item.auth_mode.clone());
-    let channel = preset
-        .channels
-        .into_iter()
-        .find(|item| item.id == requested_channel)
-        .map(|item| item.auth_mode)
-        .or(default_channel)?;
-    Some(channel)
+    crate::db::models::resolve_preset_channel_auth_mode(preset_key, channel_id)
 }
 
 fn parse_models_dev_data(data_dir: &Path) -> anyhow::Result<HashMap<String, ModelsDevVendor>> {

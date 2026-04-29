@@ -1,12 +1,14 @@
 //! Vendor metadata types — colocated with vendor implementations.
 //!
-//! These structures replace the shape of `assets/providers.json`. Each
+//! These structures are the runtime source of truth for provider
+//! presets — they replace the legacy `assets/providers.json`. Each
 //! vendor module owns a `const METADATA: VendorMetadata` and registers
-//! itself via `inventory::submit!`. PR5 will remove `providers.json`
-//! once `VendorRegistry::list_metadata()` is wired into all consumers.
+//! itself via `inventory::submit!`; `VendorRegistry::list_metadata_legacy_json`
+//! aggregates them into the wire JSON consumed by the WebUI and the
+//! OAuth driver layer.
 //!
-//! Field naming mirrors the JSON schema (camelCase on the wire) so the
-//! migration is a structural rename, not a semantic redesign.
+//! Field naming mirrors the legacy JSON schema (camelCase on the wire)
+//! so existing consumers keep working without a shape change.
 
 use serde::Serialize;
 

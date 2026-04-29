@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use sqlx::FromRow;
 
-const PROVIDER_PRESETS_SNAPSHOT: &str = include_str!("../../assets/providers.json");
+use crate::protocol::vendor::VendorRegistry;
+use crate::protocol::vendor::types::AuthMode;
 
 pub fn default_provider_auth_mode() -> String {
     "apikey".to_string()
@@ -14,7 +14,25 @@ pub fn is_valid_provider_auth_mode(value: &str) -> bool {
     matches!(value.trim(), "apikey" | "oauth")
 }
 
-fn resolve_preset_channel_auth_mode(preset_key: Option<&str>, channel_id: Option<&str>) -> Option<String> {
+fn auth_mode_to_legacy(mode: AuthMode) -> &'static str {
+    // Legacy DB / WebUI vocabulary only knows "apikey" / "oauth"; the
+    // newer `setuptoken` mode degrades to "apikey" for storage purposes
+    // (the OAuth driver layer knows the real flow via vendor metadata).
+    match mode {
+        AuthMode::ApiKey => "apikey",
+        AuthMode::OAuth => "oauth",
+        AuthMode::SetupToken => "apikey",
+    }
+}
+
+/// Resolve the authentication mode for a `(preset_key, channel_id)`
+/// pair by consulting the in-process `VendorRegistry`. Falls back to
+/// the preset's `default` channel, then to `None` when the vendor is
+/// unknown to the registry.
+pub fn resolve_preset_channel_auth_mode(
+    preset_key: Option<&str>,
+    channel_id: Option<&str>,
+) -> Option<String> {
     let preset_key = preset_key?.trim();
     if preset_key.is_empty() {
         return None;
@@ -23,22 +41,13 @@ fn resolve_preset_channel_auth_mode(preset_key: Option<&str>, channel_id: Option
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or("default");
-    let parsed = serde_json::from_str::<Value>(PROVIDER_PRESETS_SNAPSHOT).ok()?;
-    let items = parsed.as_array()?;
-    let preset = items.iter().find(|item| item.get("id").and_then(Value::as_str) == Some(preset_key))?;
-    let channels = preset.get("channels").and_then(Value::as_array)?;
-    let channel = channels
+    let metadata = VendorRegistry::global().metadata(preset_key)?;
+    let channel = metadata
+        .channels
         .iter()
-        .find(|item| item.get("id").and_then(Value::as_str) == Some(requested_channel))
-        .or_else(|| channels.iter().find(|item| item.get("id").and_then(Value::as_str) == Some("default")))?;
-    Some(
-        channel
-            .get("authMode")
-            .and_then(Value::as_str)
-            .unwrap_or("apikey")
-            .trim()
-            .to_string(),
-    )
+        .find(|c| c.id.eq_ignore_ascii_case(requested_channel))
+        .or_else(|| metadata.channels.iter().find(|c| c.id == "default"))?;
+    Some(auth_mode_to_legacy(channel.auth_mode).to_string())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]

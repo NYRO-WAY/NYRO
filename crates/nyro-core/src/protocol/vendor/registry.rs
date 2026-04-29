@@ -101,8 +101,9 @@ impl VendorRegistry {
         None
     }
 
-    /// Static metadata sorted by vendor id. Used by the WebUI preset
-    /// list and (in PR5) replaces `assets/providers.json`.
+    /// Static metadata sorted by vendor id. Internal; consumers that
+    /// need the legacy `providers.json`-shaped output should call
+    /// [`Self::list_metadata_legacy_json`] instead.
     pub fn list_metadata(&self) -> Vec<&'static VendorMetadata> {
         let mut out: Vec<&'static VendorMetadata> = self
             .extensions
@@ -119,5 +120,43 @@ impl VendorRegistry {
         self.list_metadata()
             .into_iter()
             .find(|m| m.id.eq_ignore_ascii_case(vendor_id))
+    }
+
+    /// Backward-compatible JSON shape, ordered to match the legacy
+    /// `assets/providers.json` file. Used by the WebUI provider-presets
+    /// endpoint and the OAuth/admin paths that previously parsed the
+    /// JSON snapshot directly.
+    ///
+    /// Vendors not in the curated order list are appended after the
+    /// known ones, alphabetically. This keeps the UI listing stable
+    /// across releases while still surfacing newly-registered vendors.
+    pub fn list_metadata_legacy_json(&self) -> Vec<serde_json::Value> {
+        const LEGACY_ORDER: &[&str] = &[
+            "nyro",
+            "openai",
+            "anthropic",
+            "google",
+            "xai",
+            "deepseek",
+            "moonshotai",
+            "minimax",
+            "zhipuai",
+            "zai",
+            "nvidia",
+            "openrouter",
+            "ollama",
+        ];
+        let position = |id: &str| -> usize {
+            LEGACY_ORDER
+                .iter()
+                .position(|known| known.eq_ignore_ascii_case(id))
+                .unwrap_or(LEGACY_ORDER.len())
+        };
+        let mut metas = self.list_metadata();
+        metas.sort_by(|a, b| position(a.id).cmp(&position(b.id)).then_with(|| a.id.cmp(b.id)));
+        metas
+            .into_iter()
+            .filter_map(|m| serde_json::to_value(m).ok())
+            .collect()
     }
 }

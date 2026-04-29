@@ -354,7 +354,7 @@ enum ResolvedSource {
 - 转发请求时根据能力自动处理不兼容字段（如目标模型不支持 tools 时自动剥离）
 - CLI 接入页根据模型能力动态生成正确的工具配置
 
-Provider 预设配置存储于 `crates/nyro-core/assets/providers.json`，通过 `include_str!` 编译进二进制，前端同步加载。
+Provider 预设配置由各 vendor 模块的 `const METADATA: VendorMetadata`（位于 `crates/nyro-core/src/protocol/vendor/<vendor>/mod.rs`）提供，通过 `inventory::submit!` 注册进 `VendorRegistry`，运行期由 `VendorRegistry::list_metadata_legacy_json()` 聚合输出给 WebUI 与 OAuth driver。
 
 ---
 
