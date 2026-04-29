@@ -91,17 +91,18 @@ impl IngressDecoder for ResponsesDecoder {
                                 // Clone reasoning to EACH consecutive assistant message.
                                 // Parallel function_calls produce multiple assistant messages
                                 // that all belong to the same reasoning turn; each must carry
-                                // reasoning_content. Only clear pending when we hit a
-                                // non-assistant message (tool result, etc.).
+                                // reasoning_content. Tool results interleaved between
+                                // function_calls are NOT turn boundaries — keep reasoning alive.
                                 if let Some(ref reasoning) = pending_reasoning {
                                     msg.extra.insert(
                                         "reasoning_content".to_string(),
                                         Value::String(reasoning.clone()),
                                     );
                                 }
-                            } else {
-                                // Non-assistant message: flush any unused pending reasoning
-                                // as a standalone assistant message.
+                            } else if msg.role == Role::User || msg.role == Role::System {
+                                // User/System messages are true conversation turn boundaries.
+                                // If pending reasoning was never attached to an assistant
+                                // message, emit it as a standalone assistant now.
                                 if let Some(reasoning) = pending_reasoning.take() {
                                     let mut extra = HashMap::new();
                                     extra.insert(
@@ -117,6 +118,9 @@ impl IngressDecoder for ResponsesDecoder {
                                     });
                                 }
                             }
+                            // Tool outputs and other non-assistant types: leave
+                            // pending_reasoning intact — they sit between calls of the
+                            // same reasoning turn and do not end the turn.
                             messages.push(msg);
                         }
                         None => {
