@@ -134,12 +134,19 @@ fn normalize_messages_for_openai(
         let extracted_call = take_matching_tool_call_from_history(&mut out, &final_id);
         if let Some((tc, source_idx)) = extracted_call {
             trim_trailing_assistant_text_after_index(&mut out, source_idx);
+            // Carry forward extra fields (reasoning_content, etc.) from the
+            // source message that originally held this tool call. The source
+            // message may later be pruned if it has no remaining tool calls
+            // and empty content, so we must preserve its extra on the new one.
+            // Use take() rather than clone() to avoid duplicate reasoning_content
+            // if the source message survives pruning (non-empty text content).
+            let source_extra = std::mem::take(&mut out[source_idx].extra);
             out.push(InternalMessage {
                 role: Role::Assistant,
                 content: MessageContent::Text(String::new()),
                 tool_calls: Some(vec![tc]),
                 tool_call_id: None,
-    extra: HashMap::new(),
+                extra: source_extra,
             });
             seen_tool_call_ids.insert(final_id.clone());
         } else {
