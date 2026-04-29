@@ -138,9 +138,12 @@ fn normalize_messages_for_openai(
             // source message that originally held this tool call. The source
             // message may later be pruned if it has no remaining tool calls
             // and empty content, so we must preserve its extra on the new one.
-            // Use take() rather than clone() to avoid duplicate reasoning_content
-            // if the source message survives pruning (non-empty text content).
-            let source_extra = std::mem::take(&mut out[source_idx].extra);
+            // Use clone() rather than take() because the source message may
+            // hold MULTIPLE tool calls (e.g., parallel function calls). Each
+            // extraction needs its own copy of extra — take() would leave
+            // subsequent extractions with HashMap::new(), dropping fields
+            // like reasoning_content on the floor.
+            let source_extra = out[source_idx].extra.clone();
             out.push(InternalMessage {
                 role: Role::Assistant,
                 content: MessageContent::Text(String::new()),

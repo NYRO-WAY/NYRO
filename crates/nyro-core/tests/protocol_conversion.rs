@@ -1067,6 +1067,110 @@ fn openai_encoder_rewrites_multi_tool_call_history_to_adjacent_pairs() {
 }
 
 #[test]
+fn openai_encoder_preserves_reasoning_content_across_parallel_tool_calls() {
+    // Regression: when an assistant message has multiple parallel tool calls
+    // AND extra fields (e.g. reasoning_content from DeepSeek thinking mode),
+    // each synthetic assistant message created by normalize_messages_for_openai
+    // must carry forward the extra fields. std::mem::take() only works for the
+    // first extraction — subsequent extractions get HashMap::new(), dropping
+    // reasoning_content and causing HTTP 400 from DeepSeek.
+    use std::collections::HashMap;
+    let mut extra = HashMap::new();
+    extra.insert(
+        "reasoning_content".to_string(),
+        serde_json::Value::String("I need to check the time in Tokyo and Paris.".to_string()),
+    );
+
+    let req = InternalRequest {
+        messages: vec![
+            InternalMessage {
+                role: Role::User,
+                content: MessageContent::Text("What time is it in Tokyo and Paris?".to_string()),
+                tool_calls: None,
+                tool_call_id: None,
+                extra: Default::default(),
+            },
+            // Single assistant message with TWO parallel tool calls + reasoning_content
+            InternalMessage {
+                role: Role::Assistant,
+                content: MessageContent::Text("".to_string()),
+                tool_calls: Some(vec![
+                    ToolCall {
+                        id: "call_tokyo".to_string(),
+                        name: "get_time".to_string(),
+                        arguments: "{\"location\":\"Tokyo\"}".to_string(),
+                    },
+                    ToolCall {
+                        id: "call_paris".to_string(),
+                        name: "get_time".to_string(),
+                        arguments: "{\"location\":\"Paris\"}".to_string(),
+                    },
+                ]),
+                tool_call_id: None,
+                extra,
+            },
+            InternalMessage {
+                role: Role::Tool,
+                content: MessageContent::Text("10:30 JST".to_string()),
+                tool_calls: None,
+                tool_call_id: Some("call_tokyo".to_string()),
+                extra: Default::default(),
+            },
+            InternalMessage {
+                role: Role::Tool,
+                content: MessageContent::Text("03:30 CEST".to_string()),
+                tool_calls: None,
+                tool_call_id: Some("call_paris".to_string()),
+                extra: Default::default(),
+            },
+        ],
+        model: "deepseek-v4-flash".to_string(),
+        stream: true,
+        temperature: None,
+        max_tokens: None,
+        top_p: None,
+        tools: Some(vec![ToolDef {
+            name: "get_time".to_string(),
+            description: None,
+            parameters: serde_json::json!({"type":"object","properties":{"location":{"type":"string"}}}),
+        }]),
+        tool_choice: None,
+        source_protocol: OPENAI_CHAT_V1,
+        extra: Default::default(),
+    };
+
+    let (body, _) = OpenAIEncoder.encode_request(&req).expect("encode openai body");
+    let msgs = body
+        .get("messages")
+        .and_then(|v| v.as_array())
+        .expect("messages array");
+
+    // We expect: [user, assistant(call_tokyo, reasoning_content), tool(call_tokyo),
+    //             assistant(call_paris, reasoning_content), tool(call_paris)]
+    // The original assistant with both calls gets pruned (empty content, no calls left).
+    assert_eq!(msgs.len(), 5, "expected 5 messages: user + 2 assistant+tool pairs");
+
+    // Every assistant message must carry reasoning_content
+    for (i, msg) in msgs.iter().enumerate() {
+        let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("");
+        if role == "assistant" {
+            let rc = msg.get("reasoning_content").and_then(|v| v.as_str());
+            assert!(
+                rc.is_some(),
+                "assistant message at index {} is missing reasoning_content. \
+                 Bug: std::mem::take() on source.extra drops it after first extraction. \
+                 Full msg: {:?}",
+                i, msg
+            );
+            assert_eq!(
+                rc,
+                Some("I need to check the time in Tokyo and Paris."),
+                "assistant[{}] has wrong reasoning_content value", i
+            );
+        }
+    }
+}
+
 fn openai_encoder_drops_orphan_assistant_tool_calls_without_results() {
     let req = InternalRequest {
         messages: vec![
