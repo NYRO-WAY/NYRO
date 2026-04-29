@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::convert::Infallible;
 use std::time::Instant;
 
@@ -18,7 +18,8 @@ use tokio::time::{Duration, timeout};
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::db::models::{
-    Provider, Route, RouteCacheConfig, RouteExactCacheConfig, RouteSemanticCacheConfig, RouteTarget,
+    ModelCapabilities, Provider, Route, RouteCacheConfig, RouteExactCacheConfig, RouteSemanticCacheConfig,
+    RouteTarget,
 };
 use crate::cache::entry::CacheEntry;
 use crate::cache::key::{build_cache_key, build_semantic_partition};
@@ -479,26 +480,57 @@ pub async fn models_list(State(gw): State<Gateway>, headers: HeaderMap) -> Respo
     }
 
     let cache = gw.route_cache.read().await;
-    let models = cache
+    let active_routes: Vec<_> = cache
         .routes
         .iter()
         .filter(|route| !route.access_control || accessible_route_ids.contains(&route.id))
-        .map(|route| route.virtual_model.trim())
-        .filter(|model| !model.is_empty())
-        .map(ToString::to_string)
-        .collect::<BTreeSet<_>>();
+        .collect();
+
+    // Collect unique (provider_id, target_model) pairs for capability lookup
+    let mut target_set: Vec<(String, String)> = Vec::new();
+    for route in &active_routes {
+        let pair = (route.target_provider.clone(), route.target_model.clone());
+        if !target_set.contains(&pair) {
+            target_set.push(pair);
+        }
+    }
+
+    // Pre-fetch capabilities for all model targets
+    let admin = gw.admin();
+    let mut cap_map: HashMap<String, Option<ModelCapabilities>> = HashMap::new();
+    for (provider_id, target_model) in &target_set {
+        let caps = admin.get_model_capabilities(provider_id, target_model).await.ok();
+        cap_map.insert(target_model.clone(), caps);
+    }
+
+    // Build model list with most capabilities from the route that matches
+    let models: BTreeSet<String> = active_routes.iter().map(|r| r.virtual_model.trim().to_string()).filter(|m| !m.is_empty()).collect();
 
     let data = models
         .into_iter()
         .map(|model| {
-            serde_json::json!({
+            let mut obj = serde_json::json!({
                 "id": model,
                 "object": "model",
                 "created": 0,
                 "owned_by": "Nyro"
-            })
+            });
+
+            // Find the route for this virtual model and attach capabilities
+            if let Some(route) = active_routes.iter().find(|r| r.virtual_model.trim() == model) {
+                if let Some(Some(caps)) = cap_map.get(&route.target_model) {
+                    obj["max_context_length"] = serde_json::json!(caps.context_window);
+                    if let Some(max_out) = caps.output_max_tokens {
+                        obj["max_output_tokens"] = serde_json::json!(max_out);
+                    }
+                }
+            }
+
+            obj
         })
         .collect::<Vec<_>>();
+
+    drop(cache);
 
     Json(serde_json::json!({
         "object": "list",
