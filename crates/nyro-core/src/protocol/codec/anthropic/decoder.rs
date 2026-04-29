@@ -32,6 +32,7 @@ impl IngressDecoder for AnthropicDecoder {
                 content: MessageContent::Text(text),
                 tool_calls: None,
                 tool_call_id: None,
+                extra: Default::default(),
             });
         }
 
@@ -134,6 +135,7 @@ fn decode_message(msg: AnthropicMessage) -> Result<Vec<InternalMessage>> {
                         content: MessageContent::Text(text.clone()),
                         tool_calls: tool_calls_opt,
                         tool_call_id: tc_id,
+                        extra: Default::default(),
                     }]);
                 }
             }
@@ -151,6 +153,7 @@ fn decode_message(msg: AnthropicMessage) -> Result<Vec<InternalMessage>> {
         content,
         tool_calls,
         tool_call_id,
+        extra: Default::default(),
     }])
 }
 
@@ -174,6 +177,7 @@ fn decode_user_blocks(blocks: Vec<AnthropicContentBlock>) -> Result<Vec<Internal
                     content: MessageContent::Text(tool_text),
                     tool_calls: None,
                     tool_call_id: Some(tool_use_id),
+                    extra: Default::default(),
                 });
             }
             AnthropicContentBlock::Text { text } => user_blocks.push(ContentBlock::Text { text }),
@@ -212,6 +216,7 @@ fn decode_user_blocks(blocks: Vec<AnthropicContentBlock>) -> Result<Vec<Internal
                 content,
                 tool_calls: None,
                 tool_call_id: None,
+                extra: Default::default(),
             },
         );
     }

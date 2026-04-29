@@ -139,6 +139,7 @@ fn normalize_messages_for_openai(
                 content: MessageContent::Text(String::new()),
                 tool_calls: Some(vec![tc]),
                 tool_call_id: None,
+    extra: HashMap::new(),
             });
             seen_tool_call_ids.insert(final_id.clone());
         } else {
@@ -171,6 +172,7 @@ fn normalize_messages_for_openai(
                         arguments: "{}".to_string(),
                     }]),
                     tool_call_id: None,
+    extra: HashMap::new(),
                 });
                 seen_tool_call_ids.insert(final_id.clone());
             }
@@ -448,6 +450,12 @@ fn encode_message(msg: &InternalMessage) -> Result<Value> {
     }
     if let Some(ref tid) = msg.tool_call_id {
         map.insert("tool_call_id".into(), Value::String(tid.clone()));
+    }
+
+    // Pass through any extra fields (reasoning_content, etc.)
+    // that were preserved from the original request.
+    for (k, v) in &msg.extra {
+        map.entry(k.clone()).or_insert_with(|| v.clone());
     }
 
     Ok(obj)

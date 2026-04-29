@@ -31,6 +31,7 @@ impl GoogleDecoder {
                     content: MessageContent::Text(text),
                     tool_calls: None,
                     tool_call_id: None,
+                    extra: Default::default(),
                 });
             }
         }
@@ -149,5 +150,6 @@ fn decode_content(content: &GoogleContent) -> Result<InternalMessage> {
         content,
         tool_calls: tool_calls_opt,
         tool_call_id: None,
+        extra: Default::default(),
     })
 }

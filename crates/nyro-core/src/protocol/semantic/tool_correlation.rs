@@ -106,6 +106,7 @@ pub fn normalize_request_tool_results(req: &mut InternalRequest) {
                     arguments: "{}".to_string(),
                 }]),
                 tool_call_id: None,
+                extra: Default::default(),
             });
         }
 
