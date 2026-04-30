@@ -1108,7 +1108,8 @@ html[data-theme="dark"] .border-slate-200 {
   border-color: rgba(255, 255, 255, 0.1) !important;
 }
 
-html[data-theme="dark"] .text-slate-900 {
+html[data-theme="dark"] .text-slate-900,
+html[data-theme="dark"] .text-slate-800 {
   color: #fafafa !important;
 }
 
