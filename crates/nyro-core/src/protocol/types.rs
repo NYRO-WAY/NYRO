@@ -27,6 +27,9 @@ pub struct InternalMessage {
     pub content: MessageContent,
     pub tool_calls: Option<Vec<ToolCall>>,
     pub tool_call_id: Option<String>,
+    /// Pass-through fields that don't map to the internal schema
+    /// (e.g. `reasoning_content` in DeepSeek thinking mode).
+    pub extra: HashMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -185,6 +185,7 @@ fn gemini_tool_result_correlation_success() {
                     arguments: "{\"path\":\"src/main.rs\"}".to_string(),
                 }]),
                 tool_call_id: None,
+                extra: Default::default(),
             },
             InternalMessage {
                 role: Role::Tool,
@@ -194,6 +195,7 @@ fn gemini_tool_result_correlation_success() {
                 }]),
                 tool_calls: None,
                 tool_call_id: None,
+                extra: Default::default(),
             },
         ],
         model: "minimax-m2.7".to_string(),
@@ -235,6 +237,7 @@ fn gemini_tool_result_id_hint_matches_out_of_order_calls() {
                     },
                 ]),
                 tool_call_id: None,
+                extra: Default::default(),
             },
             InternalMessage {
                 role: Role::Tool,
@@ -244,6 +247,7 @@ fn gemini_tool_result_id_hint_matches_out_of_order_calls() {
                 }]),
                 tool_calls: None,
                 tool_call_id: None,
+                extra: Default::default(),
             },
             InternalMessage {
                 role: Role::Tool,
@@ -253,6 +257,7 @@ fn gemini_tool_result_id_hint_matches_out_of_order_calls() {
                 }]),
                 tool_calls: None,
                 tool_call_id: None,
+                extra: Default::default(),
             },
         ],
         model: "minimax-m2.7".to_string(),
@@ -438,6 +443,7 @@ fn openai_encoder_injects_synthetic_tool_call_before_orphan_tool_result() {
             content: MessageContent::Text("{\"ok\":true}".to_string()),
             tool_calls: None,
             tool_call_id: Some("call_orphan_1".to_string()),
+            extra: Default::default(),
         }],
         model: "minimax-m2.7".to_string(),
         stream: false,
@@ -482,18 +488,21 @@ fn openai_encoder_injects_adjacent_tool_call_for_non_adjacent_match() {
                     arguments: "{}".to_string(),
                 }]),
                 tool_call_id: None,
+                extra: Default::default(),
             },
             InternalMessage {
                 role: Role::User,
                 content: MessageContent::Text("intermediate".to_string()),
                 tool_calls: None,
                 tool_call_id: None,
+                extra: Default::default(),
             },
             InternalMessage {
                 role: Role::Tool,
                 content: MessageContent::Text("{\"ok\":true}".to_string()),
                 tool_calls: None,
                 tool_call_id: Some("call_x".to_string()),
+                extra: Default::default(),
             },
         ],
         model: "minimax-m2.7".to_string(),
@@ -549,18 +558,21 @@ fn openai_encoder_drops_intermediate_assistant_text_before_tool_result() {
                     arguments: "{\"command\":\"ls -la\"}".to_string(),
                 }]),
                 tool_call_id: None,
+                extra: Default::default(),
             },
             InternalMessage {
                 role: Role::Assistant,
                 content: MessageContent::Text("extra text".to_string()),
                 tool_calls: None,
                 tool_call_id: None,
+                extra: Default::default(),
             },
             InternalMessage {
                 role: Role::Tool,
                 content: MessageContent::Text("{\"stdout\":\"...\"}".to_string()),
                 tool_calls: None,
                 tool_call_id: Some("call_keep".to_string()),
+                extra: Default::default(),
             },
         ],
         model: "MiniMax-M2.7".to_string(),
@@ -614,6 +626,7 @@ fn openai_encoder_remaps_duplicate_tool_call_ids() {
                     arguments: "{}".to_string(),
                 }]),
                 tool_call_id: None,
+                extra: Default::default(),
             },
             InternalMessage {
                 role: Role::Assistant,
@@ -624,18 +637,21 @@ fn openai_encoder_remaps_duplicate_tool_call_ids() {
                     arguments: "{}".to_string(),
                 }]),
                 tool_call_id: None,
+                extra: Default::default(),
             },
             InternalMessage {
                 role: Role::Tool,
                 content: MessageContent::Text("{\"ok\":true}".to_string()),
                 tool_calls: None,
                 tool_call_id: Some("call_dup".to_string()),
+                extra: Default::default(),
             },
             InternalMessage {
                 role: Role::Tool,
                 content: MessageContent::Text("{\"ok\":true}".to_string()),
                 tool_calls: None,
                 tool_call_id: Some("call_dup".to_string()),
+                extra: Default::default(),
             },
         ],
         model: "MiniMax-M2.7".to_string(),
@@ -683,6 +699,7 @@ fn anthropic_encoder_maps_required_tool_choice_to_any() {
             content: MessageContent::Text("hello".to_string()),
             tool_calls: None,
             tool_call_id: None,
+            extra: Default::default(),
         }],
         model: "MiniMax-M2.7".to_string(),
         stream: false,
@@ -718,6 +735,7 @@ fn anthropic_encoder_maps_function_tool_choice_to_tool_name() {
             content: MessageContent::Text("hello".to_string()),
             tool_calls: None,
             tool_call_id: None,
+            extra: Default::default(),
         }],
         model: "MiniMax-M2.7".to_string(),
         stream: false,
@@ -763,18 +781,21 @@ fn anthropic_encoder_merges_consecutive_roles_and_drops_empty_text() {
                 content: MessageContent::Text("first".to_string()),
                 tool_calls: None,
                 tool_call_id: None,
+                extra: Default::default(),
             },
             InternalMessage {
                 role: Role::User,
                 content: MessageContent::Text("second".to_string()),
                 tool_calls: None,
                 tool_call_id: None,
+                extra: Default::default(),
             },
             InternalMessage {
                 role: Role::Assistant,
                 content: MessageContent::Text(String::new()),
                 tool_calls: None,
                 tool_call_id: None,
+                extra: Default::default(),
             },
             InternalMessage {
                 role: Role::Assistant,
@@ -785,12 +806,14 @@ fn anthropic_encoder_merges_consecutive_roles_and_drops_empty_text() {
                     arguments: "{}".to_string(),
                 }]),
                 tool_call_id: None,
+                extra: Default::default(),
             },
             InternalMessage {
                 role: Role::Tool,
                 content: MessageContent::Text("result".to_string()),
                 tool_calls: None,
                 tool_call_id: Some("call_1".to_string()),
+                extra: Default::default(),
             },
         ],
         model: "MiniMax-M2.7".to_string(),
@@ -844,6 +867,7 @@ fn anthropic_encoder_normalizes_tool_use_ids_for_tool_and_result() {
                     arguments: "{}".to_string(),
                 }]),
                 tool_call_id: None,
+                extra: Default::default(),
             },
             InternalMessage {
                 role: Role::Tool,
@@ -853,6 +877,7 @@ fn anthropic_encoder_normalizes_tool_use_ids_for_tool_and_result() {
                 }]),
                 tool_calls: None,
                 tool_call_id: Some("call_function_abc_1".to_string()),
+                extra: Default::default(),
             },
         ],
         model: "MiniMax-M2.7".to_string(),
@@ -931,24 +956,28 @@ fn openai_encoder_remaps_reused_tool_result_id_with_synthetic_adjacent_call() {
                     arguments: "{}".to_string(),
                 }]),
                 tool_call_id: None,
+                extra: Default::default(),
             },
             InternalMessage {
                 role: Role::Tool,
                 content: MessageContent::Text("ok1".to_string()),
                 tool_calls: None,
                 tool_call_id: Some("call_same".to_string()),
+                extra: Default::default(),
             },
             InternalMessage {
                 role: Role::Assistant,
                 content: MessageContent::Text("intermediate".to_string()),
                 tool_calls: None,
                 tool_call_id: None,
+                extra: Default::default(),
             },
             InternalMessage {
                 role: Role::Tool,
                 content: MessageContent::Text("ok2".to_string()),
                 tool_calls: None,
                 tool_call_id: Some("call_same".to_string()),
+                extra: Default::default(),
             },
         ],
         model: "gpt-4o-mini".to_string(),
@@ -1007,18 +1036,21 @@ fn openai_encoder_rewrites_multi_tool_call_history_to_adjacent_pairs() {
                     },
                 ]),
                 tool_call_id: None,
+                extra: Default::default(),
             },
             InternalMessage {
                 role: Role::Tool,
                 content: MessageContent::Text("r1".to_string()),
                 tool_calls: None,
                 tool_call_id: Some("call_a".to_string()),
+                extra: Default::default(),
             },
             InternalMessage {
                 role: Role::Tool,
                 content: MessageContent::Text("r2".to_string()),
                 tool_calls: None,
                 tool_call_id: Some("call_b".to_string()),
+                extra: Default::default(),
             },
         ],
         model: "MiniMax-M2.7".to_string(),
@@ -1067,6 +1099,110 @@ fn openai_encoder_rewrites_multi_tool_call_history_to_adjacent_pairs() {
 }
 
 #[test]
+fn openai_encoder_preserves_reasoning_content_across_parallel_tool_calls() {
+    // Regression: when an assistant message has multiple parallel tool calls
+    // AND extra fields (e.g. reasoning_content from DeepSeek thinking mode),
+    // each synthetic assistant message created by normalize_messages_for_openai
+    // must carry forward the extra fields. std::mem::take() only works for the
+    // first extraction — subsequent extractions get HashMap::new(), dropping
+    // reasoning_content and causing HTTP 400 from DeepSeek.
+    use std::collections::HashMap;
+    let mut extra = HashMap::new();
+    extra.insert(
+        "reasoning_content".to_string(),
+        serde_json::Value::String("I need to check the time in Tokyo and Paris.".to_string()),
+    );
+
+    let req = InternalRequest {
+        messages: vec![
+            InternalMessage {
+                role: Role::User,
+                content: MessageContent::Text("What time is it in Tokyo and Paris?".to_string()),
+                tool_calls: None,
+                tool_call_id: None,
+                extra: Default::default(),
+            },
+            // Single assistant message with TWO parallel tool calls + reasoning_content
+            InternalMessage {
+                role: Role::Assistant,
+                content: MessageContent::Text("".to_string()),
+                tool_calls: Some(vec![
+                    ToolCall {
+                        id: "call_tokyo".to_string(),
+                        name: "get_time".to_string(),
+                        arguments: "{\"location\":\"Tokyo\"}".to_string(),
+                    },
+                    ToolCall {
+                        id: "call_paris".to_string(),
+                        name: "get_time".to_string(),
+                        arguments: "{\"location\":\"Paris\"}".to_string(),
+                    },
+                ]),
+                tool_call_id: None,
+                extra,
+            },
+            InternalMessage {
+                role: Role::Tool,
+                content: MessageContent::Text("10:30 JST".to_string()),
+                tool_calls: None,
+                tool_call_id: Some("call_tokyo".to_string()),
+                extra: Default::default(),
+            },
+            InternalMessage {
+                role: Role::Tool,
+                content: MessageContent::Text("03:30 CEST".to_string()),
+                tool_calls: None,
+                tool_call_id: Some("call_paris".to_string()),
+                extra: Default::default(),
+            },
+        ],
+        model: "deepseek-v4-flash".to_string(),
+        stream: true,
+        temperature: None,
+        max_tokens: None,
+        top_p: None,
+        tools: Some(vec![ToolDef {
+            name: "get_time".to_string(),
+            description: None,
+            parameters: serde_json::json!({"type":"object","properties":{"location":{"type":"string"}}}),
+        }]),
+        tool_choice: None,
+        source_protocol: OPENAI_CHAT_V1,
+        extra: Default::default(),
+    };
+
+    let (body, _) = OpenAIEncoder.encode_request(&req).expect("encode openai body");
+    let msgs = body
+        .get("messages")
+        .and_then(|v| v.as_array())
+        .expect("messages array");
+
+    // We expect: [user, assistant(call_tokyo, reasoning_content), tool(call_tokyo),
+    //             assistant(call_paris, reasoning_content), tool(call_paris)]
+    // The original assistant with both calls gets pruned (empty content, no calls left).
+    assert_eq!(msgs.len(), 5, "expected 5 messages: user + 2 assistant+tool pairs");
+
+    // Every assistant message must carry reasoning_content
+    for (i, msg) in msgs.iter().enumerate() {
+        let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("");
+        if role == "assistant" {
+            let rc = msg.get("reasoning_content").and_then(|v| v.as_str());
+            assert!(
+                rc.is_some(),
+                "assistant message at index {} is missing reasoning_content. \
+                 Bug: std::mem::take() on source.extra drops it after first extraction. \
+                 Full msg: {:?}",
+                i, msg
+            );
+            assert_eq!(
+                rc,
+                Some("I need to check the time in Tokyo and Paris."),
+                "assistant[{}] has wrong reasoning_content value", i
+            );
+        }
+    }
+}
+
 fn openai_encoder_drops_orphan_assistant_tool_calls_without_results() {
     let req = InternalRequest {
         messages: vec![
@@ -1075,6 +1211,7 @@ fn openai_encoder_drops_orphan_assistant_tool_calls_without_results() {
                 content: MessageContent::Text("sys".to_string()),
                 tool_calls: None,
                 tool_call_id: None,
+                extra: Default::default(),
             },
             InternalMessage {
                 role: Role::Assistant,
@@ -1092,6 +1229,7 @@ fn openai_encoder_drops_orphan_assistant_tool_calls_without_results() {
                     },
                 ]),
                 tool_call_id: None,
+                extra: Default::default(),
             },
             InternalMessage {
                 role: Role::Assistant,
@@ -1102,12 +1240,14 @@ fn openai_encoder_drops_orphan_assistant_tool_calls_without_results() {
                     arguments: "{}".to_string(),
                 }]),
                 tool_call_id: None,
+                extra: Default::default(),
             },
             InternalMessage {
                 role: Role::Tool,
                 content: MessageContent::Text("{\"ok\":true}".to_string()),
                 tool_calls: None,
                 tool_call_id: Some("call_new".to_string()),
+                extra: Default::default(),
             },
         ],
         model: "MiniMax-M2.7".to_string(),
@@ -1255,6 +1395,7 @@ fn gemini_encoder_sanitizes_unsupported_json_schema_fields() {
             content: MessageContent::Text("hello".to_string()),
             tool_calls: None,
             tool_call_id: None,
+            extra: Default::default(),
         }],
         model: "gemini-2.5-flash".to_string(),
         stream: false,
@@ -1331,6 +1472,7 @@ fn responses_encoder_targets_slash_v1_responses_and_forces_stream() {
             content: MessageContent::Text("hello".to_string()),
             tool_calls: None,
             tool_call_id: None,
+            extra: Default::default(),
         }],
         false,
     );
@@ -1361,12 +1503,14 @@ fn responses_encoder_splits_system_to_instructions_and_user_to_input_text() {
                 content: MessageContent::Text("be terse".to_string()),
                 tool_calls: None,
                 tool_call_id: None,
+                extra: Default::default(),
             },
             InternalMessage {
                 role: Role::User,
                 content: MessageContent::Text("hi".to_string()),
                 tool_calls: None,
                 tool_call_id: None,
+                extra: Default::default(),
             },
         ],
         false,
@@ -1406,12 +1550,14 @@ fn responses_encoder_emits_function_call_and_function_call_output_items() {
                     arguments: "{\"path\":\".\"}".to_string(),
                 }]),
                 tool_call_id: None,
+                extra: Default::default(),
             },
             InternalMessage {
                 role: Role::Tool,
                 content: MessageContent::Text("file1\nfile2".to_string()),
                 tool_calls: None,
                 tool_call_id: Some("call_abc".to_string()),
+                extra: Default::default(),
             },
         ],
         false,
@@ -1460,6 +1606,7 @@ fn responses_encoder_drops_max_output_tokens_for_codex_compat() {
             content: MessageContent::Text("hi".to_string()),
             tool_calls: None,
             tool_call_id: None,
+            extra: Default::default(),
         }],
         false,
     );

@@ -106,6 +106,7 @@ pub fn normalize_request_tool_results(req: &mut InternalRequest) {
                     arguments: "{}".to_string(),
                 }]),
                 tool_call_id: None,
+                extra: Default::default(),
             });
         }
 
@@ -161,6 +162,7 @@ mod tests {
                 arguments: "{}".to_string(),
             }]),
             tool_call_id: None,
+            extra: Default::default(),
         }
     }
 
@@ -170,6 +172,7 @@ mod tests {
             content: MessageContent::Text("result".to_string()),
             tool_calls: None,
             tool_call_id: Some(tool_call_id.to_string()),
+            extra: Default::default(),
         }
     }
 
@@ -179,6 +182,7 @@ mod tests {
             content: MessageContent::Text("result".to_string()),
             tool_calls: None,
             tool_call_id: None,
+            extra: Default::default(),
         }
     }
 
@@ -224,6 +228,7 @@ mod tests {
                     arguments: "{}".to_string(),
                 }]),
                 tool_call_id: None,
+                extra: Default::default(),
             },
             tool_result_no_id(),
         ]);
@@ -252,6 +257,7 @@ mod tests {
                     ToolCall { id: "call_2".to_string(), name: "tool_b".to_string(), arguments: "{}".to_string() },
                 ]),
                 tool_call_id: None,
+                extra: Default::default(),
             },
             tool_result_no_id(), // first result → call_1 (FIFO)
             tool_result_no_id(), // second result → call_2 (FIFO)
