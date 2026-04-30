@@ -258,15 +258,15 @@ impl OpenAIStreamParser {
             }
         }
 
+        let u = extract_usage(chunk);
+        if u.input_tokens > 0 || u.output_tokens > 0 {
+            deltas.push(StreamDelta::Usage(u));
+        }
+
         if let Some(reason) = choice.get("finish_reason").and_then(|v| v.as_str()) {
             deltas.push(StreamDelta::Done {
                 stop_reason: reason.to_string(),
             });
-        }
-
-        let u = extract_usage(chunk);
-        if u.input_tokens > 0 || u.output_tokens > 0 {
-            deltas.push(StreamDelta::Usage(u));
         }
     }
 
@@ -650,5 +650,64 @@ mod tests {
         let has_reasoning = deltas.iter().any(|d| matches!(d, StreamDelta::ReasoningDelta(_)));
         assert!(has_text, "expected TextDelta('hello'), got: {deltas:?}");
         assert!(!has_reasoning, "should not have ReasoningDelta when no think tags, got: {deltas:?}");
+    }
+
+    #[test]
+    fn test_stream_usage_in_final_chunk() {
+        // When the upstream sends finish_reason + usage in the same SSE chunk,
+        // the parser must emit Usage before Done so that format_deltas sees
+        // the real token counts when building the final SSE event.
+        //
+        // BUG: parse_openai_chunk pushes Done before Usage, so format_deltas
+        // emits usage={0,0,0} in the chunk before [DONE], and the client
+        // (OpenAI SDK) stops at that first [DONE].
+        let mut parser = OpenAIStreamParser::new();
+        let mut formatter = OpenAIStreamFormatter::new();
+
+        // chunk 1: role marker
+        let d = parser
+            .parse_chunk(&data_sse(
+                r#"{"id":"chatcmpl-u","model":"t","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}"#,
+            ))
+            .unwrap();
+        formatter.format_deltas(&d);
+
+        // chunk 2: content
+        let d = parser
+            .parse_chunk(&data_sse(
+                r#"{"id":"chatcmpl-u","model":"t","choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}]}"#,
+            ))
+            .unwrap();
+        formatter.format_deltas(&d);
+
+        // chunk 3: finish + usage (THE BUG — Done emitted before Usage)
+        let d = parser
+            .parse_chunk(&data_sse(
+                r#"{"id":"chatcmpl-u","model":"t","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}"#,
+            ))
+            .unwrap();
+        let events = formatter.format_deltas(&d);
+
+        // find the last non-DONE event (it should carry the real usage)
+        let content_events: Vec<&SseEvent> =
+            events.iter().filter(|e| e.data != "[DONE]").collect();
+        assert!(!content_events.is_empty(), "expected a non-DONE SSE event");
+
+        let last = content_events.last().unwrap();
+        let val: serde_json::Value = serde_json::from_str(&last.data).unwrap();
+        let usage = &val["usage"];
+
+        assert_eq!(
+            usage["prompt_tokens"].as_u64(),
+            Some(10),
+            "BUG: usage.prompt_tokens is {:?} -- Done was formatted before Usage was applied",
+            usage["prompt_tokens"].as_u64(),
+        );
+        assert_eq!(
+            usage["completion_tokens"].as_u64(),
+            Some(5),
+            "usage.completion_tokens should be 5, got {:?}",
+            usage["completion_tokens"].as_u64(),
+        );
     }
 }
