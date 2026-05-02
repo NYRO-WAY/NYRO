@@ -63,6 +63,33 @@
         "modelsSource": "https://api.anthropic.com/v1/models",
         "capabilitiesSource": "ai://models.dev/anthropic",
         "authMode": "apikey"
+      },
+      {
+        "id": "claude-code",
+        "label": { "zh": "Claude Code", "en": "Claude Code" },
+        "baseUrls": { "anthropic": "https://api.anthropic.com" },
+        "modelsSource": "ai://models.dev/anthropic",
+        "capabilitiesSource": "ai://models.dev/anthropic",
+        "staticModels": [
+          "claude-opus-4-6",
+          "claude-sonnet-4-6",
+          "claude-opus-4-5-20251101",
+          "claude-sonnet-4-5-20250929",
+          "claude-sonnet-4-20250514",
+          "claude-opus-4-1-20250805",
+          "claude-opus-4-20250514",
+          "claude-haiku-4-5-20251001",
+          "claude-3-5-haiku-20241022"
+        ],
+        "authMode": "oauth",
+        "oauth": {
+          "authBaseUrl": "https://claude.ai",
+          "authorizeUrl": "https://claude.ai/oauth/authorize",
+          "tokenUrl": "https://console.anthropic.com/v1/oauth/token",
+          "clientId": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+          "redirectUri": "https://platform.claude.com/oauth/code/callback",
+          "scope": "user:inference user:profile"
+        }
       }
     ]
   },
