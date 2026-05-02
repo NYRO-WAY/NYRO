@@ -1,13 +1,19 @@
 [
   {
     "id": "nyro",
-    "label": { "zh": "自定义", "en": "Custom" },
+    "label": {
+      "zh": "自定义",
+      "en": "Custom"
+    },
     "icon": "nyro",
     "defaultProtocol": "openai",
     "channels": [
       {
         "id": "default",
-        "label": { "zh": "默认", "en": "Default" },
+        "label": {
+          "zh": "默认",
+          "en": "Default"
+        },
         "capabilitiesSource": "ai://models.dev/",
         "authMode": "apikey"
       }
@@ -15,22 +21,35 @@
   },
   {
     "id": "openai",
-    "label": { "zh": "OpenAI", "en": "OpenAI" },
+    "label": {
+      "zh": "OpenAI",
+      "en": "OpenAI"
+    },
     "icon": "openai",
     "defaultProtocol": "openai",
     "channels": [
       {
         "id": "default",
-        "label": { "zh": "默认", "en": "Default" },
-        "baseUrls": { "openai": "https://api.openai.com/v1" },
+        "label": {
+          "zh": "默认",
+          "en": "Default"
+        },
+        "baseUrls": {
+          "openai": "https://api.openai.com/v1"
+        },
         "modelsSource": "https://api.openai.com/v1/models",
         "capabilitiesSource": "ai://models.dev/openai",
         "authMode": "apikey"
       },
       {
         "id": "codex",
-        "label": { "zh": "Codex", "en": "Codex" },
-        "baseUrls": { "openai_responses": "https://chatgpt.com/backend-api/codex" },
+        "label": {
+          "zh": "Codex",
+          "en": "Codex"
+        },
+        "baseUrls": {
+          "openai_responses": "https://chatgpt.com/backend-api/codex"
+        },
         "modelsSource": "https://chatgpt.com/backend-api/codex/models",
         "capabilitiesSource": "ai://models.dev/openai",
         "authMode": "oauth",
@@ -52,29 +71,64 @@
   },
   {
     "id": "anthropic",
-    "label": { "zh": "Anthropic", "en": "Anthropic" },
+    "label": {
+      "zh": "Anthropic",
+      "en": "Anthropic"
+    },
     "icon": "anthropic",
     "defaultProtocol": "anthropic",
     "channels": [
       {
         "id": "default",
-        "label": { "zh": "默认", "en": "Default" },
-        "baseUrls": { "anthropic": "https://api.anthropic.com" },
+        "label": {
+          "zh": "默认",
+          "en": "Default"
+        },
+        "baseUrls": {
+          "anthropic": "https://api.anthropic.com"
+        },
         "modelsSource": "https://api.anthropic.com/v1/models",
         "capabilitiesSource": "ai://models.dev/anthropic",
         "authMode": "apikey"
+      },
+      {
+        "id": "claude-code",
+        "label": {
+          "zh": "Claude Code",
+          "en": "Claude Code"
+        },
+        "baseUrls": {
+          "anthropic": "https://api.anthropic.com"
+        },
+        "modelsSource": "https://api.anthropic.com/v1/models",
+        "capabilitiesSource": "ai://models.dev/anthropic",
+        "authMode": "oauth",
+        "oauth": {
+          "authBaseUrl": "https://claude.ai",
+          "authorizeUrl": "https://claude.ai/oauth/authorize",
+          "tokenUrl": "https://console.anthropic.com/v1/oauth/token",
+          "clientId": "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+          "redirectUri": "https://platform.claude.com/oauth/code/callback",
+          "scope": "org:create_api_key user:profile user:inference user:sessions:claude_code"
+        }
       }
     ]
   },
   {
     "id": "google",
-    "label": { "zh": "Google", "en": "Google" },
+    "label": {
+      "zh": "Google",
+      "en": "Google"
+    },
     "icon": "google",
     "defaultProtocol": "gemini",
     "channels": [
       {
         "id": "default",
-        "label": { "zh": "默认", "en": "Default" },
+        "label": {
+          "zh": "默认",
+          "en": "Default"
+        },
         "baseUrls": {
           "openai": "https://generativelanguage.googleapis.com/v1beta/openai",
           "gemini": "https://generativelanguage.googleapis.com"
@@ -87,14 +141,22 @@
   },
   {
     "id": "xai",
-    "label": { "zh": "xAI", "en": "xAI" },
+    "label": {
+      "zh": "xAI",
+      "en": "xAI"
+    },
     "icon": "xai",
     "defaultProtocol": "openai",
     "channels": [
       {
         "id": "default",
-        "label": { "zh": "默认", "en": "Default" },
-        "baseUrls": { "openai": "https://api.x.ai/v1" },
+        "label": {
+          "zh": "默认",
+          "en": "Default"
+        },
+        "baseUrls": {
+          "openai": "https://api.x.ai/v1"
+        },
         "modelsSource": "https://api.x.ai/v1/models",
         "capabilitiesSource": "ai://models.dev/xai",
         "authMode": "apikey"
@@ -103,13 +165,19 @@
   },
   {
     "id": "deepseek",
-    "label": { "zh": "DeepSeek", "en": "DeepSeek" },
+    "label": {
+      "zh": "DeepSeek",
+      "en": "DeepSeek"
+    },
     "icon": "deepseek",
     "defaultProtocol": "openai",
     "channels": [
       {
         "id": "default",
-        "label": { "zh": "默认", "en": "Default" },
+        "label": {
+          "zh": "默认",
+          "en": "Default"
+        },
         "baseUrls": {
           "openai": "https://api.deepseek.com/v1",
           "anthropic": "https://api.deepseek.com/anthropic"
@@ -122,13 +190,19 @@
   },
   {
     "id": "moonshotai",
-    "label": { "zh": "Moonshot AI", "en": "Moonshot AI" },
+    "label": {
+      "zh": "Moonshot AI",
+      "en": "Moonshot AI"
+    },
     "icon": "kimi",
     "defaultProtocol": "openai",
     "channels": [
       {
         "id": "default",
-        "label": { "zh": "默认", "en": "Default" },
+        "label": {
+          "zh": "默认",
+          "en": "Default"
+        },
         "baseUrls": {
           "openai": "https://api.moonshot.ai/v1",
           "anthropic": "https://api.moonshot.ai/anthropic"
@@ -139,7 +213,10 @@
       },
       {
         "id": "china",
-        "label": { "zh": "中国站", "en": "China" },
+        "label": {
+          "zh": "中国站",
+          "en": "China"
+        },
         "baseUrls": {
           "openai": "https://api.moonshot.cn/v1",
           "anthropic": "https://api.moonshot.cn/anthropic"
@@ -152,13 +229,19 @@
   },
   {
     "id": "minimax",
-    "label": { "zh": "MiniMax", "en": "MiniMax" },
+    "label": {
+      "zh": "MiniMax",
+      "en": "MiniMax"
+    },
     "icon": "minimax",
     "defaultProtocol": "openai",
     "channels": [
       {
         "id": "default",
-        "label": { "zh": "默认", "en": "Default" },
+        "label": {
+          "zh": "默认",
+          "en": "Default"
+        },
         "baseUrls": {
           "openai": "https://api.minimax.io/v1",
           "anthropic": "https://api.minimax.io/anthropic"
@@ -170,7 +253,10 @@
       },
       {
         "id": "china",
-        "label": { "zh": "中国站", "en": "China" },
+        "label": {
+          "zh": "中国站",
+          "en": "China"
+        },
         "baseUrls": {
           "openai": "https://api.minimaxi.com/v1",
           "anthropic": "https://api.minimaxi.com/anthropic"
@@ -184,13 +270,19 @@
   },
   {
     "id": "zhipuai",
-    "label": { "zh": "Zhipu AI", "en": "Zhipu AI" },
+    "label": {
+      "zh": "Zhipu AI",
+      "en": "Zhipu AI"
+    },
     "icon": "zhipu",
     "defaultProtocol": "openai",
     "channels": [
       {
         "id": "default",
-        "label": { "zh": "默认", "en": "Default" },
+        "label": {
+          "zh": "默认",
+          "en": "Default"
+        },
         "baseUrls": {
           "openai": "https://open.bigmodel.cn/api/paas/v4",
           "anthropic": "https://open.bigmodel.cn/api/anthropic"
@@ -201,7 +293,10 @@
       },
       {
         "id": "coding",
-        "label": { "zh": "Coding Plan", "en": "Coding Plan" },
+        "label": {
+          "zh": "Coding Plan",
+          "en": "Coding Plan"
+        },
         "baseUrls": {
           "openai": "https://open.bigmodel.cn/api/coding/paas/v4",
           "anthropic": "https://open.bigmodel.cn/api/anthropic"
@@ -214,13 +309,19 @@
   },
   {
     "id": "zai",
-    "label": { "zh": "Z.ai", "en": "Z.ai" },
+    "label": {
+      "zh": "Z.ai",
+      "en": "Z.ai"
+    },
     "icon": "zai",
     "defaultProtocol": "openai",
     "channels": [
       {
         "id": "default",
-        "label": { "zh": "默认", "en": "Default" },
+        "label": {
+          "zh": "默认",
+          "en": "Default"
+        },
         "baseUrls": {
           "openai": "https://api.z.ai/api/paas/v4",
           "anthropic": "https://api.z.ai/api/anthropic"
@@ -231,7 +332,10 @@
       },
       {
         "id": "coding",
-        "label": { "zh": "Coding Plan", "en": "Coding Plan" },
+        "label": {
+          "zh": "Coding Plan",
+          "en": "Coding Plan"
+        },
         "baseUrls": {
           "openai": "https://api.z.ai/api/coding/paas/v4",
           "anthropic": "https://api.z.ai/api/anthropic"
@@ -244,13 +348,19 @@
   },
   {
     "id": "nvidia",
-    "label": { "zh": "NVIDIA", "en": "NVIDIA" },
+    "label": {
+      "zh": "NVIDIA",
+      "en": "NVIDIA"
+    },
     "icon": "nvidia",
     "defaultProtocol": "openai",
     "channels": [
       {
         "id": "default",
-        "label": { "zh": "默认", "en": "Default" },
+        "label": {
+          "zh": "默认",
+          "en": "Default"
+        },
         "baseUrls": {
           "openai": "https://integrate.api.nvidia.com/v1"
         },
@@ -262,13 +372,19 @@
   },
   {
     "id": "openrouter",
-    "label": { "zh": "OpenRouter", "en": "OpenRouter" },
+    "label": {
+      "zh": "OpenRouter",
+      "en": "OpenRouter"
+    },
     "icon": "openrouter",
     "defaultProtocol": "openai",
     "channels": [
       {
         "id": "default",
-        "label": { "zh": "默认", "en": "Default" },
+        "label": {
+          "zh": "默认",
+          "en": "Default"
+        },
         "baseUrls": {
           "openai": "https://openrouter.ai/api/v1",
           "anthropic": "https://openrouter.ai/api"
@@ -281,13 +397,19 @@
   },
   {
     "id": "ollama",
-    "label": { "zh": "Ollama", "en": "Ollama" },
+    "label": {
+      "zh": "Ollama",
+      "en": "Ollama"
+    },
     "icon": "ollama",
     "defaultProtocol": "openai",
     "channels": [
       {
         "id": "default",
-        "label": { "zh": "默认", "en": "Default" },
+        "label": {
+          "zh": "默认",
+          "en": "Default"
+        },
         "baseUrls": {
           "openai": "http://127.0.0.1:11434/v1",
           "anthropic": "http://127.0.0.1:11434"

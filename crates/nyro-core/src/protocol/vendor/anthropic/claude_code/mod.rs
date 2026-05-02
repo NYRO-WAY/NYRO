@@ -1,9 +1,33 @@
-//! Placeholder for the Anthropic Claude Code OAuth channel.
+//! Anthropic Claude Code channel.
 //!
-//! Not registered with `inventory` yet — the OAuth driver, runtime
-//! binding, and metadata will land in a follow-up PR. Keeping this
-//! module here reserves the directory layout so future work is purely
-//! additive (one `inventory::submit!` and channel metadata in
-//! `protocol/vendor/anthropic/mod.rs::METADATA.channels`).
+//! Auth-specific headers are injected by `ClaudeOAuthDriver` through
+//! `RuntimeBinding.extra_headers`; this channel extension just gives the
+//! resolver a concrete `(vendor=anthropic, channel=claude-code)` target.
 
-// TODO: implement OAuth handshake, runtime binding, METADATA entry.
+use reqwest::header::HeaderMap;
+
+use crate::protocol::vendor::defaults::AnthropicDefault;
+use crate::protocol::vendor::{VendorCtx, VendorExtension, VendorRegistration, VendorScope};
+
+pub struct AnthropicClaudeCodeChannel;
+
+impl VendorExtension for AnthropicClaudeCodeChannel {
+    fn scope(&self) -> VendorScope {
+        VendorScope::Channel {
+            vendor_id: "anthropic",
+            channel_id: "claude-code",
+        }
+    }
+
+    fn auth_headers(&self, ctx: &VendorCtx<'_>) -> HeaderMap {
+        AnthropicDefault.auth_headers(ctx)
+    }
+
+    fn build_url(&self, ctx: &VendorCtx<'_>, base_url: &str, path: &str) -> String {
+        AnthropicDefault.build_url(ctx, base_url, path)
+    }
+}
+
+inventory::submit! {
+    VendorRegistration { make: || Box::new(AnthropicClaudeCodeChannel) }
+}
