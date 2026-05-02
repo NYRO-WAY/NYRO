@@ -92,7 +92,7 @@ function resolveHTTP(cmd: string, args?: Record<string, unknown>): HTTPMapping {
         method: "POST",
         url: `${base}/oauth/sessions/init`,
         body: {
-          vendor: args?.vendor,
+          driver_key: args?.driverKey ?? args?.driver_key,
           use_proxy: args?.useProxy ?? args?.use_proxy,
         },
       };

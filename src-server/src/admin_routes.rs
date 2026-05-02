@@ -206,7 +206,7 @@ struct ModelCapabilitiesQuery {
 
 #[derive(Deserialize)]
 struct InitOAuthSessionRequest {
-    vendor: String,
+    driver_key: String,
     #[serde(default)]
     use_proxy: bool,
 }
@@ -221,7 +221,7 @@ async fn init_oauth_session_handler(
     State(gw): State<Gateway>,
     Json(input): Json<InitOAuthSessionRequest>,
 ) -> impl IntoResponse {
-    match gw.admin().init_oauth_session(&input.vendor, input.use_proxy).await {
+    match gw.admin().init_oauth_session(&input.driver_key, input.use_proxy).await {
         Ok(v) => Json(serde_json::json!({ "data": v })).into_response(),
         Err(e) => err(e),
     }

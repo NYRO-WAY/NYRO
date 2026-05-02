@@ -686,11 +686,11 @@ export default function ProvidersPage() {
   }
 
   async function startCreateOAuth() {
-    const vendor = selectedPreset?.id || form.vendor;
-    if (!vendor) {
+    const driverKey = createChannelValue;
+    if (!driverKey) {
       setErrorDialog({
         title: isZh ? "无法发起 OAuth" : "Cannot start OAuth",
-        description: isZh ? "请先选择 OAuth 供应商预设。" : "Please select an OAuth provider preset first.",
+        description: isZh ? "请先选择明确的 OAuth 渠道。" : "Please select an explicit OAuth channel first.",
       });
       return;
     }
@@ -699,7 +699,7 @@ export default function ProvidersPage() {
     setCreateOAuthBusy(true);
     try {
       const init = await backend<OAuthSessionInitData>("init_oauth_session", {
-        vendor,
+        driverKey,
         useProxy: Boolean(form.use_proxy),
       });
       setCreateOAuthSession(init);
@@ -715,7 +715,9 @@ export default function ProvidersPage() {
       });
       setForm((prev) => {
         if (prev.name.trim()) return prev;
-        const providerName = selectedPreset ? presetLabel(selectedPreset, false).trim() : vendor.trim();
+        const providerName = selectedPreset
+          ? presetLabel(selectedPreset, false).trim()
+          : driverKey.trim();
         const suffix = init.user_code?.trim() ? `-${init.user_code.trim()}` : "";
         return {
           ...prev,
@@ -885,13 +887,23 @@ export default function ProvidersPage() {
     }
   }
 
-  async function startEditReauth(providerId: string, vendor: string, useProxy: boolean) {
+  async function startEditReauth(providerId: string, useProxy: boolean) {
+    const driverKey = editingProvider?.channel || "";
     resetEditOAuthState();
     setShowEditReauth(true);
     setEditOAuthBusy(true);
+    if (!driverKey) {
+      setEditOAuthSessionStatus({
+        status: "error",
+        code: "OAUTH_DRIVER_MISSING",
+        message: isZh ? "缺少明确的 OAuth 渠道。" : "Missing explicit OAuth channel.",
+      });
+      setEditOAuthBusy(false);
+      return;
+    }
     try {
       const init = await backend<OAuthSessionInitData>("init_oauth_session", {
-        vendor,
+        driverKey,
         useProxy,
       });
       setEditOAuthSession(init);
@@ -2154,7 +2166,7 @@ export default function ProvidersPage() {
                             {!showEditReauth ? (
                               <Button
                                 type="button"
-                                onClick={() => startEditReauth(p.id, p.vendor || p.preset_key || "", p.use_proxy)}
+                                onClick={() => startEditReauth(p.id, p.use_proxy)}
                               >
                                 {isZh ? "开始授权" : "Start Authorization"}
                               </Button>

@@ -79,15 +79,15 @@ impl AdminService {
 
     pub async fn init_oauth_session(
         &self,
-        vendor: &str,
+        driver_key: &str,
         use_proxy: bool,
     ) -> anyhow::Result<AuthSessionInitData> {
-        let driver_key = auth::normalize_driver_key(vendor);
+        let driver_key = auth::normalize_driver_key(driver_key);
         if driver_key.is_empty() {
-            anyhow::bail!("auth vendor cannot be empty");
+            anyhow::bail!("auth driver cannot be empty");
         }
         let driver = auth::build_driver(&driver_key)
-            .ok_or_else(|| anyhow::anyhow!("auth vendor not implemented: {driver_key}"))?;
+            .ok_or_else(|| anyhow::anyhow!("auth driver not implemented: {driver_key}"))?;
         let client = self.gw.http_client_for_provider(use_proxy).await?;
         let created = driver
             .start(StartAuthContext {
@@ -150,7 +150,7 @@ impl AdminService {
         }
 
         let driver = auth::build_driver(&session.driver_key).ok_or_else(|| {
-            anyhow::anyhow!("auth vendor not implemented: {}", session.driver_key)
+            anyhow::anyhow!("auth driver not implemented: {}", session.driver_key)
         })?;
         let client = self.gw.http_client_for_provider(session.use_proxy).await?;
 
@@ -228,7 +228,7 @@ impl AdminService {
         }
 
         let driver = auth::build_driver(&session.driver_key).ok_or_else(|| {
-            anyhow::anyhow!("auth vendor not implemented: {}", session.driver_key)
+            anyhow::anyhow!("auth driver not implemented: {}", session.driver_key)
         })?;
 
         let client = self.gw.http_client_for_provider(session.use_proxy).await?;
@@ -334,11 +334,7 @@ impl AdminService {
         id: &str,
     ) -> anyhow::Result<ProviderOAuthStatusData> {
         let provider = self.get_provider(id).await?;
-        let driver_key = provider
-            .vendor
-            .as_deref()
-            .map(auth::normalize_driver_key)
-            .unwrap_or_default();
+        let driver_key = auth::resolve_provider_driver_key(&provider);
 
         if driver_key.is_empty() {
             return Ok(build_provider_oauth_status(&provider, "", None, None));
@@ -365,19 +361,15 @@ impl AdminService {
         id: &str,
     ) -> anyhow::Result<ProviderOAuthStatusData> {
         let provider = self.get_provider(id).await?;
-        let driver_key = provider
-            .vendor
-            .as_deref()
-            .map(auth::normalize_driver_key)
-            .unwrap_or_default();
+        let driver_key = auth::resolve_provider_driver_key(&provider);
 
         if driver_key.is_empty() {
-            anyhow::bail!("provider vendor is empty");
+            anyhow::bail!("provider oauth driver is empty");
         }
         let driver = auth::build_driver(&driver_key)
-            .ok_or_else(|| anyhow::anyhow!("auth vendor not implemented: {driver_key}"))?;
+            .ok_or_else(|| anyhow::anyhow!("auth driver not implemented: {driver_key}"))?;
         if !driver.metadata().supports_existing_provider {
-            anyhow::bail!("auth vendor does not support reconnect: {driver_key}");
+            anyhow::bail!("auth driver does not support reconnect: {driver_key}");
         }
 
         let oauth_cred = self
@@ -451,11 +443,7 @@ impl AdminService {
 
     pub async fn logout_provider_oauth(&self, id: &str) -> anyhow::Result<ProviderOAuthStatusData> {
         let provider = self.get_provider(id).await?;
-        let driver_key = provider
-            .vendor
-            .as_deref()
-            .map(auth::normalize_driver_key)
-            .unwrap_or_default();
+        let driver_key = auth::resolve_provider_driver_key(&provider);
 
         if driver_key.is_empty() {
             return Ok(build_provider_oauth_status(&provider, "", None, None));
@@ -1809,11 +1797,7 @@ impl AdminService {
         };
 
         let driver_key = if oauth_cred.driver_key.is_empty() {
-            provider
-                .vendor
-                .as_deref()
-                .map(auth::normalize_driver_key)
-                .unwrap_or_default()
+            auth::resolve_provider_driver_key(provider)
         } else {
             oauth_cred.driver_key.clone()
         };
@@ -2023,11 +2007,7 @@ impl AdminService {
         cred: &OAuthCredential,
     ) -> anyhow::Result<()> {
         let driver_key = if cred.driver_key.is_empty() {
-            provider
-                .vendor
-                .as_deref()
-                .map(auth::normalize_driver_key)
-                .unwrap_or_default()
+            auth::resolve_provider_driver_key(provider)
         } else {
             cred.driver_key.clone()
         };
