@@ -93,6 +93,12 @@ impl ResponseFormatter for OpenAIResponseFormatter {
             "role": "assistant",
             "content": resp.content,
         });
+        if let Some(ref reasoning) = resp.reasoning_content {
+            message
+                .as_object_mut()
+                .unwrap()
+                .insert("reasoning_content".into(), Value::String(reasoning.clone()));
+        }
 
         if !resp.tool_calls.is_empty() {
             let tcs: Vec<Value> = resp
@@ -497,6 +503,11 @@ pub(crate) fn extract_reasoning_from_message(message: &Value) -> Option<String> 
     if let Some(reasoning) = message.get("reasoning_content").and_then(|v| v.as_str()) {
         return Some(reasoning.to_string());
     }
+    // Some backends (e.g. mlx-lm) send the field as "reasoning" instead
+    // of "reasoning_content".  Accept both.
+    if let Some(reasoning) = message.get("reasoning").and_then(|v| v.as_str()) {
+        return Some(reasoning.to_string());
+    }
 
     let details = message.get("reasoning_details").and_then(|v| v.as_array())?;
     let mut parts: Vec<String> = Vec::new();
@@ -650,5 +661,150 @@ mod tests {
         let has_reasoning = deltas.iter().any(|d| matches!(d, StreamDelta::ReasoningDelta(_)));
         assert!(has_text, "expected TextDelta('hello'), got: {deltas:?}");
         assert!(!has_reasoning, "should not have ReasoningDelta when no think tags, got: {deltas:?}");
+    }
+
+    #[test]
+    fn test_stream_usage_in_final_chunk() {
+        // When the upstream sends finish_reason + usage in the same SSE chunk,
+        // the parser must emit Usage before Done so that format_deltas sees
+        // the real token counts when building the final SSE event.
+        //
+        // BUG: parse_openai_chunk pushes Done before Usage, so format_deltas
+        // emits usage={0,0,0} in the chunk before [DONE], and the client
+        // (OpenAI SDK) stops at that first [DONE].
+        let mut parser = OpenAIStreamParser::new();
+        let mut formatter = OpenAIStreamFormatter::new();
+
+        // chunk 1: role marker
+        let d = parser
+            .parse_chunk(&data_sse(
+                r#"{"id":"chatcmpl-u","model":"t","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}"#,
+            ))
+            .unwrap();
+        formatter.format_deltas(&d);
+
+        // chunk 2: content
+        let d = parser
+            .parse_chunk(&data_sse(
+                r#"{"id":"chatcmpl-u","model":"t","choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":null}]}"#,
+            ))
+            .unwrap();
+        formatter.format_deltas(&d);
+
+        // chunk 3: finish + usage (THE BUG — Done emitted before Usage)
+        let d = parser
+            .parse_chunk(&data_sse(
+                r#"{"id":"chatcmpl-u","model":"t","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":10,"completion_tokens":5,"total_tokens":15}}"#,
+            ))
+            .unwrap();
+        let events = formatter.format_deltas(&d);
+
+        // find the last non-DONE event (it should carry the real usage)
+        let content_events: Vec<&SseEvent> =
+            events.iter().filter(|e| e.data != "[DONE]").collect();
+        assert!(!content_events.is_empty(), "expected a non-DONE SSE event");
+
+        let last = content_events.last().unwrap();
+        let val: serde_json::Value = serde_json::from_str(&last.data).unwrap();
+        let usage = &val["usage"];
+
+        assert_eq!(
+            usage["prompt_tokens"].as_u64(),
+            Some(10),
+            "BUG: usage.prompt_tokens is {:?} -- Done was formatted before Usage was applied",
+            usage["prompt_tokens"].as_u64(),
+        );
+        assert_eq!(
+            usage["completion_tokens"].as_u64(),
+            Some(5),
+            "usage.completion_tokens should be 5, got {:?}",
+            usage["completion_tokens"].as_u64(),
+        );
+    }
+    #[test]
+    fn test_extract_reasoning_mlx_field_name() {
+        // mlx-lm uses "reasoning" instead of "reasoning_content".
+        // Both field names must produce a reasoning delta.
+        let msg = serde_json::json!({"role": "assistant", "content": "answer", "reasoning": "my reasoning"});
+        let extracted = extract_reasoning_from_message(&msg);
+        assert_eq!(extracted.as_deref(), Some("my reasoning"),
+            "extract_reasoning_from_message must accept 'reasoning' field name (mlx-lm compat)");
+    }
+
+    #[test]
+    fn test_parse_response_with_reasoning_field() {
+        // Non-streaming response from mlx-lm: message has "reasoning" not "reasoning_content".
+        let resp = serde_json::json!({
+            "id": "chatcmpl-mlx",
+            "model": "qwen3-35b",
+            "choices": [{
+                "index": 0,
+                "message": {
+                    "role": "assistant",
+                    "content": "final answer",
+                    "reasoning": "step by step thinking"
+                },
+                "finish_reason": "stop"
+            }],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15}
+        });
+        let r = OpenAIResponseParser.parse_response(resp).unwrap();
+        assert_eq!(r.content, "final answer");
+        assert_eq!(r.reasoning_content.as_deref(), Some("step by step thinking"),
+            "parse_response must extract reasoning from 'reasoning' field (mlx-lm compat)");
+    }
+
+    #[test]
+    fn test_format_response_includes_reasoning_content() {
+        // The response formatter must emit reasoning_content when it is present.
+        let internal = InternalResponse {
+            id: "chatcmpl-test".to_string(),
+            model: "qwen3".to_string(),
+            content: "visible text".to_string(),
+            reasoning_content: Some("hidden chain of thought".to_string()),
+            reasoning_signature: None,
+            tool_calls: vec![],
+            response_items: None,
+            stop_reason: Some("stop".to_string()),
+            usage: TokenUsage { input_tokens: 10, output_tokens: 5 },
+        };
+        let formatted = OpenAIResponseFormatter.format_response(&internal);
+        let msg = &formatted["choices"][0]["message"];
+        assert_eq!(msg["content"].as_str(), Some("visible text"));
+        assert_eq!(msg["reasoning_content"].as_str(), Some("hidden chain of thought"),
+            "format_response must include reasoning_content in the message");
+    }
+
+    #[test]
+    fn test_stream_reasoning_field_from_mlx() {
+        // Streaming SSE chunks from mlx-lm use "reasoning" in the delta.
+        let chunks = [
+            data_sse(r#"{"id":"chatcmpl-mlx","model":"qwen3","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}"#),
+            data_sse(r#"{"id":"chatcmpl-mlx","model":"qwen3","choices":[{"index":0,"delta":{"content":"final ","reasoning":"thinking"},"finish_reason":null}]}"#),
+            data_sse(r#"{"id":"chatcmpl-mlx","model":"qwen3","choices":[{"index":0,"delta":{"content":"answer","reasoning":" done"},"finish_reason":null}]}"#),
+            data_sse(r#"{"id":"chatcmpl-mlx","model":"qwen3","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#),
+            data_sse("[DONE]"),
+        ]
+        .concat();
+
+        let mut parser = OpenAIStreamParser::new();
+        let mut deltas = parser.parse_chunk(&chunks).unwrap();
+        deltas.extend(parser.finish().unwrap());
+
+        let reasoning: String = deltas
+            .iter()
+            .filter_map(|d| if let StreamDelta::ReasoningDelta(t) = d { Some(t.as_str()) } else { None })
+            .collect();
+        assert!(reasoning.contains("thinking"),
+            "expected 'thinking' in ReasoningDelta, got: {reasoning}");
+        assert!(reasoning.contains("done"),
+            "expected 'done' in ReasoningDelta, got: {reasoning}");
+
+        let text: String = deltas
+            .iter()
+            .filter_map(|d| if let StreamDelta::TextDelta(t) = d { Some(t.as_str()) } else { None })
+            .collect();
+        assert!(text.contains("final answer"),
+            "expected 'final answer' in TextDelta, got: {text:?}");
     }
 }
