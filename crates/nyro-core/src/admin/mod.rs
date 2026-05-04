@@ -509,10 +509,7 @@ impl AdminService {
                 return Err(error);
             }
         }
-        let provider = match self
-            .sync_provider_runtime_fields(&provider, &credential)
-            .await
-        {
+        let provider = match self.sync_provider_runtime_fields(&provider, &credential).await {
             Ok(provider) => provider,
             Err(error) => {
                 let _ = self
