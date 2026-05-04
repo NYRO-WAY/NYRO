@@ -10,7 +10,8 @@ use reqwest::header::HeaderMap;
 
 use crate::protocol::vendor::defaults::AnthropicDefault;
 use crate::protocol::vendor::types::{
-    AuthMode, ChannelDef, Label, OAuthConfig, ProtocolBaseUrl, VendorMetadata,
+    AuthMode, ChannelDef, Label, OAuthCompletionMode, OAuthConfig, ProtocolBaseUrl,
+    VendorMetadata,
 };
 use crate::protocol::vendor::{VendorCtx, VendorExtension, VendorRegistration, VendorScope};
 
@@ -63,6 +64,7 @@ const METADATA: VendorMetadata = VendorMetadata {
                 client_id: "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
                 redirect_uri: "https://platform.claude.com/oauth/code/callback",
                 scope: "org:create_api_key user:profile user:inference user:sessions:claude_code",
+                completion_mode: OAuthCompletionMode::CodeOnly,
             }),
             runtime: None,
         },

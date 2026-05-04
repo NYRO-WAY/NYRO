@@ -322,6 +322,23 @@ function presetChannelAuthMode(
   return channel?.authMode === "oauth" ? "oauth" : "apikey";
 }
 
+type OAuthCallbackInputMode = "callback_or_code" | "code_only";
+
+function resolveOAuthCallbackInputMode(
+  preset: ProviderPreset | null,
+  channelId: string | null,
+  requiresManualCode: boolean,
+  scheme?: string | null,
+): OAuthCallbackInputMode {
+  const channel = presetChannels(preset).find((item) => item.id === channelId) ?? presetChannels(preset)[0];
+  const presetMode = channel?.oauth?.completionMode;
+  if (presetMode === "callback_or_code" || presetMode === "code_only") {
+    return presetMode;
+  }
+  if (!requiresManualCode) return "callback_or_code";
+  return (scheme ?? "").toLowerCase().includes("pkce") ? "callback_or_code" : "code_only";
+}
+
 function normalizeAuthMode(mode?: string | null): "apikey" | "oauth" {
   if (!mode) return "apikey";
   return mode.trim().toLowerCase() === "oauth" ? "oauth" : "apikey";
@@ -833,9 +850,13 @@ export default function ProvidersPage() {
       setCreateOAuthStatus({
         status: "error",
         code: "OAUTH_INPUT_REQUIRED",
-        message: isZh
-          ? "请粘贴完整回调地址，或单独填写授权码。"
-          : "Paste the full callback URL or enter the authorization code.",
+        message: createOAuthNeedsCallbackInput
+          ? isZh
+            ? "请粘贴完整回调地址，或单独填写授权码。"
+            : "Paste the full callback URL or enter the authorization code."
+          : isZh
+            ? "请填入授权码。"
+            : "Please enter the authorization code.",
       });
       return;
     }
@@ -991,6 +1012,14 @@ export default function ProvidersPage() {
   async function completeEditReauth(providerId: string) {
     const sessionId = editOAuthSession?.session_id;
     if (!sessionId) return;
+    const provider = providers.find((item) => item.id === providerId);
+    const providerPreset = providerPresets.find((item) => item.id === (provider?.preset_key || provider?.vendor || "")) ?? fallbackProviderPreset();
+    const editOAuthNeedsCallbackInput = resolveOAuthCallbackInputMode(
+      providerPreset,
+      provider?.channel || null,
+      editOAuthSession?.requires_manual_code ?? false,
+      editOAuthSession?.scheme,
+    );
 
     const callbackUrl = editOAuthCallbackUrl.trim();
     const code = editOAuthCode.trim();
@@ -998,9 +1027,13 @@ export default function ProvidersPage() {
       setEditOAuthSessionStatus({
         status: "error",
         code: "OAUTH_INPUT_REQUIRED",
-        message: isZh
-          ? "请粘贴完整回调地址，或单独填写授权码。"
-          : "Paste the full callback URL or enter the authorization code.",
+        message: editOAuthNeedsCallbackInput
+          ? isZh
+            ? "请粘贴完整回调地址，或单独填写授权码。"
+            : "Paste the full callback URL or enter the authorization code."
+          : isZh
+            ? "请填入授权码。"
+            : "Please enter the authorization code.",
       });
       return;
     }
@@ -1322,6 +1355,14 @@ export default function ProvidersPage() {
     createOAuthStatus?.status === "pending"
       ? createOAuthStatus.requires_manual_code
       : createOAuthSession?.requires_manual_code ?? false;
+  const createOAuthStatusScheme = createOAuthStatus?.status === "pending" ? createOAuthStatus.scheme : null;
+  const createOAuthInputMode = resolveOAuthCallbackInputMode(
+    selectedPreset ?? fallbackProviderPreset(),
+    createChannelValue,
+    createOAuthRequiresManualCode,
+    createOAuthSession?.scheme ?? createOAuthStatusScheme,
+  );
+  const createOAuthNeedsCallbackInput = createOAuthInputMode === "callback_or_code";
   const showCreateOAuthGuide = createResolvedAuthMode === "oauth" && !createOAuthReady;
 
   useEffect(() => {
@@ -1574,12 +1615,19 @@ export default function ProvidersPage() {
                     <div className={`rounded-lg border p-3 ${createOAuthStatus?.status === "error" ? "border-rose-200 bg-rose-50" : createOAuthSession ? "border-sky-200 bg-sky-50" : "border-slate-200 bg-white"}`}>
                       <div className="flex items-center gap-2 text-sm font-medium text-slate-800">
                         <span className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-xs ${(createOAuthStatus?.status === "pending" || createOAuthStatus?.status === "error") ? "bg-sky-600 text-white" : "bg-slate-200 text-slate-700"}`}>2</span>
-                        <span>{isZh ? "粘贴回调结果" : "Paste Callback Result"}</span>
+                        <span>{isZh ? "提交授权结果" : "Submit Authorization Result"}</span>
                       </div>
                       <p className="mt-2 text-xs text-slate-500">
-                        {isZh ? "浏览器授权完成后，把回调地址或授权码粘贴到这里。" : "After browser authorization, paste the callback URL or authorization code here."}
+                        {createOAuthNeedsCallbackInput
+                          ? isZh
+                            ? "浏览器授权完成后，把回调地址或授权码粘贴到这里。"
+                            : "After browser authorization, paste the callback URL or authorization code here."
+                          : isZh
+                            ? "浏览器授权完成后，填写授权码即可。"
+                            : "After browser authorization, enter the authorization code directly."}
                       </p>
                       <div className="mt-3 space-y-3">
+                        {createOAuthNeedsCallbackInput ? (
                         <div className="space-y-2">
                           <FieldLabel>{isZh ? "回调地址" : "Callback URL"}</FieldLabel>
                           <Input
@@ -1623,6 +1671,7 @@ export default function ProvidersPage() {
                             <p className="text-xs text-rose-600">{createOAuthCallbackError}</p>
                           )}
                         </div>
+                        ) : null}
                         <div className="space-y-2">
                           <FieldLabel>{isZh ? "授权码" : "Authorization Code"}</FieldLabel>
                           <Input
@@ -1636,7 +1685,12 @@ export default function ProvidersPage() {
                           <Button
                             type="button"
                             onClick={completeCreateOAuth}
-                            disabled={createOAuthBusy || !createOAuthSession || !!createOAuthCallbackError}
+                            disabled={
+                              createOAuthBusy
+                              || !createOAuthSession
+                              || !createOAuthRequiresManualCode
+                              || !!createOAuthCallbackError
+                            }
                           >
                             {createOAuthBusy ? (isZh ? "提交中..." : "Submitting...") : (isZh ? "提交结果" : "Submit")}
                           </Button>
@@ -1961,6 +2015,17 @@ export default function ProvidersPage() {
                 || normalizeAuthMode(editForm.auth_mode) === "oauth";
               const editRequiresNewOAuthProvider = editingResolvedAuthMode === "oauth" && !currentProviderIsOAuth;
               const editOAuthStatus = editOAuthStatusQuery.data;
+              const editOAuthRequiresManualCode =
+                editOAuthSessionStatus?.status === "pending"
+                  ? editOAuthSessionStatus.requires_manual_code
+                  : editOAuthSession?.requires_manual_code ?? false;
+              const editOAuthInputMode = resolveOAuthCallbackInputMode(
+                selectedPreset ?? fallbackProviderPreset(),
+                p.channel || editingChannelValue,
+                editOAuthRequiresManualCode,
+                editOAuthSession?.scheme,
+              );
+              const editOAuthNeedsCallbackInput = editOAuthInputMode === "callback_or_code";
               return (
                 <div key={p.id} className="glass rounded-2xl p-5 space-y-4">
                   <div className="flex items-center justify-between">
@@ -2191,12 +2256,19 @@ export default function ProvidersPage() {
                                   <div className={`rounded-lg border p-3 ${editOAuthSession ? "border-sky-200 bg-sky-50" : "border-slate-200 bg-white"}`}>
                                     <div className="flex items-center gap-2 text-sm font-medium text-slate-800">
                                       <span className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-xs ${editOAuthSession ? "bg-sky-600 text-white" : "bg-slate-200 text-slate-700"}`}>2</span>
-                                      <span>{isZh ? "粘贴回调结果" : "Paste Callback Result"}</span>
+                                      <span>{isZh ? "提交授权结果" : "Submit Authorization Result"}</span>
                                     </div>
                                     <p className="mt-2 text-xs text-slate-500">
-                                      {isZh ? "浏览器授权完成后，把回调地址或授权码粘贴到这里。" : "After browser authorization, paste the callback URL or authorization code here."}
+                                      {editOAuthNeedsCallbackInput
+                                        ? isZh
+                                          ? "浏览器授权完成后，把回调地址或授权码粘贴到这里。"
+                                          : "After browser authorization, paste the callback URL or authorization code here."
+                                        : isZh
+                                          ? "浏览器授权完成后，填写授权码即可。"
+                                          : "After browser authorization, enter the authorization code directly."}
                                     </p>
                                     <div className="mt-3 space-y-3">
+                                      {editOAuthNeedsCallbackInput ? (
                                       <div className="space-y-2">
                                         <FieldLabel>{isZh ? "回调地址" : "Callback URL"}</FieldLabel>
                                         <Input
@@ -2216,6 +2288,7 @@ export default function ProvidersPage() {
                                           disabled={!editOAuthSession || editOAuthBusy}
                                         />
                                       </div>
+                                      ) : null}
                                       <div className="space-y-2">
                                         <FieldLabel>{isZh ? "授权码" : "Authorization Code"}</FieldLabel>
                                         <Input
@@ -2229,7 +2302,7 @@ export default function ProvidersPage() {
                                         <Button
                                           type="button"
                                           onClick={() => completeEditReauth(p.id)}
-                                          disabled={editOAuthBusy || !editOAuthSession}
+                                          disabled={editOAuthBusy || !editOAuthSession || !editOAuthRequiresManualCode}
                                         >
                                           {editOAuthBusy ? (isZh ? "提交中..." : "Submitting...") : (isZh ? "提交结果" : "Submit")}
                                         </Button>

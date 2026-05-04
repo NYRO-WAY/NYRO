@@ -11,7 +11,8 @@ use reqwest::header::HeaderMap;
 
 use crate::protocol::vendor::defaults::OpenAiDefault;
 use crate::protocol::vendor::types::{
-    AuthMode, ChannelDef, Label, OAuthConfig, ProtocolBaseUrl, RuntimeConfig, VendorMetadata,
+    AuthMode, ChannelDef, Label, OAuthCompletionMode, OAuthConfig, ProtocolBaseUrl,
+    RuntimeConfig, VendorMetadata,
 };
 use crate::protocol::vendor::{VendorCtx, VendorExtension, VendorRegistration, VendorScope};
 
@@ -64,6 +65,7 @@ const METADATA: VendorMetadata = VendorMetadata {
                 client_id: "app_EMoamEEZ73f0CkXaXp7hrann",
                 redirect_uri: "http://localhost:1455/auth/callback",
                 scope: "openid profile email offline_access",
+                completion_mode: OAuthCompletionMode::CallbackOrCode,
             }),
             runtime: Some(RuntimeConfig {
                 api_base_url: "https://chatgpt.com/backend-api/codex",
