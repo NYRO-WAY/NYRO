@@ -14,23 +14,14 @@ use crate::protocol::vendor::{VendorCtx, VendorExtension, VendorRegistration, Ve
 
 const METADATA: VendorMetadata = VendorMetadata {
     id: "anthropic",
-    label: Label {
-        zh: "Anthropic",
-        en: "Anthropic",
-    },
+    label: Label { zh: "Anthropic", en: "Anthropic" },
     icon: "anthropic",
     default_protocol: "anthropic",
     channels: &[
         ChannelDef {
             id: "default",
-            label: Label {
-                zh: "默认",
-                en: "Default",
-            },
-            base_urls: &[ProtocolBaseUrl {
-                protocol: "anthropic",
-                base_url: "https://api.anthropic.com",
-            }],
+            label: Label { zh: "默认", en: "Default" },
+            base_urls: &[ProtocolBaseUrl { protocol: "anthropic", base_url: "https://api.anthropic.com" }],
             api_key: None,
             models_source: Some("https://api.anthropic.com/v1/models"),
             capabilities_source: Some("ai://models.dev/anthropic"),
@@ -41,14 +32,8 @@ const METADATA: VendorMetadata = VendorMetadata {
         },
         ChannelDef {
             id: "claude-code",
-            label: Label {
-                zh: "Claude Code",
-                en: "Claude Code",
-            },
-            base_urls: &[ProtocolBaseUrl {
-                protocol: "anthropic",
-                base_url: "https://api.anthropic.com",
-            }],
+            label: Label { zh: "Claude Code", en: "Claude Code" },
+            base_urls: &[ProtocolBaseUrl { protocol: "anthropic", base_url: "https://api.anthropic.com" }],
             api_key: None,
             models_source: Some("https://api.anthropic.com/v1/models"),
             capabilities_source: Some("ai://models.dev/anthropic"),

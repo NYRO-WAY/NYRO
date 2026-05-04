@@ -304,10 +304,8 @@ impl AdminService {
                 .oauth_credentials()
                 .upsert(&provider.id, credential_input)
                 .await?;
-            let credential =
-                stored_credential_from_bundle(&session.driver_key, &session.scheme, &bundle);
-            self.sync_provider_runtime_fields(&provider, &credential)
-                .await
+            let credential = stored_credential_from_bundle(&session.driver_key, &session.scheme, &bundle);
+            self.sync_provider_runtime_fields(&provider, &credential).await
         }
         .await;
 
@@ -495,8 +493,7 @@ impl AdminService {
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| anyhow::anyhow!("auth session missing access token"))?;
 
-        let credential =
-            stored_credential_from_bundle(&session.driver_key, &session.scheme, &bundle);
+        let credential = stored_credential_from_bundle(&session.driver_key, &session.scheme, &bundle);
         let credential_input =
             upsert_credential_from_bundle(&session.driver_key, &session.scheme, &bundle);
         match self

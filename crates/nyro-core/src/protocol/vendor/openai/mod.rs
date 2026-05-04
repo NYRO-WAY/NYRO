@@ -15,23 +15,14 @@ use crate::protocol::vendor::{VendorCtx, VendorExtension, VendorRegistration, Ve
 
 const METADATA: VendorMetadata = VendorMetadata {
     id: "openai",
-    label: Label {
-        zh: "OpenAI",
-        en: "OpenAI",
-    },
+    label: Label { zh: "OpenAI", en: "OpenAI" },
     icon: "openai",
     default_protocol: "openai",
     channels: &[
         ChannelDef {
             id: "default",
-            label: Label {
-                zh: "默认",
-                en: "Default",
-            },
-            base_urls: &[ProtocolBaseUrl {
-                protocol: "openai",
-                base_url: "https://api.openai.com/v1",
-            }],
+            label: Label { zh: "默认", en: "Default" },
+            base_urls: &[ProtocolBaseUrl { protocol: "openai", base_url: "https://api.openai.com/v1" }],
             api_key: None,
             models_source: Some("https://api.openai.com/v1/models"),
             capabilities_source: Some("ai://models.dev/openai"),
@@ -42,14 +33,8 @@ const METADATA: VendorMetadata = VendorMetadata {
         },
         ChannelDef {
             id: "codex",
-            label: Label {
-                zh: "Codex",
-                en: "Codex",
-            },
-            base_urls: &[ProtocolBaseUrl {
-                protocol: "openai_responses",
-                base_url: "https://chatgpt.com/backend-api/codex",
-            }],
+            label: Label { zh: "Codex", en: "Codex" },
+            base_urls: &[ProtocolBaseUrl { protocol: "openai_responses", base_url: "https://chatgpt.com/backend-api/codex" }],
             api_key: None,
             models_source: Some("https://chatgpt.com/backend-api/codex/models"),
             capabilities_source: Some("ai://models.dev/openai"),
