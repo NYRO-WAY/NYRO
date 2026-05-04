@@ -18,27 +18,15 @@ use crate::protocol::vendor::{VendorCtx, VendorExtension, VendorRegistration, Ve
 
 const METADATA: VendorMetadata = VendorMetadata {
     id: "ollama",
-    label: Label {
-        zh: "Ollama",
-        en: "Ollama",
-    },
+    label: Label { zh: "Ollama", en: "Ollama" },
     icon: "ollama",
     default_protocol: "openai",
     channels: &[ChannelDef {
         id: "default",
-        label: Label {
-            zh: "默认",
-            en: "Default",
-        },
+        label: Label { zh: "默认", en: "Default" },
         base_urls: &[
-            ProtocolBaseUrl {
-                protocol: "openai",
-                base_url: "http://127.0.0.1:11434/v1",
-            },
-            ProtocolBaseUrl {
-                protocol: "anthropic",
-                base_url: "http://127.0.0.1:11434",
-            },
+            ProtocolBaseUrl { protocol: "openai", base_url: "http://127.0.0.1:11434/v1" },
+            ProtocolBaseUrl { protocol: "anthropic", base_url: "http://127.0.0.1:11434" },
         ],
         api_key: Some("sk-ollama"),
         models_source: Some("http://127.0.0.1:11434/v1/models"),

@@ -2,27 +2,29 @@ use std::collections::{BTreeSet, HashSet};
 use std::convert::Infallible;
 use std::time::Instant;
 
-use chrono::{NaiveDateTime, Utc};
 use async_trait::async_trait;
+use axum::Json;
 use axum::body::Body;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::Json;
-use futures::StreamExt;
+use chrono::{NaiveDateTime, Utc};
 use dashmap::mapref::entry::Entry as DashEntry;
+use futures::StreamExt;
 use reqwest::header::{HeaderMap as ReqwestHeaderMap, HeaderValue as ReqwestHeaderValue};
 use serde_json::Value;
 use tokio::sync::broadcast;
 use tokio::time::{Duration, timeout};
 use tokio_stream::wrappers::ReceiverStream;
 
+use crate::Gateway;
+use crate::cache::entry::CacheEntry;
+use crate::cache::key::{build_cache_key, build_semantic_partition};
 use crate::db::models::{
     Provider, Route, RouteCacheConfig, RouteExactCacheConfig, RouteSemanticCacheConfig, RouteTarget,
 };
-use crate::cache::entry::CacheEntry;
-use crate::cache::key::{build_cache_key, build_semantic_partition};
 use crate::logging::LogEntry;
+use crate::protocol::ProviderProtocols;
 use crate::protocol::codec::google::decoder::GoogleDecoder;
 use crate::protocol::ids::{
     ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GENERATE_V1BETA, OPENAI_CHAT_V1, OPENAI_EMBEDDINGS_V1,
@@ -31,11 +33,9 @@ use crate::protocol::ids::{
 use crate::protocol::registry::ProtocolRegistry;
 use crate::protocol::types::*;
 use crate::protocol::vendor::{VendorCtx, VendorRegistry};
-use crate::protocol::ProviderProtocols;
 use crate::proxy::client::ProxyClient;
 use crate::router::TargetSelector;
 use crate::storage::traits::{ApiKeyAccessRecord, UsageWindow};
-use crate::Gateway;
 
 // ── OpenAI ingress: POST /v1/chat/completions ──
 
@@ -69,14 +69,15 @@ pub async fn embeddings_proxy(
     let request_headers = headers_to_json(&headers);
     let request_body = serde_json::to_string(&body).ok();
 
-    let base_extras = |response_body: Option<String>, request_body_override: Option<String>| LogExtras {
-        method: Some(EMB_METHOD.to_string()),
-        path: Some(EMB_PATH.to_string()),
-        request_headers: request_headers.clone(),
-        request_body: request_body_override.or_else(|| request_body.clone()),
-        response_headers: None,
-        response_body,
-    };
+    let base_extras =
+        |response_body: Option<String>, request_body_override: Option<String>| LogExtras {
+            method: Some(EMB_METHOD.to_string()),
+            path: Some(EMB_PATH.to_string()),
+            request_headers: request_headers.clone(),
+            request_body: request_body_override.or_else(|| request_body.clone()),
+            response_headers: None,
+            response_body,
+        };
 
     let request_model = body
         .get("model")
@@ -87,11 +88,20 @@ pub async fn embeddings_proxy(
     let Some(request_model) = request_model else {
         let msg = "model is required";
         emit_log(
-            &gw, "openai", "openai", "", "",
-            None, "",
-            400, start.elapsed().as_millis() as f64,
-            TokenUsage::default(), false, false,
-            Some(msg.to_string()), None,
+            &gw,
+            "openai",
+            "openai",
+            "",
+            "",
+            None,
+            "",
+            400,
+            start.elapsed().as_millis() as f64,
+            TokenUsage::default(),
+            false,
+            false,
+            Some(msg.to_string()),
+            None,
             base_extras(
                 Some(serde_json::json!({ "error": { "message": msg } }).to_string()),
                 None,
@@ -107,11 +117,20 @@ pub async fn embeddings_proxy(
     let Some(route) = route else {
         let msg = format!("no route for model: {request_model}");
         emit_log(
-            &gw, "openai", "openai", &request_model, "",
-            None, "",
-            404, start.elapsed().as_millis() as f64,
-            TokenUsage::default(), false, false,
-            Some(msg.clone()), None,
+            &gw,
+            "openai",
+            "openai",
+            &request_model,
+            "",
+            None,
+            "",
+            404,
+            start.elapsed().as_millis() as f64,
+            TokenUsage::default(),
+            false,
+            false,
+            Some(msg.clone()),
+            None,
             base_extras(
                 Some(serde_json::json!({ "error": { "message": msg.clone() } }).to_string()),
                 None,
@@ -126,11 +145,20 @@ pub async fn embeddings_proxy(
             route.normalized_route_type()
         );
         emit_log(
-            &gw, "openai", "openai", &request_model, "",
-            None, "",
-            400, start.elapsed().as_millis() as f64,
-            TokenUsage::default(), false, false,
-            Some(msg.clone()), None,
+            &gw,
+            "openai",
+            "openai",
+            &request_model,
+            "",
+            None,
+            "",
+            400,
+            start.elapsed().as_millis() as f64,
+            TokenUsage::default(),
+            false,
+            false,
+            Some(msg.clone()),
+            None,
             base_extras(
                 Some(serde_json::json!({ "error": { "message": msg.clone() } }).to_string()),
                 None,
@@ -145,11 +173,20 @@ pub async fn embeddings_proxy(
         Err(resp) => {
             let status = resp.status().as_u16() as i32;
             emit_log(
-                &gw, "openai", "openai", &request_model, "",
-                None, "",
-                status, start.elapsed().as_millis() as f64,
-                TokenUsage::default(), false, false,
-                Some(format!("authorization failed: {status}")), None,
+                &gw,
+                "openai",
+                "openai",
+                &request_model,
+                "",
+                None,
+                "",
+                status,
+                start.elapsed().as_millis() as f64,
+                TokenUsage::default(),
+                false,
+                false,
+                Some(format!("authorization failed: {status}")),
+                None,
                 base_extras(None, None),
             );
             return resp;
@@ -160,11 +197,20 @@ pub async fn embeddings_proxy(
     if targets.is_empty() {
         let msg = "no route targets configured";
         emit_log(
-            &gw, "openai", "openai", &request_model, "",
-            auth_key.id.as_deref(), "",
-            503, start.elapsed().as_millis() as f64,
-            TokenUsage::default(), false, false,
-            Some(msg.to_string()), None,
+            &gw,
+            "openai",
+            "openai",
+            &request_model,
+            "",
+            auth_key.id.as_deref(),
+            "",
+            503,
+            start.elapsed().as_millis() as f64,
+            TokenUsage::default(),
+            false,
+            false,
+            Some(msg.to_string()),
+            None,
             base_extras(None, None),
         );
         return error_response(503, msg);
@@ -205,7 +251,8 @@ pub async fn embeddings_proxy(
             );
             last_error_message = Some(msg.clone());
             last_error_status = 400;
-            last_error_body = Some(serde_json::json!({ "error": { "message": msg.clone() } }).to_string());
+            last_error_body =
+                Some(serde_json::json!({ "error": { "message": msg.clone() } }).to_string());
             last_error_provider = provider.name.clone();
             last_error = Some(error_response(400, &msg));
             continue;
@@ -253,25 +300,40 @@ pub async fn embeddings_proxy(
             request_headers = match runtime_binding_headers(&provider_runtime.binding) {
                 Ok(h) => h,
                 Err(e) => {
-                    last_error =
-                        Some(error_response(502, &format!("provider runtime binding error: {e}")));
+                    last_error = Some(error_response(
+                        502,
+                        &format!("provider runtime binding error: {e}"),
+                    ));
                     continue;
                 }
             };
-            request_headers.extend(extension.auth_headers(&ctx));
+            if !provider_runtime.binding.disable_default_auth {
+                request_headers.extend(extension.auth_headers(&ctx));
+            }
         }
         let client = match gw.http_client_for_provider(provider.use_proxy).await {
             Ok(http_client) => ProxyClient::new(http_client),
             Err(e) => {
                 let msg = format!("provider transport error: {e}");
                 emit_log(
-                    &gw, "openai", "openai", &request_model, &actual_model,
-                    auth_key.id.as_deref(), &provider.name,
-                    502, start.elapsed().as_millis() as f64,
-                    TokenUsage::default(), false, false,
-                    Some(msg.clone()), None,
+                    &gw,
+                    "openai",
+                    "openai",
+                    &request_model,
+                    &actual_model,
+                    auth_key.id.as_deref(),
+                    &provider.name,
+                    502,
+                    start.elapsed().as_millis() as f64,
+                    TokenUsage::default(),
+                    false,
+                    false,
+                    Some(msg.clone()),
+                    None,
                     base_extras(
-                        Some(serde_json::json!({ "error": { "message": msg.clone() } }).to_string()),
+                        Some(
+                            serde_json::json!({ "error": { "message": msg.clone() } }).to_string(),
+                        ),
                         forwarded_body_str.clone(),
                     ),
                 );
@@ -315,38 +377,62 @@ pub async fn embeddings_proxy(
             Ok((payload, status)) => {
                 let payload_str = serde_json::to_string(&payload).ok();
                 emit_log(
-                    &gw, "openai", "openai", &request_model, &actual_model,
-                    auth_key.id.as_deref(), &provider.name,
-                    status as i32, start.elapsed().as_millis() as f64,
-                    TokenUsage::default(), false, false,
-                    Some(format!("upstream {status}")), None,
+                    &gw,
+                    "openai",
+                    "openai",
+                    &request_model,
+                    &actual_model,
+                    auth_key.id.as_deref(),
+                    &provider.name,
+                    status as i32,
+                    start.elapsed().as_millis() as f64,
+                    TokenUsage::default(),
+                    false,
+                    false,
+                    Some(format!("upstream {status}")),
+                    None,
                     base_extras(payload_str.clone(), forwarded_body_str.clone()),
                 );
                 last_error_status = status as i32;
                 last_error_message = Some(format!("upstream {status}"));
                 last_error_body = payload_str;
                 last_error_provider = provider.name.clone();
-                last_error = Some((
-                    StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
-                    Json(payload),
-                ).into_response());
+                last_error = Some(
+                    (
+                        StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
+                        Json(payload),
+                    )
+                        .into_response(),
+                );
             }
             Err(e) => {
                 let msg = format!("upstream error: {e}");
                 emit_log(
-                    &gw, "openai", "openai", &request_model, &actual_model,
-                    auth_key.id.as_deref(), &provider.name,
-                    502, start.elapsed().as_millis() as f64,
-                    TokenUsage::default(), false, false,
-                    Some(msg.clone()), None,
+                    &gw,
+                    "openai",
+                    "openai",
+                    &request_model,
+                    &actual_model,
+                    auth_key.id.as_deref(),
+                    &provider.name,
+                    502,
+                    start.elapsed().as_millis() as f64,
+                    TokenUsage::default(),
+                    false,
+                    false,
+                    Some(msg.clone()),
+                    None,
                     base_extras(
-                        Some(serde_json::json!({ "error": { "message": msg.clone() } }).to_string()),
+                        Some(
+                            serde_json::json!({ "error": { "message": msg.clone() } }).to_string(),
+                        ),
                         forwarded_body_str.clone(),
                     ),
                 );
                 last_error_status = 502;
                 last_error_message = Some(msg.clone());
-                last_error_body = Some(serde_json::json!({ "error": { "message": msg } }).to_string());
+                last_error_body =
+                    Some(serde_json::json!({ "error": { "message": msg } }).to_string());
                 last_error_provider = provider.name.clone();
                 last_error = Some(error_response(502, &format!("upstream error: {e}")));
             }
@@ -356,11 +442,20 @@ pub async fn embeddings_proxy(
     if last_error.is_none() {
         let msg = "all route targets failed";
         emit_log(
-            &gw, "openai", "openai", &request_model, &last_actual_model,
-            auth_key.id.as_deref(), &last_error_provider,
-            last_error_status, start.elapsed().as_millis() as f64,
-            TokenUsage::default(), false, false,
-            last_error_message.or(Some(msg.to_string())), None,
+            &gw,
+            "openai",
+            "openai",
+            &request_model,
+            &last_actual_model,
+            auth_key.id.as_deref(),
+            &last_error_provider,
+            last_error_status,
+            start.elapsed().as_millis() as f64,
+            TokenUsage::default(),
+            false,
+            false,
+            last_error_message.or(Some(msg.to_string())),
+            None,
             base_extras(last_error_body, None),
         );
         return error_response(502, msg);
@@ -387,7 +482,14 @@ pub async fn anthropic_proxy(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
-    universal_proxy(gw, headers, body, ANTHROPIC_MESSAGES_2023_06_01, "/v1/messages").await
+    universal_proxy(
+        gw,
+        headers,
+        body,
+        ANTHROPIC_MESSAGES_2023_06_01,
+        "/v1/messages",
+    )
+    .await
 }
 
 // ── Gemini ingress: POST /v1beta/models/:model_action ──
@@ -523,7 +625,9 @@ async fn universal_proxy(
         Ok(r) => r,
         Err(e) => {
             let ingress_str = ingress.to_string();
-            let error_body = serde_json::json!({ "error": { "message": format!("invalid request: {e}") } }).to_string();
+            let error_body =
+                serde_json::json!({ "error": { "message": format!("invalid request: {e}") } })
+                    .to_string();
             emit_log(
                 &gw,
                 &ingress_str,
@@ -719,7 +823,8 @@ async fn proxy_pipeline(
         .as_ref()
         .map(|(system_prompt, _)| build_semantic_partition(&internal.model, system_prompt));
 
-    if let (Some(cache_backend), Some(key)) = (cache_backend.as_ref(), request_cache_key.as_deref()) {
+    if let (Some(cache_backend), Some(key)) = (cache_backend.as_ref(), request_cache_key.as_deref())
+    {
         if exact_enabled_for_route {
             if let Ok(Some(bytes)) = cache_backend.get(key).await {
                 if let Ok(cached_entry) = serde_json::from_slice::<CacheEntry>(&bytes) {
@@ -739,7 +844,10 @@ async fn proxy_pipeline(
                         &ingress_str,
                         &ingress_str,
                         &request_model,
-                        cached_entry.actual_model.as_deref().unwrap_or(&request_model),
+                        cached_entry
+                            .actual_model
+                            .as_deref()
+                            .unwrap_or(&request_model),
                         auth_key.id.as_deref(),
                         &cached_entry.provider_name,
                         cached_entry.status_code as i32,
@@ -790,7 +898,10 @@ async fn proxy_pipeline(
                                     &ingress_str,
                                     &ingress_str,
                                     &request_model,
-                                    cached_entry.actual_model.as_deref().unwrap_or(&request_model),
+                                    cached_entry
+                                        .actual_model
+                                        .as_deref()
+                                        .unwrap_or(&request_model),
                                     auth_key.id.as_deref(),
                                     &cached_entry.provider_name,
                                     cached_entry.status_code as i32,
@@ -806,7 +917,8 @@ async fn proxy_pipeline(
                                         request_headers: request_headers_str.clone(),
                                         request_body: request_body_str.clone(),
                                         response_headers: None,
-                                        response_body: serde_json::to_string(&cached_entry.payload).ok(),
+                                        response_body: serde_json::to_string(&cached_entry.payload)
+                                            .ok(),
                                     },
                                 );
                                 return response;
@@ -832,14 +944,18 @@ async fn proxy_pipeline(
         ) {
             if let Ok(vector) = compute_embedding(&gw, semantic_text).await {
                 semantic_query_vector = Some(vector.clone());
-                if let Ok(Some(hit)) = vector_store.search(partition, &vector, semantic_threshold).await {
+                if let Ok(Some(hit)) = vector_store
+                    .search(partition, &vector, semantic_threshold)
+                    .await
+                {
                     if let Ok(cached_entry) = serde_json::from_slice::<CacheEntry>(&hit.data) {
                         if !is_semantic_entry_expired(&cached_entry, semantic_ttl) {
                             if exact_enabled_for_route {
                                 if let (Some(cache_backend), Some(key)) =
                                     (cache_backend.as_ref(), request_cache_key.as_deref())
                                 {
-                                    let _ = cache_backend.set(key, &hit.data, Some(exact_ttl)).await;
+                                    let _ =
+                                        cache_backend.set(key, &hit.data, Some(exact_ttl)).await;
                                 }
                             }
                             let response = cached_entry_to_response(
@@ -858,7 +974,10 @@ async fn proxy_pipeline(
                                 &ingress_str,
                                 &ingress_str,
                                 &request_model,
-                                cached_entry.actual_model.as_deref().unwrap_or(&request_model),
+                                cached_entry
+                                    .actual_model
+                                    .as_deref()
+                                    .unwrap_or(&request_model),
                                 auth_key.id.as_deref(),
                                 &cached_entry.provider_name,
                                 cached_entry.status_code as i32,
@@ -874,7 +993,8 @@ async fn proxy_pipeline(
                                     request_headers: request_headers_str.clone(),
                                     request_body: request_body_str.clone(),
                                     response_headers: None,
-                                    response_body: serde_json::to_string(&cached_entry.payload).ok(),
+                                    response_body: serde_json::to_string(&cached_entry.payload)
+                                        .ok(),
                                 },
                             );
                             return response;
@@ -984,7 +1104,10 @@ async fn proxy_pipeline(
         let provider_runtime = match gw.admin().resolve_provider_runtime(&provider).await {
             Ok(runtime) => runtime,
             Err(e) => {
-                last_response = Some(error_response(502, &format!("provider credential error: {e}")));
+                last_response = Some(error_response(
+                    502,
+                    &format!("provider credential error: {e}"),
+                ));
                 continue;
             }
         };
@@ -1045,8 +1168,10 @@ async fn proxy_pipeline(
                 .pre_request(&ctx, &mut internal_for_target, &gw)
                 .await
             {
-                last_response =
-                    Some(error_response(502, &format!("vendor pre_request error: {e}")));
+                last_response = Some(error_response(
+                    502,
+                    &format!("vendor pre_request error: {e}"),
+                ));
                 continue;
             }
         }
@@ -1088,7 +1213,9 @@ async fn proxy_pipeline(
                 }
             };
             request_headers.extend(extra_headers.clone());
-            request_headers.extend(extension.auth_headers(&ctx));
+            if !provider_runtime.binding.disable_default_auth {
+                request_headers.extend(extension.auth_headers(&ctx));
+            }
         }
 
         let client = match gw.http_client_for_provider(provider.use_proxy).await {
@@ -1232,7 +1359,6 @@ async fn proxy_pipeline(
     })
 }
 
-
 #[allow(clippy::too_many_arguments)]
 async fn handle_non_stream(
     gw: Gateway,
@@ -1271,30 +1397,49 @@ async fn handle_non_stream(
         Ok(r) => r,
         Err(e) => {
             emit_log(
-                &gw, ingress_str, egress_str, request_model, actual_model,
+                &gw,
+                ingress_str,
+                egress_str,
+                request_model,
+                actual_model,
                 api_key_id,
-                &provider.name, 502, start.elapsed().as_millis() as f64,
-                TokenUsage::default(), false, false,
-                Some(e.to_string()), None,
+                &provider.name,
+                502,
+                start.elapsed().as_millis() as f64,
+                TokenUsage::default(),
+                false,
+                false,
+                Some(e.to_string()),
+                None,
                 make_extras(Some(
-                    serde_json::json!({ "error": { "message": format!("upstream error: {e}") } }).to_string(),
+                    serde_json::json!({ "error": { "message": format!("upstream error: {e}") } })
+                        .to_string(),
                 )),
             );
             return error_response(502, &format!("upstream error: {e}"));
         }
     };
-    
+
     let (resp, status) = call_result;
 
     if status >= 400 {
         let body_str = serde_json::to_string(&resp).ok();
         let preview = body_str.as_ref().map(|s| s.chars().take(500).collect());
         emit_log(
-            &gw, ingress_str, egress_str, request_model, actual_model,
+            &gw,
+            ingress_str,
+            egress_str,
+            request_model,
+            actual_model,
             api_key_id,
-            &provider.name, status as i32, start.elapsed().as_millis() as f64,
-            TokenUsage::default(), false, false,
-            preview, None,
+            &provider.name,
+            status as i32,
+            start.elapsed().as_millis() as f64,
+            TokenUsage::default(),
+            false,
+            false,
+            preview,
+            None,
             make_extras(body_str),
         );
         return (
@@ -1311,13 +1456,23 @@ async fn handle_non_stream(
         Ok(r) => r,
         Err(e) => {
             emit_log(
-                &gw, ingress_str, egress_str, request_model, actual_model,
+                &gw,
+                ingress_str,
+                egress_str,
+                request_model,
+                actual_model,
                 api_key_id,
-                &provider.name, 500, start.elapsed().as_millis() as f64,
-                TokenUsage::default(), false, false,
-                Some(format!("parse error: {e}")), None,
+                &provider.name,
+                500,
+                start.elapsed().as_millis() as f64,
+                TokenUsage::default(),
+                false,
+                false,
+                Some(format!("parse error: {e}")),
+                None,
                 make_extras(Some(
-                    serde_json::json!({ "error": { "message": format!("parse error: {e}") } }).to_string(),
+                    serde_json::json!({ "error": { "message": format!("parse error: {e}") } })
+                        .to_string(),
                 )),
             );
             return error_response(500, &format!("parse error: {e}"));
@@ -1336,10 +1491,20 @@ async fn handle_non_stream(
         .map(|s| s.chars().take(500).collect());
 
     emit_log(
-        &gw, ingress_str, egress_str, request_model, actual_model,
+        &gw,
+        ingress_str,
+        egress_str,
+        request_model,
+        actual_model,
         api_key_id,
-        &provider.name, status as i32, start.elapsed().as_millis() as f64,
-        usage.clone(), false, is_tool, None, response_preview,
+        &provider.name,
+        status as i32,
+        start.elapsed().as_millis() as f64,
+        usage.clone(),
+        false,
+        is_tool,
+        None,
+        response_preview,
         make_extras(response_body_full),
     );
 
@@ -1368,7 +1533,9 @@ async fn handle_non_stream(
                 }
             }
             let vector_store = gw.vector_store.read().await.clone();
-            if let (Some(vector_store), Some(ctx)) = (vector_store.as_ref(), semantic_write_ctx.as_ref()) {
+            if let (Some(vector_store), Some(ctx)) =
+                (vector_store.as_ref(), semantic_write_ctx.as_ref())
+            {
                 let vector = if let Some(existing) = ctx.query_vector.clone() {
                     Some(existing)
                 } else {
@@ -1376,12 +1543,7 @@ async fn handle_non_stream(
                 };
                 if let Some(vector) = vector {
                     let _ = vector_store
-                        .upsert(
-                            &ctx.partition,
-                            ctx.key.clone(),
-                            vector,
-                            bytes,
-                        )
+                        .upsert(&ctx.partition, ctx.key.clone(), vector, bytes)
                         .await;
                 }
             }
@@ -1419,11 +1581,20 @@ async fn handle_non_stream_via_upstream_stream(
         Ok(r) => r,
         Err(e) => {
             emit_log(
-                &gw, ingress_str, egress_str, request_model, actual_model,
+                &gw,
+                ingress_str,
+                egress_str,
+                request_model,
+                actual_model,
                 api_key_id,
-                &provider.name, 502, start.elapsed().as_millis() as f64,
-                TokenUsage::default(), false, false,
-                Some(e.to_string()), None,
+                &provider.name,
+                502,
+                start.elapsed().as_millis() as f64,
+                TokenUsage::default(),
+                false,
+                false,
+                Some(e.to_string()),
+                None,
                 LogExtras::default(),
             );
             return error_response(502, &format!("upstream error: {e}"));
@@ -1438,11 +1609,20 @@ async fn handle_non_stream_via_upstream_stream(
             .await
             .unwrap_or_else(|_| serde_json::json!({"error": {"message": "upstream error"}}));
         emit_log(
-            &gw, ingress_str, egress_str, request_model, actual_model,
+            &gw,
+            ingress_str,
+            egress_str,
+            request_model,
+            actual_model,
             api_key_id,
-            &provider.name, status as i32, start.elapsed().as_millis() as f64,
-            TokenUsage::default(), false, false,
-            Some(err_body.to_string()), None,
+            &provider.name,
+            status as i32,
+            start.elapsed().as_millis() as f64,
+            TokenUsage::default(),
+            false,
+            false,
+            Some(err_body.to_string()),
+            None,
             LogExtras::default(),
         );
         return (
@@ -1461,11 +1641,20 @@ async fn handle_non_stream_via_upstream_stream(
             Ok(b) => b,
             Err(e) => {
                 emit_log(
-                    &gw, ingress_str, egress_str, request_model, actual_model,
+                    &gw,
+                    ingress_str,
+                    egress_str,
+                    request_model,
+                    actual_model,
                     api_key_id,
-                    &provider.name, 502, start.elapsed().as_millis() as f64,
-                    TokenUsage::default(), false, false,
-                    Some(format!("stream read error: {e}")), None,
+                    &provider.name,
+                    502,
+                    start.elapsed().as_millis() as f64,
+                    TokenUsage::default(),
+                    false,
+                    false,
+                    Some(format!("stream read error: {e}")),
+                    None,
                     LogExtras::default(),
                 );
                 return error_response(502, &format!("upstream stream error: {e}"));
@@ -1504,10 +1693,20 @@ async fn handle_non_stream_via_upstream_stream(
         .map(|s| s.chars().take(500).collect());
 
     emit_log(
-        &gw, ingress_str, egress_str, request_model, actual_model,
+        &gw,
+        ingress_str,
+        egress_str,
+        request_model,
+        actual_model,
         api_key_id,
-        &provider.name, status as i32, start.elapsed().as_millis() as f64,
-        usage.clone(), false, is_tool, None, response_preview,
+        &provider.name,
+        status as i32,
+        start.elapsed().as_millis() as f64,
+        usage.clone(),
+        false,
+        is_tool,
+        None,
+        response_preview,
         LogExtras::default(),
     );
 
@@ -1601,19 +1800,29 @@ async fn handle_stream(
         Ok(r) => r,
         Err(e) => {
             emit_log(
-                &gw, ingress_str, egress_str, request_model, actual_model,
+                &gw,
+                ingress_str,
+                egress_str,
+                request_model,
+                actual_model,
                 api_key_id,
-                &provider.name, 502, start.elapsed().as_millis() as f64,
-                TokenUsage::default(), true, false,
-                Some(e.to_string()), None,
+                &provider.name,
+                502,
+                start.elapsed().as_millis() as f64,
+                TokenUsage::default(),
+                true,
+                false,
+                Some(e.to_string()),
+                None,
                 make_extras_owned(Some(
-                    serde_json::json!({ "error": { "message": format!("upstream error: {e}") } }).to_string(),
+                    serde_json::json!({ "error": { "message": format!("upstream error: {e}") } })
+                        .to_string(),
                 )),
             );
             return error_response(502, &format!("upstream error: {e}"));
         }
     };
-    
+
     let (resp, status) = call_result;
 
     if status >= 400 {
@@ -1623,11 +1832,20 @@ async fn handle_stream(
             .unwrap_or_else(|_| serde_json::json!({"error": {"message": "upstream error"}}));
         let err_body_str = serde_json::to_string(&err_body).ok();
         emit_log(
-            &gw, ingress_str, egress_str, request_model, actual_model,
+            &gw,
+            ingress_str,
+            egress_str,
+            request_model,
+            actual_model,
             api_key_id,
-            &provider.name, status as i32, start.elapsed().as_millis() as f64,
-            TokenUsage::default(), true, false,
-            Some(err_body.to_string()), None,
+            &provider.name,
+            status as i32,
+            start.elapsed().as_millis() as f64,
+            TokenUsage::default(),
+            true,
+            false,
+            Some(err_body.to_string()),
+            None,
             make_extras_owned(err_body_str),
         );
         return (
@@ -1713,10 +1931,20 @@ async fn handle_stream(
         let aggregated_output = aggregated_formatter.format_response(&internal);
         let aggregated_body_str = serde_json::to_string(&aggregated_output).ok();
         emit_log(
-            &gw_log, &ingress_s, &egress_s, &req_model, &act_model,
+            &gw_log,
+            &ingress_s,
+            &egress_s,
+            &req_model,
+            &act_model,
             key_id.as_deref(),
-            &provider_name, 200, start.elapsed().as_millis() as f64,
-            internal.usage.clone(), true, !internal.tool_calls.is_empty(), None, None,
+            &provider_name,
+            200,
+            start.elapsed().as_millis() as f64,
+            internal.usage.clone(),
+            true,
+            !internal.tool_calls.is_empty(),
+            None,
+            None,
             LogExtras {
                 method: Some(ingress_method_owned.clone()),
                 path: Some(ingress_path_owned.clone()),
@@ -1730,7 +1958,9 @@ async fn handle_stream(
         let mut singleflight_payload: Option<Vec<u8>> = None;
         if allow_exact_store && internal.tool_calls.is_empty() {
             let cache_backend = gw_log.cache_backend.read().await.clone();
-            if let (Some(cache_backend), Some(cache_key)) = (cache_backend.as_ref(), cache_key_owned.as_deref()) {
+            if let (Some(cache_backend), Some(cache_key)) =
+                (cache_backend.as_ref(), cache_key_owned.as_deref())
+            {
                 let formatter = ingress.handler().make_response_formatter();
                 let payload = formatter.format_response(&internal);
                 let entry = CacheEntry {
@@ -1743,10 +1973,14 @@ async fn handle_stream(
                     internal_response: Some(internal.clone()),
                 };
                 if let Ok(bytes) = serde_json::to_vec(&entry) {
-                    let _ = cache_backend.set(cache_key, &bytes, exact_cache_ttl_owned).await;
+                    let _ = cache_backend
+                        .set(cache_key, &bytes, exact_cache_ttl_owned)
+                        .await;
                     singleflight_payload = Some(bytes.clone());
                     let vector_store = gw_log.vector_store.read().await.clone();
-                    if let (Some(vector_store), Some(ctx)) = (vector_store.as_ref(), semantic_write_ctx_owned.as_ref()) {
+                    if let (Some(vector_store), Some(ctx)) =
+                        (vector_store.as_ref(), semantic_write_ctx_owned.as_ref())
+                    {
                         let vector = if let Some(existing) = ctx.query_vector.clone() {
                             Some(existing)
                         } else {
@@ -1754,12 +1988,7 @@ async fn handle_stream(
                         };
                         if let Some(vector) = vector {
                             let _ = vector_store
-                                .upsert(
-                                    &ctx.partition,
-                                    ctx.key.clone(),
-                                    vector,
-                                    bytes,
-                                )
+                                .upsert(&ctx.partition, ctx.key.clone(), vector, bytes)
                                 .await;
                         }
                     }
@@ -1767,7 +1996,9 @@ async fn handle_stream(
             }
         } else if internal.tool_calls.is_empty() {
             let vector_store = gw_log.vector_store.read().await.clone();
-            if let (Some(vector_store), Some(ctx)) = (vector_store.as_ref(), semantic_write_ctx_owned.as_ref()) {
+            if let (Some(vector_store), Some(ctx)) =
+                (vector_store.as_ref(), semantic_write_ctx_owned.as_ref())
+            {
                 let formatter = ingress.handler().make_response_formatter();
                 let payload = formatter.format_response(&internal);
                 let entry = CacheEntry {
@@ -1787,12 +2018,7 @@ async fn handle_stream(
                     };
                     if let Some(vector) = vector {
                         let _ = vector_store
-                            .upsert(
-                                &ctx.partition,
-                                ctx.key.clone(),
-                                vector,
-                                bytes,
-                            )
+                            .upsert(&ctx.partition, ctx.key.clone(), vector, bytes)
                             .await;
                     }
                 }
@@ -1830,8 +2056,13 @@ trait ProxyAccessStore {
     async fn get_active_provider(&self, id: &str) -> anyhow::Result<Option<Provider>>;
     async fn find_api_key(&self, raw_key: &str) -> anyhow::Result<Option<ApiKeyAccessRecord>>;
     async fn route_binding_exists(&self, api_key_id: &str, route_id: &str) -> anyhow::Result<bool>;
-    async fn request_count_since(&self, api_key_id: &str, window: UsageWindow) -> anyhow::Result<i64>;
-    async fn token_count_since(&self, api_key_id: &str, window: UsageWindow) -> anyhow::Result<i64>;
+    async fn request_count_since(
+        &self,
+        api_key_id: &str,
+        window: UsageWindow,
+    ) -> anyhow::Result<i64>;
+    async fn token_count_since(&self, api_key_id: &str, window: UsageWindow)
+    -> anyhow::Result<i64>;
 }
 
 struct GatewayProxyAccessStore<'a> {
@@ -1865,14 +2096,22 @@ impl ProxyAccessStore for GatewayProxyAccessStore<'_> {
         }
     }
 
-    async fn request_count_since(&self, api_key_id: &str, window: UsageWindow) -> anyhow::Result<i64> {
+    async fn request_count_since(
+        &self,
+        api_key_id: &str,
+        window: UsageWindow,
+    ) -> anyhow::Result<i64> {
         match self.gw.storage.auth() {
             Some(store) => store.request_count_since(api_key_id, window).await,
             None => Ok(0),
         }
     }
 
-    async fn token_count_since(&self, api_key_id: &str, window: UsageWindow) -> anyhow::Result<i64> {
+    async fn token_count_since(
+        &self,
+        api_key_id: &str,
+        window: UsageWindow,
+    ) -> anyhow::Result<i64> {
         match self.gw.storage.auth() {
             Some(store) => store.token_count_since(api_key_id, window).await,
             None => Ok(0),
@@ -1976,7 +2215,10 @@ fn is_key_expired(expires_at: &str) -> bool {
 }
 
 fn extract_api_key(headers: &HeaderMap) -> Option<String> {
-    if let Some(value) = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()) {
+    if let Some(value) = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+    {
         if let Some(token) = value.strip_prefix("Bearer ") {
             let token = token.trim();
             if !token.is_empty() {
@@ -1993,7 +2235,10 @@ fn extract_api_key(headers: &HeaderMap) -> Option<String> {
         .map(ToString::to_string)
 }
 
-async fn get_provider<S: ProxyAccessStore + ?Sized>(access_store: &S, id: &str) -> anyhow::Result<Provider> {
+async fn get_provider<S: ProxyAccessStore + ?Sized>(
+    access_store: &S,
+    id: &str,
+) -> anyhow::Result<Provider> {
     access_store
         .get_active_provider(id)
         .await?
@@ -2131,7 +2376,9 @@ async fn compute_embedding(gw: &Gateway, text: &str) -> anyhow::Result<Vec<f32>>
                 Ok(h) => h,
                 Err(_) => continue,
             };
-            request_headers.extend(extension.auth_headers(&ctx));
+            if !provider_runtime.binding.disable_default_auth {
+                request_headers.extend(extension.auth_headers(&ctx));
+            }
         }
         let client = match gw.http_client_for_provider(provider.use_proxy).await {
             Ok(http_client) => ProxyClient::new(http_client),
@@ -2171,11 +2418,7 @@ fn parse_embedding_vector(payload: &Value) -> Option<Vec<f32>> {
     for value in embedding {
         out.push(value.as_f64()? as f32);
     }
-    if out.is_empty() {
-        None
-    } else {
-        Some(out)
-    }
+    if out.is_empty() { None } else { Some(out) }
 }
 
 fn resolve_openai_base_url(provider: &Provider) -> Option<String> {
@@ -2221,10 +2464,12 @@ fn resolve_route_cache(route: &Route) -> RouteCacheConfig {
     let exact = route.cache_exact_ttl.map(|ttl| RouteExactCacheConfig {
         ttl: if ttl > 0 { Some(ttl) } else { None },
     });
-    let semantic = route.cache_semantic_ttl.map(|ttl| RouteSemanticCacheConfig {
-        ttl: if ttl > 0 { Some(ttl) } else { None },
-        threshold: route.cache_semantic_threshold,
-    });
+    let semantic = route
+        .cache_semantic_ttl
+        .map(|ttl| RouteSemanticCacheConfig {
+            ttl: if ttl > 0 { Some(ttl) } else { None },
+            threshold: route.cache_semantic_threshold,
+        });
     RouteCacheConfig { exact, semantic }
 }
 
@@ -2341,7 +2586,13 @@ fn cached_entry_to_response(
         Json(entry.payload.clone()),
     )
         .into_response();
-    set_cache_headers(&mut response, cache_status, cache_key, score, expose_headers);
+    set_cache_headers(
+        &mut response,
+        cache_status,
+        cache_key,
+        score,
+        expose_headers,
+    );
     response
 }
 
@@ -2405,7 +2656,13 @@ fn replay_cached_stream(
         .header(header::CONNECTION, "keep-alive")
         .body(body)
         .unwrap();
-    set_cache_headers(&mut response, cache_status, cache_key, score, expose_headers);
+    set_cache_headers(
+        &mut response,
+        cache_status,
+        cache_key,
+        score,
+        expose_headers,
+    );
     response
 }
 
@@ -2606,7 +2863,9 @@ fn ensure_tool_index(tool_calls: &mut Vec<Option<ToolCall>>, index: usize) {
     }
 }
 
-fn runtime_binding_headers(binding: &crate::auth::RuntimeBinding) -> anyhow::Result<ReqwestHeaderMap> {
+fn runtime_binding_headers(
+    binding: &crate::auth::RuntimeBinding,
+) -> anyhow::Result<ReqwestHeaderMap> {
     let mut headers = ReqwestHeaderMap::new();
     for (key, value) in &binding.extra_headers {
         headers.insert(

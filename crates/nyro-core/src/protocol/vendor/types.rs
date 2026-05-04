@@ -28,6 +28,14 @@ pub enum AuthMode {
     SetupToken,
 }
 
+/// OAuth completion UI mode advertised to the WebUI.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OAuthCompletionMode {
+    CallbackOrCode,
+    CodeOnly,
+}
+
 /// (protocol_alias, base_url) pair. Protocol uses the legacy alias
 /// (`openai` / `anthropic` / `gemini` / `openai_responses`) so the JSON
 /// equivalence test in PR2A can compare byte-for-byte against
@@ -49,6 +57,7 @@ pub struct OAuthConfig {
     pub client_id: &'static str,
     pub redirect_uri: &'static str,
     pub scope: &'static str,
+    pub completion_mode: OAuthCompletionMode,
 }
 
 /// Runtime hints used by OAuth drivers (currently only Codex).

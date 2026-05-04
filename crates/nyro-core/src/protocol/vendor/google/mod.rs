@@ -17,27 +17,15 @@ use crate::protocol::vendor::{VendorCtx, VendorExtension, VendorRegistration, Ve
 
 const METADATA: VendorMetadata = VendorMetadata {
     id: "google",
-    label: Label {
-        zh: "Google",
-        en: "Google",
-    },
+    label: Label { zh: "Google", en: "Google" },
     icon: "google",
     default_protocol: "gemini",
     channels: &[ChannelDef {
         id: "default",
-        label: Label {
-            zh: "默认",
-            en: "Default",
-        },
+        label: Label { zh: "默认", en: "Default" },
         base_urls: &[
-            ProtocolBaseUrl {
-                protocol: "openai",
-                base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
-            },
-            ProtocolBaseUrl {
-                protocol: "gemini",
-                base_url: "https://generativelanguage.googleapis.com",
-            },
+            ProtocolBaseUrl { protocol: "openai", base_url: "https://generativelanguage.googleapis.com/v1beta/openai" },
+            ProtocolBaseUrl { protocol: "gemini", base_url: "https://generativelanguage.googleapis.com" },
         ],
         api_key: None,
         models_source: Some("https://generativelanguage.googleapis.com/v1beta/openai/models"),

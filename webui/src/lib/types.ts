@@ -159,6 +159,8 @@ export type ProviderProtocol =
   | "anthropic"
   | "gemini";
 
+export type ProviderOAuthInputMode = "callback_or_code" | "code_only";
+
 export interface ProviderChannelPreset {
   id: string;
   label: {
@@ -172,6 +174,9 @@ export interface ProviderChannelPreset {
   apiKey?: string;
   modelsEndpoint?: string;
   staticModels?: string[];
+  oauth?: {
+    completionMode?: ProviderOAuthInputMode;
+  };
 }
 
 export interface ProviderPreset {

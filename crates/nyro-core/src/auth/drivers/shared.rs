@@ -160,6 +160,17 @@ fn parse_callback_like_value(raw: &str) -> OAuthCallbackPayload {
         }
     }
 
+    if let Some(hash_pos) = raw.find('#') {
+        let code = raw[..hash_pos].trim();
+        let state = raw[(hash_pos + 1)..].trim();
+        if !code.is_empty() || !state.is_empty() {
+            return OAuthCallbackPayload {
+                code: (!code.is_empty()).then(|| code.to_string()),
+                state: (!state.is_empty()).then(|| state.to_string()),
+            };
+        }
+    }
+
     OAuthCallbackPayload::default()
 }
 

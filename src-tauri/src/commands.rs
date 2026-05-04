@@ -90,11 +90,11 @@ pub async fn get_model_capabilities(
 #[tauri::command]
 pub async fn init_oauth_session(
     gw: State<'_, Gateway>,
-    vendor: String,
+    driver_key: String,
     use_proxy: Option<bool>,
 ) -> Result<AuthSessionInitData, String> {
     gw.admin()
-        .init_oauth_session(&vendor, use_proxy.unwrap_or(false))
+        .init_oauth_session(&driver_key, use_proxy.unwrap_or(false))
         .await
         .map_err(|e| e.to_string())
 }
