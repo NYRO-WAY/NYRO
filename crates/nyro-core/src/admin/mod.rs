@@ -370,12 +370,7 @@ impl AdminService {
             anyhow::bail!("auth driver does not support reconnect: {driver_key}");
         }
 
-        let oauth_cred = self
-            .gw
-            .storage
-            .oauth_credentials()
-            .get(&provider.id)
-            .await?
+        let oauth_cred = self.gw.storage.oauth_credentials().get(&provider.id).await?
             .ok_or_else(|| anyhow::anyhow!("provider oauth credential not found"))?;
 
         let credential = stored_credential_from_oauth(&oauth_cred, &driver_key);
@@ -403,12 +398,7 @@ impl AdminService {
         {
             Ok(bundle) => bundle,
             Err(error) => {
-                let _ = self
-                    .gw
-                    .storage
-                    .oauth_credentials()
-                    .fail_refresh(&provider.id, &error.to_string())
-                    .await;
+                let _ = self.gw.storage.oauth_credentials().fail_refresh(&provider.id, &error.to_string()).await;
                 return Ok(build_provider_oauth_status(
                     &provider,
                     &driver_key,
@@ -496,13 +486,7 @@ impl AdminService {
         let credential = stored_credential_from_bundle(&session.driver_key, &session.scheme, &bundle);
         let credential_input =
             upsert_credential_from_bundle(&session.driver_key, &session.scheme, &bundle);
-        match self
-            .gw
-            .storage
-            .oauth_credentials()
-            .upsert(&provider.id, credential_input)
-            .await
-        {
+        match self.gw.storage.oauth_credentials().upsert(&provider.id, credential_input).await {
             Ok(_) => {}
             Err(error) => {
                 self.restore_auth_session_record(session).await?;
@@ -512,12 +496,7 @@ impl AdminService {
         let provider = match self.sync_provider_runtime_fields(&provider, &credential).await {
             Ok(provider) => provider,
             Err(error) => {
-                let _ = self
-                    .gw
-                    .storage
-                    .oauth_credentials()
-                    .delete(&provider.id)
-                    .await;
+                let _ = self.gw.storage.oauth_credentials().delete(&provider.id).await;
                 self.restore_auth_session_record(session).await?;
                 return Err(error);
             }
@@ -1778,12 +1757,7 @@ impl AdminService {
             });
         }
 
-        let oauth_cred = self
-            .gw
-            .storage
-            .oauth_credentials()
-            .get(&provider.id)
-            .await?;
+        let oauth_cred = self.gw.storage.oauth_credentials().get(&provider.id).await?;
 
         let oauth_cred = match oauth_cred {
             Some(c) => c,

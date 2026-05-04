@@ -19,14 +19,8 @@ const METADATA: VendorMetadata = VendorMetadata {
             id: "default",
             label: Label { zh: "默认", en: "Default" },
             base_urls: &[
-                ProtocolBaseUrl {
-                    protocol: "openai",
-                    base_url: "https://api.z.ai/api/paas/v4",
-                },
-                ProtocolBaseUrl {
-                    protocol: "anthropic",
-                    base_url: "https://api.z.ai/api/anthropic",
-                },
+                ProtocolBaseUrl { protocol: "openai", base_url: "https://api.z.ai/api/paas/v4" },
+                ProtocolBaseUrl { protocol: "anthropic", base_url: "https://api.z.ai/api/anthropic" },
             ],
             api_key: None,
             models_source: Some("https://api.z.ai/api/paas/v4/models"),
@@ -40,14 +34,8 @@ const METADATA: VendorMetadata = VendorMetadata {
             id: "coding",
             label: Label { zh: "Coding Plan", en: "Coding Plan" },
             base_urls: &[
-                ProtocolBaseUrl {
-                    protocol: "openai",
-                    base_url: "https://api.z.ai/api/coding/paas/v4",
-                },
-                ProtocolBaseUrl {
-                    protocol: "anthropic",
-                    base_url: "https://api.z.ai/api/anthropic",
-                },
+                ProtocolBaseUrl { protocol: "openai", base_url: "https://api.z.ai/api/coding/paas/v4" },
+                ProtocolBaseUrl { protocol: "anthropic", base_url: "https://api.z.ai/api/anthropic" },
             ],
             api_key: None,
             models_source: Some("https://api.z.ai/api/coding/paas/v4/models"),

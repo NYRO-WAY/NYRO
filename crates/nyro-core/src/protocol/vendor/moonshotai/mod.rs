@@ -20,14 +20,8 @@ const METADATA: VendorMetadata = VendorMetadata {
             id: "default",
             label: Label { zh: "默认", en: "Default" },
             base_urls: &[
-                ProtocolBaseUrl {
-                    protocol: "openai",
-                    base_url: "https://api.moonshot.ai/v1",
-                },
-                ProtocolBaseUrl {
-                    protocol: "anthropic",
-                    base_url: "https://api.moonshot.ai/anthropic",
-                },
+                ProtocolBaseUrl { protocol: "openai", base_url: "https://api.moonshot.ai/v1" },
+                ProtocolBaseUrl { protocol: "anthropic", base_url: "https://api.moonshot.ai/anthropic" },
             ],
             api_key: None,
             models_source: Some("https://api.moonshot.ai/v1/models"),
@@ -41,14 +35,8 @@ const METADATA: VendorMetadata = VendorMetadata {
             id: "china",
             label: Label { zh: "中国站", en: "China" },
             base_urls: &[
-                ProtocolBaseUrl {
-                    protocol: "openai",
-                    base_url: "https://api.moonshot.cn/v1",
-                },
-                ProtocolBaseUrl {
-                    protocol: "anthropic",
-                    base_url: "https://api.moonshot.cn/anthropic",
-                },
+                ProtocolBaseUrl { protocol: "openai", base_url: "https://api.moonshot.cn/v1" },
+                ProtocolBaseUrl { protocol: "anthropic", base_url: "https://api.moonshot.cn/anthropic" },
             ],
             api_key: None,
             models_source: Some("https://api.moonshot.cn/v1/models"),

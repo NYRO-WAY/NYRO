@@ -23,14 +23,8 @@ const METADATA: VendorMetadata = VendorMetadata {
             id: "default",
             label: Label { zh: "默认", en: "Default" },
             base_urls: &[
-                ProtocolBaseUrl {
-                    protocol: "openai",
-                    base_url: "https://open.bigmodel.cn/api/paas/v4",
-                },
-                ProtocolBaseUrl {
-                    protocol: "anthropic",
-                    base_url: "https://open.bigmodel.cn/api/anthropic",
-                },
+                ProtocolBaseUrl { protocol: "openai", base_url: "https://open.bigmodel.cn/api/paas/v4" },
+                ProtocolBaseUrl { protocol: "anthropic", base_url: "https://open.bigmodel.cn/api/anthropic" },
             ],
             api_key: None,
             models_source: Some("https://open.bigmodel.cn/api/paas/v4/models"),
@@ -44,14 +38,8 @@ const METADATA: VendorMetadata = VendorMetadata {
             id: "coding",
             label: Label { zh: "Coding Plan", en: "Coding Plan" },
             base_urls: &[
-                ProtocolBaseUrl {
-                    protocol: "openai",
-                    base_url: "https://open.bigmodel.cn/api/coding/paas/v4",
-                },
-                ProtocolBaseUrl {
-                    protocol: "anthropic",
-                    base_url: "https://open.bigmodel.cn/api/anthropic",
-                },
+                ProtocolBaseUrl { protocol: "openai", base_url: "https://open.bigmodel.cn/api/coding/paas/v4" },
+                ProtocolBaseUrl { protocol: "anthropic", base_url: "https://open.bigmodel.cn/api/anthropic" },
             ],
             api_key: None,
             models_source: Some("https://open.bigmodel.cn/api/coding/paas/v4/models"),

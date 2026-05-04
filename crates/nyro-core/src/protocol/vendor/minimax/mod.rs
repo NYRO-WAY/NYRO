@@ -19,14 +19,8 @@ const METADATA: VendorMetadata = VendorMetadata {
             id: "default",
             label: Label { zh: "默认", en: "Default" },
             base_urls: &[
-                ProtocolBaseUrl {
-                    protocol: "openai",
-                    base_url: "https://api.minimax.io/v1",
-                },
-                ProtocolBaseUrl {
-                    protocol: "anthropic",
-                    base_url: "https://api.minimax.io/anthropic",
-                },
+                ProtocolBaseUrl { protocol: "openai", base_url: "https://api.minimax.io/v1" },
+                ProtocolBaseUrl { protocol: "anthropic", base_url: "https://api.minimax.io/anthropic" },
             ],
             api_key: None,
             models_source: Some("ai://models.dev/minimax"),
@@ -40,14 +34,8 @@ const METADATA: VendorMetadata = VendorMetadata {
             id: "china",
             label: Label { zh: "中国站", en: "China" },
             base_urls: &[
-                ProtocolBaseUrl {
-                    protocol: "openai",
-                    base_url: "https://api.minimaxi.com/v1",
-                },
-                ProtocolBaseUrl {
-                    protocol: "anthropic",
-                    base_url: "https://api.minimaxi.com/anthropic",
-                },
+                ProtocolBaseUrl { protocol: "openai", base_url: "https://api.minimaxi.com/v1" },
+                ProtocolBaseUrl { protocol: "anthropic", base_url: "https://api.minimaxi.com/anthropic" },
             ],
             api_key: None,
             models_source: Some("ai://models.dev/minimax"),

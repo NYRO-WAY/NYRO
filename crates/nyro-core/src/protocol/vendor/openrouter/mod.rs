@@ -17,14 +17,8 @@ const METADATA: VendorMetadata = VendorMetadata {
         id: "default",
         label: Label { zh: "默认", en: "Default" },
         base_urls: &[
-            ProtocolBaseUrl {
-                protocol: "openai",
-                base_url: "https://openrouter.ai/api/v1",
-            },
-            ProtocolBaseUrl {
-                protocol: "anthropic",
-                base_url: "https://openrouter.ai/api",
-            },
+            ProtocolBaseUrl { protocol: "openai", base_url: "https://openrouter.ai/api/v1" },
+            ProtocolBaseUrl { protocol: "anthropic", base_url: "https://openrouter.ai/api" },
         ],
         api_key: None,
         models_source: Some("https://openrouter.ai/api/v1/models"),

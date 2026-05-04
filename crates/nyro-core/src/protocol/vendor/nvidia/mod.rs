@@ -16,10 +16,7 @@ const METADATA: VendorMetadata = VendorMetadata {
     channels: &[ChannelDef {
         id: "default",
         label: Label { zh: "默认", en: "Default" },
-        base_urls: &[ProtocolBaseUrl {
-            protocol: "openai",
-            base_url: "https://integrate.api.nvidia.com/v1",
-        }],
+        base_urls: &[ProtocolBaseUrl { protocol: "openai", base_url: "https://integrate.api.nvidia.com/v1" }],
         api_key: None,
         models_source: Some("https://integrate.api.nvidia.com/v1/models"),
         capabilities_source: Some("ai://models.dev/nvidia"),
