@@ -327,16 +327,10 @@ type OAuthCallbackInputMode = "callback_or_code" | "code_only";
 function resolveOAuthCallbackInputMode(
   preset: ProviderPreset | null,
   channelId: string | null,
-  requiresManualCode: boolean,
-  scheme?: string | null,
 ): OAuthCallbackInputMode {
   const channel = presetChannels(preset).find((item) => item.id === channelId) ?? presetChannels(preset)[0];
   const presetMode = channel?.oauth?.completionMode;
-  if (presetMode === "callback_or_code" || presetMode === "code_only") {
-    return presetMode;
-  }
-  if (!requiresManualCode) return "callback_or_code";
-  return (scheme ?? "").toLowerCase().includes("pkce") ? "callback_or_code" : "code_only";
+  return presetMode === "code_only" ? "code_only" : "callback_or_code";
 }
 
 function normalizeAuthMode(mode?: string | null): "apikey" | "oauth" {
@@ -1017,8 +1011,6 @@ export default function ProvidersPage() {
     const editOAuthNeedsCallbackInput = resolveOAuthCallbackInputMode(
       providerPreset,
       provider?.channel || null,
-      editOAuthSession?.requires_manual_code ?? false,
-      editOAuthSession?.scheme,
     );
 
     const callbackUrl = editOAuthCallbackUrl.trim();
@@ -1355,12 +1347,9 @@ export default function ProvidersPage() {
     createOAuthStatus?.status === "pending"
       ? createOAuthStatus.requires_manual_code
       : createOAuthSession?.requires_manual_code ?? false;
-  const createOAuthStatusScheme = createOAuthStatus?.status === "pending" ? createOAuthStatus.scheme : null;
   const createOAuthInputMode = resolveOAuthCallbackInputMode(
     selectedPreset ?? fallbackProviderPreset(),
     createChannelValue,
-    createOAuthRequiresManualCode,
-    createOAuthSession?.scheme ?? createOAuthStatusScheme,
   );
   const createOAuthNeedsCallbackInput = createOAuthInputMode === "callback_or_code";
   const showCreateOAuthGuide = createResolvedAuthMode === "oauth" && !createOAuthReady;
@@ -1615,7 +1604,7 @@ export default function ProvidersPage() {
                     <div className={`rounded-lg border p-3 ${createOAuthStatus?.status === "error" ? "border-rose-200 bg-rose-50" : createOAuthSession ? "border-sky-200 bg-sky-50" : "border-slate-200 bg-white"}`}>
                       <div className="flex items-center gap-2 text-sm font-medium text-slate-800">
                         <span className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-xs ${(createOAuthStatus?.status === "pending" || createOAuthStatus?.status === "error") ? "bg-sky-600 text-white" : "bg-slate-200 text-slate-700"}`}>2</span>
-                        <span>{isZh ? "提交授权结果" : "Submit Authorization Result"}</span>
+                        <span>{isZh ? "粘贴回调结果" : "Paste Callback Result"}</span>
                       </div>
                       <p className="mt-2 text-xs text-slate-500">
                         {createOAuthNeedsCallbackInput
@@ -2022,8 +2011,6 @@ export default function ProvidersPage() {
               const editOAuthInputMode = resolveOAuthCallbackInputMode(
                 selectedPreset ?? fallbackProviderPreset(),
                 p.channel || editingChannelValue,
-                editOAuthRequiresManualCode,
-                editOAuthSession?.scheme,
               );
               const editOAuthNeedsCallbackInput = editOAuthInputMode === "callback_or_code";
               return (
@@ -2256,7 +2243,7 @@ export default function ProvidersPage() {
                                   <div className={`rounded-lg border p-3 ${editOAuthSession ? "border-sky-200 bg-sky-50" : "border-slate-200 bg-white"}`}>
                                     <div className="flex items-center gap-2 text-sm font-medium text-slate-800">
                                       <span className={`inline-flex h-6 w-6 items-center justify-center rounded-full text-xs ${editOAuthSession ? "bg-sky-600 text-white" : "bg-slate-200 text-slate-700"}`}>2</span>
-                                      <span>{isZh ? "提交授权结果" : "Submit Authorization Result"}</span>
+                                      <span>{isZh ? "粘贴回调结果" : "Paste Callback Result"}</span>
                                     </div>
                                     <p className="mt-2 text-xs text-slate-500">
                                       {editOAuthNeedsCallbackInput
