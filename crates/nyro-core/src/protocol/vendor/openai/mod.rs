@@ -10,10 +10,7 @@ pub mod codex;
 use reqwest::header::HeaderMap;
 
 use crate::protocol::vendor::defaults::OpenAiDefault;
-use crate::protocol::vendor::types::{
-    AuthMode, ChannelDef, Label, OAuthCompletionMode, OAuthConfig, ProtocolBaseUrl,
-    RuntimeConfig, VendorMetadata,
-};
+use crate::protocol::vendor::types::{AuthMode, ChannelDef, Label, OAuthCompletionMode, OAuthConfig, ProtocolBaseUrl, RuntimeConfig, VendorMetadata};
 use crate::protocol::vendor::{VendorCtx, VendorExtension, VendorRegistration, VendorScope};
 
 const METADATA: VendorMetadata = VendorMetadata {

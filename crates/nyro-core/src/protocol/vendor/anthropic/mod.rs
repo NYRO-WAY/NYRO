@@ -9,10 +9,7 @@ pub mod claude_code;
 use reqwest::header::HeaderMap;
 
 use crate::protocol::vendor::defaults::AnthropicDefault;
-use crate::protocol::vendor::types::{
-    AuthMode, ChannelDef, Label, OAuthCompletionMode, OAuthConfig, ProtocolBaseUrl,
-    VendorMetadata,
-};
+use crate::protocol::vendor::types::{AuthMode, ChannelDef, Label, OAuthCompletionMode, OAuthConfig, ProtocolBaseUrl, VendorMetadata};
 use crate::protocol::vendor::{VendorCtx, VendorExtension, VendorRegistration, VendorScope};
 
 const METADATA: VendorMetadata = VendorMetadata {
