@@ -38,12 +38,14 @@ pub fn openai_bearer_auth_headers(ctx: &VendorCtx<'_>) -> HeaderMap {
 
 /// Builds an upstream URL.
 ///
-/// If `base_url` already has a non-root path component (e.g.
-/// `https://api.example.com/v1`), the leading `/v1/` prefix from `path` is
-/// stripped to avoid double-versioning.
+/// If `base_url`'s path already ends with a version segment like `/v1` or
+/// `/v4` (i.e. `/v` followed by digits), the leading `/v1/` prefix from
+/// `path` is stripped to avoid double-versioning. Other non-root paths
+/// (e.g. `/api/anthropic`) are left alone so that the encoder-emitted
+/// `/v1/messages` is preserved.
 pub fn openai_build_url(base_url: &str, path: &str) -> String {
     let base = base_url.trim_end_matches('/');
-    let adjusted = if has_non_root_path(base) && path.starts_with("/v1/") {
+    let adjusted = if base_ends_with_version_segment(base) && path.starts_with("/v1/") {
         &path[3..]
     } else {
         path
@@ -51,14 +53,43 @@ pub fn openai_build_url(base_url: &str, path: &str) -> String {
     format!("{base}{adjusted}")
 }
 
-fn has_non_root_path(base: &str) -> bool {
+/// Returns `true` when the parsed URL path's last segment matches `^v\d+$`
+/// (e.g. `/v1`, `/api/coding/paas/v4`). Returns `false` for `/`, empty path,
+/// or non-version trailing segments like `/anthropic`.
+fn base_ends_with_version_segment(base: &str) -> bool {
     reqwest::Url::parse(base)
         .ok()
         .map(|url| {
             let p = url.path().trim_end_matches('/');
-            !p.is_empty() && p != "/"
+            if p.is_empty() || p == "/" {
+                return false;
+            }
+            let last = p.rsplit('/').next().unwrap_or("");
+            is_version_segment(last)
         })
         .unwrap_or(false)
+}
+
+/// Recognizes version segments shaped like `v` + digits + optional alpha
+/// suffix: `v1`, `v4`, `v1beta`, `v2alpha`, `v3stable`. Rejects `v`,
+/// `vNext`, `vendor`, etc.
+fn is_version_segment(s: &str) -> bool {
+    let mut it = s.chars();
+    if it.next() != Some('v') {
+        return false;
+    }
+    let mut saw_digit = false;
+    let mut digits_done = false;
+    for c in it {
+        if !digits_done && c.is_ascii_digit() {
+            saw_digit = true;
+        } else if saw_digit && c.is_ascii_alphabetic() {
+            digits_done = true;
+        } else {
+            return false;
+        }
+    }
+    saw_digit
 }
 
 /// Maps a non-2xx OpenAI-compatible HTTP response to a `GatewayError`.
@@ -136,6 +167,18 @@ where
 
     // 6. auth headers
     let mut headers = vendor.auth_headers(&vendor_ctx);
+    // Anthropic-protocol upstreams require `x-api-key` instead of
+    // `Authorization: Bearer`. Most OpenAI-compatible vendors blindly emit
+    // Bearer; rewrite here so any vendor with a declared anthropic endpoint
+    // works out of the box.
+    if ctx.protocol.family == crate::protocol::ids::ProtocolFamily::Anthropic
+        && !headers.contains_key("x-api-key")
+    {
+        headers.remove(reqwest::header::AUTHORIZATION);
+        if let Ok(v) = reqwest::header::HeaderValue::from_str(ctx.api_key) {
+            headers.insert("x-api-key", v);
+        }
+    }
     headers.extend(extra_headers);
 
     // 7. build URL
@@ -204,5 +247,86 @@ impl ThinkTagExtractingParser {
 
     pub fn split(content: &str) -> (Option<String>, String) {
         crate::protocol::codec::reasoning::split_think_tags(content)
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn version_segment_recognition() {
+        assert!(base_ends_with_version_segment("https://api.openai.com/v1"));
+        assert!(base_ends_with_version_segment(
+            "https://open.bigmodel.cn/api/coding/paas/v4"
+        ));
+        assert!(base_ends_with_version_segment("https://api.deepseek.com/v1/"));
+        assert!(base_ends_with_version_segment("https://example.com/v123"));
+        assert!(base_ends_with_version_segment(
+            "https://generativelanguage.googleapis.com/v1beta"
+        ));
+        assert!(base_ends_with_version_segment("https://example.com/v2alpha"));
+        assert!(base_ends_with_version_segment("https://example.com/v3stable"));
+
+        assert!(!base_ends_with_version_segment(
+            "https://open.bigmodel.cn/api/anthropic"
+        ));
+        assert!(!base_ends_with_version_segment(
+            "https://api.deepseek.com/anthropic"
+        ));
+        assert!(!base_ends_with_version_segment("https://api.deepseek.com"));
+        assert!(!base_ends_with_version_segment("https://api.deepseek.com/"));
+        assert!(!base_ends_with_version_segment("https://example.com/vNext"));
+        assert!(!base_ends_with_version_segment("https://example.com/v"));
+        assert!(!base_ends_with_version_segment("https://example.com/vendor"));
+        assert!(!base_ends_with_version_segment("https://example.com/v1b2"));
+    }
+
+    #[test]
+    fn build_url_strips_v1_for_versioned_base() {
+        assert_eq!(
+            openai_build_url("https://api.openai.com/v1", "/v1/chat/completions"),
+            "https://api.openai.com/v1/chat/completions"
+        );
+        assert_eq!(
+            openai_build_url(
+                "https://open.bigmodel.cn/api/coding/paas/v4",
+                "/v1/chat/completions"
+            ),
+            "https://open.bigmodel.cn/api/coding/paas/v4/chat/completions"
+        );
+        assert_eq!(
+            openai_build_url("https://api.deepseek.com/v1/", "/v1/chat/completions"),
+            "https://api.deepseek.com/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn build_url_preserves_v1_for_anthropic_base() {
+        assert_eq!(
+            openai_build_url(
+                "https://open.bigmodel.cn/api/anthropic",
+                "/v1/messages"
+            ),
+            "https://open.bigmodel.cn/api/anthropic/v1/messages"
+        );
+        assert_eq!(
+            openai_build_url("https://api.deepseek.com/anthropic", "/v1/messages"),
+            "https://api.deepseek.com/anthropic/v1/messages"
+        );
+    }
+
+    #[test]
+    fn build_url_passthrough_when_no_version_prefix() {
+        assert_eq!(
+            openai_build_url("https://api.example.com", "/v1/chat/completions"),
+            "https://api.example.com/v1/chat/completions"
+        );
+        assert_eq!(
+            openai_build_url("https://api.example.com/", "/v1/chat/completions"),
+            "https://api.example.com/v1/chat/completions"
+        );
     }
 }
