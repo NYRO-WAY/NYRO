@@ -29,6 +29,12 @@ pub struct ResponsesStreamFormatter {
     tool_calls: Vec<PendingFunctionCall>,
 }
 
+impl Default for ResponsesStreamFormatter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ResponsesStreamFormatter {
     pub fn new() -> Self {
         Self {
@@ -375,8 +381,8 @@ impl StreamFormatter for ResponsesStreamFormatter {
                     ));
                 }
                 StreamDelta::ToolCallDelta { index, arguments } => {
-                    if let Some(pos) = self.tool_index_map.get(index).copied() {
-                        if let Some(call) = self.tool_calls.get_mut(pos) {
+                    if let Some(pos) = self.tool_index_map.get(index).copied()
+                        && let Some(call) = self.tool_calls.get_mut(pos) {
                             call.arguments.push_str(arguments);
                             let ev = serde_json::json!({
                                 "type": "response.function_call_arguments.delta",
@@ -389,7 +395,6 @@ impl StreamFormatter for ResponsesStreamFormatter {
                                 ev.to_string(),
                             ));
                         }
-                    }
                 }
                 StreamDelta::Usage(u) => {
                     self.usage = u.clone();

@@ -16,6 +16,12 @@ struct TargetHealth {
     last_failure_at: Option<Instant>,
 }
 
+impl Default for HealthRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HealthRegistry {
     pub fn new() -> Self {
         Self {

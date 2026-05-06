@@ -128,6 +128,59 @@ impl ProtocolRegistry {
         handlers
     }
 
+    // ── Normalize helpers (migrated from protocol/normalize.rs) ──────────────
+
+    /// Normalize a single protocol identifier string to its canonical
+    /// `family/dialect/version` form.  Unknown strings are returned verbatim.
+    pub fn normalize_string(&self, raw: &str) -> String {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return String::new();
+        }
+        match self.resolve_alias(trimmed) {
+            Some(id) => id.to_string(),
+            None => {
+                tracing::warn!(
+                    value = trimmed,
+                    "leaving unrecognized protocol identifier unchanged"
+                );
+                trimmed.to_string()
+            }
+        }
+    }
+
+    /// Rewrite every key of a `protocol_endpoints`-shaped JSON object into
+    /// canonical `ProtocolId` form.  Collisions are resolved first-writer-wins.
+    pub fn normalize_endpoints_json(&self, raw: &str) -> String {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() || trimmed == "{}" {
+            return raw.to_string();
+        }
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+            tracing::warn!(
+                value = trimmed,
+                "skipping protocol_endpoints normalization: invalid JSON"
+            );
+            return raw.to_string();
+        };
+        let Some(obj) = value.as_object() else {
+            return raw.to_string();
+        };
+
+        let mut next = serde_json::Map::with_capacity(obj.len());
+        for (key, val) in obj {
+            let canonical = match self.resolve_alias(key) {
+                Some(id) => id.to_string(),
+                None => {
+                    tracing::warn!(key = %key, "leaving unrecognized protocol_endpoints key unchanged");
+                    key.clone()
+                }
+            };
+            next.entry(canonical).or_insert_with(|| val.clone());
+        }
+        serde_json::Value::Object(next).to_string()
+    }
+
     /// Resolve an HTTP ingress (method, path) to its handler.
     ///
     /// Path matching is exact — axum-style `:param` segments are matched as

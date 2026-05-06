@@ -11,8 +11,8 @@ use nyro_core::protocol::codec::openai::responses::formatter::ResponsesResponseF
 use nyro_core::protocol::codec::openai::responses::parser::{
     ResponsesResponseParser, ResponsesStreamParser,
 };
-use nyro_core::protocol::semantic::reasoning::normalize_response_reasoning;
-use nyro_core::protocol::semantic::tool_correlation::normalize_request_tool_results;
+use nyro_core::protocol::codec::reasoning::normalize_response_reasoning;
+use nyro_core::protocol::codec::tool_correlation::normalize_request_tool_results;
 use nyro_core::protocol::types::{
     ContentBlock, InternalMessage, InternalRequest, InternalResponse, MessageContent, ResponseItem, Role,
     StreamDelta,

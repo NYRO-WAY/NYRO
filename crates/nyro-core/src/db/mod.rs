@@ -8,9 +8,6 @@ use sqlx::Row;
 use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
-use crate::protocol::normalize::{
-    normalize_protocol_endpoints_json, normalize_protocol_string,
-};
 use crate::protocol::registry::ProtocolRegistry;
 
 static SQLITE_VEC_INIT: Once = Once::new();
@@ -19,9 +16,14 @@ const VECTOR_DIMENSIONS_SETTING_KEY: &str = "vector_embedding_dimensions";
 pub async fn init_pool(data_dir: &Path) -> anyhow::Result<SqlitePool> {
     SQLITE_VEC_INIT.call_once(|| unsafe {
         // Register sqlite-vec once per process. All later SQLite connections can use vec0 tables.
-        libsqlite3_sys::sqlite3_auto_extension(Some(std::mem::transmute(
-            sqlite3_vec_init as *const (),
-        )));
+        libsqlite3_sys::sqlite3_auto_extension(Some(std::mem::transmute::<
+            *const (),
+            unsafe extern "C" fn(
+                *mut libsqlite3_sys::sqlite3,
+                *mut *mut i8,
+                *const libsqlite3_sys::sqlite3_api_routines,
+            ) -> i32,
+        >(sqlite3_vec_init as *const ())));
     });
 
     std::fs::create_dir_all(data_dir)?;
@@ -125,8 +127,8 @@ async fn normalize_provider_protocols(pool: &SqlitePool) -> anyhow::Result<()> {
         let raw_default: String = row.try_get("default_protocol").unwrap_or_default();
         let raw_endpoints: String = row.try_get("protocol_endpoints").unwrap_or_default();
 
-        let new_default = normalize_protocol_string(&raw_default, reg);
-        let new_endpoints = normalize_protocol_endpoints_json(&raw_endpoints, reg);
+        let new_default = reg.normalize_string(&raw_default);
+        let new_endpoints = reg.normalize_endpoints_json(&raw_endpoints);
 
         let default_changed = new_default != raw_default;
         let endpoints_changed = new_endpoints != raw_endpoints;
@@ -180,7 +182,7 @@ async fn backfill_provider_vendor(pool: &SqlitePool) -> anyhow::Result<()> {
 /// Idempotent: re-running the migration on already-normalized data is
 /// a no-op.
 async fn migrate_vendor_renames(pool: &SqlitePool) -> anyhow::Result<()> {
-    const RENAMES: &[(&str, &str)] = &[("custom", "nyro"), ("zhipu", "zhipuai")];
+    const RENAMES: &[(&str, &str)] = &[("nyro", "custom"), ("zhipu", "zhipuai")];
 
     if column_exists(pool, "providers", "vendor").await? {
         for (from, to) in RENAMES {

@@ -1334,10 +1334,9 @@ END $$;"#,
         .execute(self.adapter.pool())
         .await?;
         ensure_semantic_cache_vectors_table(self.adapter.pool(), self.vector_dimensions).await?;
-        // PR2B: rename legacy vendor / preset_key values to their new
-        // canonical form (`custom` → `nyro`, `zhipu` → `zhipuai`).
-        // Idempotent: a no-op on already-normalized rows.
-        for (from, to) in [("custom", "nyro"), ("zhipu", "zhipuai")] {
+        // PR2B → PR13: vendor name migrations. Idempotent.
+        // `nyro → custom` (PR13 reversal), `zhipu → zhipuai` (PR2B).
+        for (from, to) in [("nyro", "custom"), ("zhipu", "zhipuai")] {
             sqlx::query("UPDATE providers SET vendor = $1 WHERE lower(btrim(vendor)) = $2")
                 .bind(to)
                 .bind(from)
@@ -1376,9 +1375,6 @@ END $$;"#,
 /// `providers.protocol_endpoints` (JSON object keys). Idempotent: a row
 /// with already-canonical values is skipped without an UPDATE.
 async fn normalize_provider_protocols_pg(pool: &Pool<Postgres>) -> anyhow::Result<()> {
-    use crate::protocol::normalize::{
-        normalize_protocol_endpoints_json, normalize_protocol_string,
-    };
     use crate::protocol::registry::ProtocolRegistry;
 
     let reg = ProtocolRegistry::global();
@@ -1391,8 +1387,8 @@ async fn normalize_provider_protocols_pg(pool: &Pool<Postgres>) -> anyhow::Resul
     for (id, raw_default, raw_endpoints) in rows {
         let raw_default = raw_default.unwrap_or_default();
         let raw_endpoints = raw_endpoints.unwrap_or_default();
-        let new_default = normalize_protocol_string(&raw_default, reg);
-        let new_endpoints = normalize_protocol_endpoints_json(&raw_endpoints, reg);
+        let new_default = reg.normalize_string(&raw_default);
+        let new_endpoints = reg.normalize_endpoints_json(&raw_endpoints);
 
         let default_changed = new_default != raw_default;
         let endpoints_changed = new_endpoints != raw_endpoints;
@@ -1486,13 +1482,11 @@ COMMIT;"
 
 fn is_pg_permission_error(error: &anyhow::Error) -> bool {
     for cause in error.chain() {
-        if let Some(sqlx_error) = cause.downcast_ref::<sqlx::Error>() {
-            if let sqlx::Error::Database(db_error) = sqlx_error {
-                if db_error.code().as_deref() == Some("42501") {
+        if let Some(sqlx_error) = cause.downcast_ref::<sqlx::Error>()
+            && let sqlx::Error::Database(db_error) = sqlx_error
+                && db_error.code().as_deref() == Some("42501") {
                     return true;
                 }
-            }
-        }
     }
     false
 }
@@ -1554,7 +1548,7 @@ fn api_key_with_bindings(row: ApiKey, route_ids: Vec<String>) -> ApiKeyWithBindi
 fn normalize_provider_vendor(vendor: Option<&str>) -> Option<String> {
     vendor
         .map(str::trim)
-        .filter(|v| !v.is_empty() && *v != "nyro")
+        .filter(|v| !v.is_empty() && *v != "custom")
         .map(|v| v.to_lowercase())
 }
 

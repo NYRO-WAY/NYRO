@@ -35,11 +35,10 @@ impl ResponseParser for ResponsesResponseParser {
                                 if matches!(
                                     block.get("type").and_then(|v| v.as_str()),
                                     Some("output_text" | "text")
-                                ) {
-                                    if let Some(text) = block.get("text").and_then(|v| v.as_str()) {
+                                )
+                                    && let Some(text) = block.get("text").and_then(|v| v.as_str()) {
                                         content.push_str(text);
                                     }
-                                }
                             }
                         }
                     }
@@ -103,6 +102,12 @@ impl ResponseParser for ResponsesResponseParser {
 pub struct ResponsesStreamParser {
     buffer: String,
     started: bool,
+}
+
+impl Default for ResponsesStreamParser {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ResponsesStreamParser {
@@ -182,35 +187,32 @@ impl ResponsesStreamParser {
                 }
             }
             "response.output_text.delta" => {
-                if let Some(text) = payload.get("delta").and_then(|v| v.as_str()) {
-                    if !text.is_empty() {
+                if let Some(text) = payload.get("delta").and_then(|v| v.as_str())
+                    && !text.is_empty() {
                         deltas.push(StreamDelta::TextDelta(text.to_string()));
                     }
-                }
             }
             "response.reasoning_summary_text.delta" => {
                 // Emitted by Ollama's Responses API when the model includes reasoning.
                 // Must be handled independently from response.output_text.delta —
                 // they carry semantically different content (reasoning vs answer text).
-                if let Some(text) = payload.get("delta").and_then(|v| v.as_str()) {
-                    if !text.is_empty() {
+                if let Some(text) = payload.get("delta").and_then(|v| v.as_str())
+                    && !text.is_empty() {
                         deltas.push(StreamDelta::ReasoningDelta(text.to_string()));
                     }
-                }
             }
             "response.function_call_arguments.delta" => {
                 let index = payload
                     .get("output_index")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(0) as usize;
-                if let Some(arguments) = payload.get("delta").and_then(|v| v.as_str()) {
-                    if !arguments.is_empty() {
+                if let Some(arguments) = payload.get("delta").and_then(|v| v.as_str())
+                    && !arguments.is_empty() {
                         deltas.push(StreamDelta::ToolCallDelta {
                             index,
                             arguments: arguments.to_string(),
                         });
                     }
-                }
             }
             "response.output_item.added" | "response.output_item.done" => {
                 let index = payload

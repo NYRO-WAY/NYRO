@@ -142,6 +142,12 @@ pub struct OpenAIStreamParser {
     in_think_block: bool,
 }
 
+impl Default for OpenAIStreamParser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OpenAIStreamParser {
     pub fn new() -> Self {
         Self {
@@ -194,8 +200,8 @@ impl StreamParser for OpenAIStreamParser {
 
 impl OpenAIStreamParser {
     fn parse_openai_chunk(&mut self, chunk: &Value, deltas: &mut Vec<StreamDelta>) {
-        if !self.started {
-            if let (Some(id), Some(model)) = (
+        if !self.started
+            && let (Some(id), Some(model)) = (
                 chunk.get("id").and_then(|v| v.as_str()),
                 chunk.get("model").and_then(|v| v.as_str()),
             ) {
@@ -205,7 +211,6 @@ impl OpenAIStreamParser {
                     model: model.to_string(),
                 });
             }
-        }
 
         let Some(choice) = chunk
             .get("choices")
@@ -220,11 +225,10 @@ impl OpenAIStreamParser {
         };
 
         if let Some(delta) = choice.get("delta") {
-            if let Some(reasoning) = extract_reasoning_from_message(delta) {
-                if !reasoning.is_empty() {
+            if let Some(reasoning) = extract_reasoning_from_message(delta)
+                && !reasoning.is_empty() {
                     deltas.push(StreamDelta::ReasoningDelta(reasoning));
                 }
-            }
             if let Some(text) = delta.get("content").and_then(|v| v.as_str()) {
                 self.parse_text_with_think_tags(text, deltas);
             }
@@ -245,14 +249,13 @@ impl OpenAIStreamParser {
                                 name: name.to_string(),
                             });
                         }
-                        if let Some(args) = func.get("arguments").and_then(|v| v.as_str()) {
-                            if !args.is_empty() {
+                        if let Some(args) = func.get("arguments").and_then(|v| v.as_str())
+                            && !args.is_empty() {
                                 deltas.push(StreamDelta::ToolCallDelta {
                                     index: idx,
                                     arguments: args.to_string(),
                                 });
                             }
-                        }
                     }
                 }
             }
@@ -346,6 +349,12 @@ pub struct OpenAIStreamFormatter {
     id: String,
     model: String,
     saw_tool_call: bool,
+}
+
+impl Default for OpenAIStreamFormatter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl OpenAIStreamFormatter {
@@ -505,11 +514,9 @@ pub(crate) fn extract_reasoning_from_message(message: &Value) -> Option<String> 
             .get("text")
             .or_else(|| detail.get("content"))
             .and_then(|v| v.as_str())
-        {
-            if !text.is_empty() {
+            && !text.is_empty() {
                 parts.push(text.to_string());
             }
-        }
     }
     if parts.is_empty() {
         None

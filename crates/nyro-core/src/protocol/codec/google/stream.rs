@@ -117,6 +117,12 @@ pub struct GoogleStreamParser {
     first: bool,
 }
 
+impl Default for GoogleStreamParser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GoogleStreamParser {
     pub fn new() -> Self {
         Self {
@@ -182,11 +188,10 @@ fn parse_gemini_chunk(chunk: &Value, deltas: &mut Vec<StreamDelta>, first: &mut 
         .and_then(|p| p.as_array())
     {
         for part in parts {
-            if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
-                if !text.is_empty() {
+            if let Some(text) = part.get("text").and_then(|t| t.as_str())
+                && !text.is_empty() {
                     deltas.push(StreamDelta::TextDelta(text.to_string()));
                 }
-            }
             if let Some(fc) = part.get("functionCall") {
                 let name = fc
                     .get("name")
@@ -242,6 +247,12 @@ pub struct GoogleStreamFormatter {
     tool_arg_buffers: HashMap<usize, String>,
 }
 
+impl Default for GoogleStreamFormatter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GoogleStreamFormatter {
     pub fn new() -> Self {
         Self {
@@ -292,7 +303,7 @@ impl StreamFormatter for GoogleStreamFormatter {
                     let buf = self
                         .tool_arg_buffers
                         .entry(*index)
-                        .or_insert_with(String::new);
+                        .or_default();
                     buf.push_str(arguments);
                     let Ok(args) = serde_json::from_str::<Value>(buf) else {
                         continue;

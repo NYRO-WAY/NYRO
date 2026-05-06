@@ -88,8 +88,8 @@ impl VectorStore for MemoryVectorStore {
         let mut best: Option<VectorHit> = None;
         for entry in bucket {
             let similarity = cosine_similarity(query, &entry.vector);
-            if similarity >= threshold {
-                if best
+            if similarity >= threshold
+                && best
                     .as_ref()
                     .map(|hit| similarity > hit.score)
                     .unwrap_or(true)
@@ -100,7 +100,6 @@ impl VectorStore for MemoryVectorStore {
                         score: similarity,
                     });
                 }
-            }
         }
         Ok(best)
     }

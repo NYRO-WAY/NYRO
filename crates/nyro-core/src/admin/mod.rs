@@ -19,7 +19,7 @@ use crate::db::models::*;
 use crate::protocol::ProviderProtocols;
 use crate::protocol::ids::OPENAI_CHAT_V1;
 use crate::protocol::ids::OPENAI_EMBEDDINGS_V1;
-use crate::protocol::vendor::{VendorCtx, VendorRegistry};
+use crate::provider::{VendorCtx, VendorRegistry};
 use crate::proxy::client::ProxyClient;
 use crate::router::TargetSelector;
 use crate::storage::traits::ProviderTestResult;
@@ -811,11 +811,10 @@ impl AdminService {
             .clone()
             .or_else(|| resolve_models_endpoint(&provider))
         {
-            if let Some(models) = lookup_models_dev_models(&self.gw.config.data_dir, &endpoint)? {
-                if !models.is_empty() {
+            if let Some(models) = lookup_models_dev_models(&self.gw.config.data_dir, &endpoint)?
+                && !models.is_empty() {
                     return Ok(models);
                 }
-            }
 
             let mut headers = build_model_headers(
                 &provider.protocol,
@@ -840,8 +839,8 @@ impl AdminService {
                     .headers(headers);
             }
 
-            if let Ok(resp) = request.send().await {
-                if resp.status().is_success() {
+            if let Ok(resp) = request.send().await
+                && resp.status().is_success() {
                     let json: Value = resp.json().await.unwrap_or_default();
                     let models = extract_models_from_response(
                         &provider.protocol,
@@ -852,7 +851,6 @@ impl AdminService {
                         return Ok(models);
                     }
                 }
-            }
         }
 
         Ok(parse_static_models(provider.static_models.as_deref()))
@@ -946,13 +944,11 @@ impl AdminService {
                     }),
                 )
                 .await;
-            if let Ok((payload, status)) = call {
-                if status < 400 {
-                    if let Some(dims) = parse_embedding_dimensions_from_payload(&payload) {
+            if let Ok((payload, status)) = call
+                && status < 400
+                    && let Some(dims) = parse_embedding_dimensions_from_payload(&payload) {
                         return Ok(dims);
                     }
-                }
-            }
         }
 
         if missing_openai_endpoint {
@@ -1451,8 +1447,8 @@ impl AdminService {
                 .await
                 .unwrap_or(false);
 
-            if !exists {
-                if self
+            if !exists
+                && self
                     .create_provider(CreateProvider {
                         name: p.name.clone(),
                         vendor: p.vendor.clone(),
@@ -1484,7 +1480,6 @@ impl AdminService {
                 {
                     providers_imported += 1;
                 }
-            }
         }
 
         let fallback_provider_id = self
@@ -1503,9 +1498,9 @@ impl AdminService {
                 .await
                 .unwrap_or(false);
 
-            if !exists {
-                if let Some(pid) = fallback_provider_id.clone() {
-                    if self
+            if !exists
+                && let Some(pid) = fallback_provider_id.clone()
+                    && self
                         .create_route(CreateRoute {
                             name: r.name.clone(),
                             virtual_model: r.virtual_model.clone(),
@@ -1525,8 +1520,6 @@ impl AdminService {
                     {
                         routes_imported += 1;
                     }
-                }
-            }
         }
 
         for (key, value) in &data.settings {
@@ -2473,7 +2466,7 @@ fn ensure_route_targets_valid(targets: &[CreateRouteTarget]) -> anyhow::Result<(
             anyhow::bail!("target weight must be >= 0");
         }
         let priority = target.priority.unwrap_or(1);
-        if priority < 1 || priority > 2 {
+        if !(1..=2).contains(&priority) {
             anyhow::bail!("target priority must be 1 or 2");
         }
     }
@@ -2491,7 +2484,7 @@ fn normalize_name(name: &str, field: &str) -> anyhow::Result<String> {
 fn normalize_vendor(vendor: Option<&str>) -> Option<String> {
     vendor
         .map(str::trim)
-        .filter(|v| !v.is_empty() && *v != "nyro")
+        .filter(|v| !v.is_empty() && *v != "custom")
         .map(|v| v.to_lowercase())
 }
 
@@ -2504,10 +2497,7 @@ fn normalize_default_protocol_field(value: Option<String>) -> Option<String> {
     if s.trim().is_empty() {
         return Some(s);
     }
-    Some(crate::protocol::normalize::normalize_protocol_string(
-        &s,
-        crate::protocol::registry::ProtocolRegistry::global(),
-    ))
+    Some(crate::protocol::registry::ProtocolRegistry::global().normalize_string(&s))
 }
 
 /// Rewrite a `protocol_endpoints` JSON blob (with possibly legacy /
@@ -2519,10 +2509,7 @@ fn normalize_protocol_endpoints_field(value: Option<String>) -> Option<String> {
     if trimmed.is_empty() || trimmed == "{}" {
         return Some(s);
     }
-    Some(crate::protocol::normalize::normalize_protocol_endpoints_json(
-        &s,
-        crate::protocol::registry::ProtocolRegistry::global(),
-    ))
+    Some(crate::protocol::registry::ProtocolRegistry::global().normalize_endpoints_json(&s))
 }
 
 fn resolve_models_endpoint(provider: &Provider) -> Option<String> {
@@ -2887,17 +2874,13 @@ async fn refresh_models_dev_runtime_cache_inner(
     force_refresh: bool,
 ) -> anyhow::Result<()> {
     let cache_path = models_dev_runtime_cache_path(data_dir);
-    if !force_refresh {
-        if let Ok(meta) = std::fs::metadata(&cache_path) {
-            if let Ok(modified_at) = meta.modified() {
-                if let Ok(elapsed) = modified_at.elapsed() {
-                    if elapsed < MODELS_DEV_RUNTIME_TTL {
+    if !force_refresh
+        && let Ok(meta) = std::fs::metadata(&cache_path)
+            && let Ok(modified_at) = meta.modified()
+                && let Ok(elapsed) = modified_at.elapsed()
+                    && elapsed < MODELS_DEV_RUNTIME_TTL {
                         return Ok(());
                     }
-                }
-            }
-        }
-    }
 
     let resp = http_client
         .get(MODELS_DEV_SOURCE_URL)
@@ -3142,13 +3125,11 @@ fn parse_maybe_price_per_token(value: &Value) -> Option<f64> {
 }
 
 async fn load_route_targets_for_probe(gw: &Gateway, route: &Route) -> Vec<RouteTarget> {
-    if let Some(store) = gw.storage.route_targets() {
-        if let Ok(targets) = store.list_targets_by_route(&route.id).await {
-            if !targets.is_empty() {
+    if let Some(store) = gw.storage.route_targets()
+        && let Ok(targets) = store.list_targets_by_route(&route.id).await
+            && !targets.is_empty() {
                 return targets;
             }
-        }
-    }
     if route.target_provider.trim().is_empty() {
         return vec![];
     }

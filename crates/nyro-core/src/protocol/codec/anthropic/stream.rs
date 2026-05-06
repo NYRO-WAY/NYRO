@@ -169,6 +169,12 @@ pub struct AnthropicStreamParser {
     buffer: String,
 }
 
+impl Default for AnthropicStreamParser {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AnthropicStreamParser {
     pub fn new() -> Self {
         Self {
@@ -197,11 +203,10 @@ impl StreamParser for AnthropicStreamParser {
                 }
             }
 
-            if let Some(data) = data_str {
-                if let Ok(json) = serde_json::from_str::<Value>(&data) {
+            if let Some(data) = data_str
+                && let Ok(json) = serde_json::from_str::<Value>(&data) {
                     parse_anthropic_event(event_type.as_deref(), &json, &mut deltas);
                 }
-            }
         }
 
         Ok(deltas)
@@ -243,28 +248,24 @@ fn parse_anthropic_event(event_type: Option<&str>, data: &Value, deltas: &mut Ve
                 .get("index")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as usize;
-            if let Some(block) = data.get("content_block") {
-                match block.get("type").and_then(|t| t.as_str()) {
-                    Some("tool_use") => {
-                        let id = block
-                            .get("id")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        let name = block
-                            .get("name")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        deltas.push(StreamDelta::ToolCallStart {
-                            index: idx,
-                            id,
-                            name,
-                        });
-                    }
-                    _ => {}
+            if let Some(block) = data.get("content_block")
+                && let Some("tool_use") = block.get("type").and_then(|t| t.as_str()) {
+                    let id = block
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let name = block
+                        .get("name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    deltas.push(StreamDelta::ToolCallStart {
+                        index: idx,
+                        id,
+                        name,
+                    });
                 }
-            }
         }
         Some("content_block_delta") => {
             if let Some(delta) = data.get("delta") {
@@ -311,8 +312,8 @@ fn parse_anthropic_event(event_type: Option<&str>, data: &Value, deltas: &mut Ve
             }
         }
         Some("message_delta") => {
-            if let Some(delta) = data.get("delta") {
-                if let Some(reason) = delta.get("stop_reason").and_then(|v| v.as_str()) {
+            if let Some(delta) = data.get("delta")
+                && let Some(reason) = delta.get("stop_reason").and_then(|v| v.as_str()) {
                     let normalized = match reason {
                         "end_turn" => "stop",
                         "tool_use" => "tool_calls",
@@ -322,7 +323,6 @@ fn parse_anthropic_event(event_type: Option<&str>, data: &Value, deltas: &mut Ve
                         stop_reason: normalized.to_string(),
                     });
                 }
-            }
             if let Some(u) = data.get("usage") {
                 let output = u
                     .get("output_tokens")
@@ -352,6 +352,12 @@ pub struct AnthropicStreamFormatter {
     in_text_block: bool,
     in_tool_block: bool,
     message_started: bool,
+}
+
+impl Default for AnthropicStreamFormatter {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AnthropicStreamFormatter {

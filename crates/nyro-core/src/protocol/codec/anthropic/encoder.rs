@@ -9,35 +9,56 @@ pub struct AnthropicEncoder;
 
 impl EgressEncoder for AnthropicEncoder {
     fn encode_request(&self, req: &InternalRequest) -> Result<(Value, HeaderMap)> {
-        let mut system_text = String::new();
-        let mut raw_messages = Vec::new();
-
-        for msg in &req.messages {
-            if msg.role == Role::System {
-                if !system_text.is_empty() {
-                    system_text.push('\n');
+        // ── System ────────────────────────────────────────────────────────────
+        // Prefer __anthropic_raw_system (preserves cache_control) if present.
+        let system_val: Option<Value> = if let Some(v) = req.extra.get("__anthropic_raw_system") {
+            Some(v.clone())
+        } else {
+            let mut system_text = String::new();
+            for msg in &req.messages {
+                if msg.role == Role::System {
+                    if !system_text.is_empty() {
+                        system_text.push('\n');
+                    }
+                    system_text.push_str(&msg.content.as_text());
                 }
-                system_text.push_str(&msg.content.as_text());
-                continue;
             }
+            if system_text.is_empty() {
+                None
+            } else {
+                Some(Value::String(system_text))
+            }
+        };
 
-            raw_messages.push(encode_message(msg)?);
-        }
-        let messages = normalize_anthropic_messages(raw_messages);
+        // ── Messages ──────────────────────────────────────────────────────────
+        // Prefer __anthropic_raw_messages (preserves cache_control / exotic
+        // blocks) if present; otherwise reconstruct from InternalMessage.
+        let messages_val: Value = if let Some(v) = req.extra.get("__anthropic_raw_messages") {
+            v.clone()
+        } else {
+            let mut raw_messages = Vec::new();
+            for msg in &req.messages {
+                if msg.role == Role::System {
+                    continue;
+                }
+                raw_messages.push(encode_message(msg)?);
+            }
+            Value::Array(normalize_anthropic_messages(raw_messages))
+        };
 
         let max_tokens = req.max_tokens.unwrap_or(4096);
 
         let mut body = serde_json::json!({
             "model": req.model,
-            "messages": messages,
+            "messages": messages_val,
             "max_tokens": max_tokens,
             "stream": req.stream,
         });
 
         let obj = body.as_object_mut().unwrap();
 
-        if !system_text.is_empty() {
-            obj.insert("system".into(), Value::String(system_text));
+        if let Some(sv) = system_val {
+            obj.insert("system".into(), sv);
         }
         if let Some(t) = req.temperature {
             obj.insert("temperature".into(), t.into());
@@ -46,26 +67,69 @@ impl EgressEncoder for AnthropicEncoder {
             obj.insert("top_p".into(), p.into());
         }
 
-        if let Some(ref tools) = req.tools {
+        // ── Tools ─────────────────────────────────────────────────────────────
+        // Prefer raw tools (preserves cache_control) if present.
+        if let Some(raw_tools) = req.extra.get("__anthropic_raw_tools") {
+            obj.insert("tools".into(), raw_tools.clone());
+        } else if let Some(ref tools) = req.tools {
             let tools_val: Vec<Value> = tools
                 .iter()
                 .map(|t| {
-                    serde_json::json!({
-                        "name": t.name,
-                        "description": t.description,
-                        "input_schema": t.parameters,
-                    })
+                    if let Some(builtin_type) = t.name.strip_prefix("__builtin__") {
+                        // Reconstruct built-in tool entry.
+                        let mut entry = serde_json::json!({
+                            "type": builtin_type,
+                            "name": builtin_type,
+                        });
+                        if let Some(desc) = &t.description {
+                            entry.as_object_mut().unwrap().insert(
+                                "description".into(),
+                                Value::String(desc.clone()),
+                            );
+                        }
+                        entry
+                    } else {
+                        serde_json::json!({
+                            "name": t.name,
+                            "description": t.description,
+                            "input_schema": t.parameters,
+                        })
+                    }
                 })
                 .collect();
             obj.insert("tools".into(), Value::Array(tools_val));
         }
 
+        // ── Tool choice ───────────────────────────────────────────────────────
         if let Some(mapped_tool_choice) = req
             .tool_choice
             .as_ref()
             .and_then(map_tool_choice_for_anthropic)
         {
             obj.insert("tool_choice".into(), mapped_tool_choice);
+        }
+
+        // ── PR-10 extra fields ────────────────────────────────────────────────
+        for key in &[
+            "__anthropic_thinking",
+            "__anthropic_context_management",
+        ] {
+            if let Some(v) = req.extra.get(*key) {
+                let field_name = key.trim_start_matches("__anthropic_");
+                obj.insert(field_name.into(), v.clone());
+            }
+        }
+        for key in &[
+            "__anthropic_container",
+            "__anthropic_service_tier",
+            "__anthropic_metadata",
+            "__anthropic_stop_sequences",
+            "__anthropic_top_k",
+        ] {
+            if let Some(v) = req.extra.get(*key) {
+                let field_name = key.trim_start_matches("__anthropic_");
+                obj.insert(field_name.into(), v.clone());
+            }
         }
 
         validate_anthropic_payload(&body)?;
@@ -84,6 +148,8 @@ impl EgressEncoder for AnthropicEncoder {
     }
 }
 
+// ── tool_choice mapping ───────────────────────────────────────────────────────
+
 fn map_tool_choice_for_anthropic(raw: &Value) -> Option<Value> {
     if let Some(s) = raw.as_str() {
         return match s {
@@ -96,17 +162,21 @@ fn map_tool_choice_for_anthropic(raw: &Value) -> Option<Value> {
 
     let obj = raw.as_object()?;
     let kind = obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
-    match kind {
-        "auto" => Some(serde_json::json!({ "type": "auto" })),
-        "required" | "any" => Some(serde_json::json!({ "type": "any" })),
-        "none" => None,
+    let disable_parallel = obj
+        .get("disable_parallel_tool_use")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let mut result = match kind {
+        "auto" => serde_json::json!({ "type": "auto" }),
+        "required" | "any" => serde_json::json!({ "type": "any" }),
+        "none" => return None,
         "tool" => {
             let name = obj.get("name").and_then(|v| v.as_str()).unwrap_or("");
             if name.is_empty() {
-                None
-            } else {
-                Some(serde_json::json!({ "type": "tool", "name": name }))
+                return None;
             }
+            serde_json::json!({ "type": "tool", "name": name })
         }
         "function" => {
             let name = obj
@@ -119,14 +189,34 @@ fn map_tool_choice_for_anthropic(raw: &Value) -> Option<Value> {
                 })
                 .unwrap_or("");
             if name.is_empty() {
-                None
-            } else {
-                Some(serde_json::json!({ "type": "tool", "name": name }))
+                return None;
             }
+            serde_json::json!({ "type": "tool", "name": name })
         }
-        _ => None,
+        _ => return None,
+    };
+
+    if disable_parallel {
+        result
+            .as_object_mut()
+            .unwrap()
+            .insert("disable_parallel_tool_use".into(), Value::Bool(true));
     }
+
+    Some(result)
 }
+
+// ── Payload validation ────────────────────────────────────────────────────────
+
+const ALLOWED_BLOCK_TYPES: &[&str] = &[
+    "text",
+    "image",
+    "thinking",
+    "tool_use",
+    "tool_result",
+    "document",
+    "input_audio",
+];
 
 fn validate_anthropic_payload(body: &Value) -> Result<()> {
     let obj = body
@@ -170,8 +260,12 @@ fn validate_anthropic_payload(body: &Value) -> Result<()> {
                                     "anthropic payload message[{idx}] block[{bidx}] missing type"
                                 )
                             })?;
+                        if !ALLOWED_BLOCK_TYPES.contains(&btype) {
+                            anyhow::bail!(
+                                "anthropic payload message[{idx}] unsupported block type: {btype}"
+                            );
+                        }
                         match btype {
-                            "text" => {}
                             "tool_use" => {
                                 let id = block.get("id").and_then(|v| v.as_str()).unwrap_or("");
                                 let name =
@@ -193,17 +287,14 @@ fn validate_anthropic_payload(body: &Value) -> Result<()> {
                                     );
                                 }
                             }
-                            "image" | "thinking" => {}
-                            other => {
-                                anyhow::bail!(
-                                    "anthropic payload message[{idx}] unsupported block type: {other}"
-                                );
-                            }
+                            _ => {}
                         }
                     }
                 }
                 _ => {
-                    anyhow::bail!("anthropic payload message[{idx}] content must be string or array");
+                    anyhow::bail!(
+                        "anthropic payload message[{idx}] content must be string or array"
+                    );
                 }
             }
         } else {
@@ -226,6 +317,8 @@ fn validate_anthropic_payload(body: &Value) -> Result<()> {
 
     Ok(())
 }
+
+// ── Message encoding helpers ──────────────────────────────────────────────────
 
 fn encode_message(msg: &InternalMessage) -> Result<Value> {
     let role = match msg.role {
@@ -261,8 +354,8 @@ fn encode_message(msg: &InternalMessage) -> Result<Value> {
                     blocks.push(serde_json::json!({"type": "text", "text": t}));
                 }
                 for tc in tcs {
-                    let input: Value =
-                        serde_json::from_str(&tc.arguments).unwrap_or(Value::Object(Default::default()));
+                    let input: Value = serde_json::from_str(&tc.arguments)
+                        .unwrap_or(Value::Object(Default::default()));
                     blocks.push(serde_json::json!({
                         "type": "tool_use",
                         "id": normalize_anthropic_tool_id(&tc.id),
@@ -297,13 +390,11 @@ fn encode_message(msg: &InternalMessage) -> Result<Value> {
                             "type": "thinking",
                             "thinking": text,
                         });
-                        if let Some(sig) = signature {
-                            if !sig.trim().is_empty() {
-                                if let Some(obj) = block.as_object_mut() {
+                        if let Some(sig) = signature
+                            && !sig.trim().is_empty()
+                                && let Some(obj) = block.as_object_mut() {
                                     obj.insert("signature".into(), serde_json::json!(sig));
                                 }
-                            }
-                        }
                         block
                     }
                     ContentBlock::ToolUse { id, name, input } => {

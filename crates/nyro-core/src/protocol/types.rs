@@ -6,6 +6,11 @@ use serde_json::Value;
 use super::ids::ProtocolId;
 
 // ── Ingress: client request → internal ──
+//
+// NOTE: `InternalRequest` and `InternalResponse` are superseded by
+// `crate::protocol::ir::{AiRequest, AiResponse}` (PR-06).
+// These types remain for codec backward compatibility during PR-08–12.
+// Do not add new fields here; add them to `AiRequest`/`AiResponse` instead.
 
 #[derive(Debug, Clone)]
 pub struct InternalRequest {

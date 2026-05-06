@@ -4,8 +4,10 @@ pub mod cache;
 pub mod config;
 pub mod crypto;
 pub mod db;
+pub mod error;
 pub mod logging;
 pub mod protocol;
+pub mod provider;
 pub mod proxy;
 pub mod router;
 pub mod storage;
@@ -399,11 +401,10 @@ impl Gateway {
             .unwrap_or(false);
 
         let cache_key = format!("{proxy_url}|{force_http1}");
-        if let Some(cached) = self.proxy_client_cache.read().await.clone() {
-            if cached.cache_key == cache_key {
+        if let Some(cached) = self.proxy_client_cache.read().await.clone()
+            && cached.cache_key == cache_key {
                 return Ok(cached.client);
             }
-        }
 
         let mut builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(300));
         if force_http1 {

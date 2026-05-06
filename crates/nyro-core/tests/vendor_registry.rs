@@ -11,7 +11,7 @@ use nyro_core::protocol::ids::{
     ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GENERATE_V1BETA, OPENAI_CHAT_V1, OPENAI_RESPONSES_V1,
     ProtocolId,
 };
-use nyro_core::protocol::vendor::{VendorCtx, VendorRegistry, VendorScope};
+use nyro_core::provider::{VendorCtx, VendorRegistry, VendorScope};
 use serde_json::Value;
 
 fn make_provider(vendor: Option<&str>, channel: Option<&str>) -> Provider {

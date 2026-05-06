@@ -1,3 +1,15 @@
+//! OpenAI Responses API ingress decoder (PR-09).
+//!
+//! Added in PR-09:
+//! - `background` (bool) — run in background
+//! - `previous_response_id` — link to prior response (multi-turn stateful)
+//! - Built-in tools: `web_search_preview`, `file_search`, `computer_use_preview`
+//! - `store` — whether to store in conversation history
+//! - `include` — list of fields to include in the response
+//! - `truncation` — input truncation strategy
+//! - `metadata` / `text` / `temperature` / `top_p` (pre-existing, now explicit)
+//! - Full reasoning item handling (passed through as extra, skip silently)
+
 use std::collections::HashMap;
 
 use anyhow::Result;
@@ -8,6 +20,31 @@ use crate::protocol::ids::OPENAI_RESPONSES_V1;
 use crate::protocol::types::*;
 
 pub struct ResponsesDecoder;
+
+// Fields decoded into named IR fields (not extra).
+const KNOWN_FIELDS: &[&str] = &[
+    "model",
+    "input",
+    "instructions",
+    "max_output_tokens",
+    "stream",
+    "temperature",
+    "top_p",
+    "tools",
+    "tool_choice",
+    // PR-09
+    "background",
+    "previous_response_id",
+    "store",
+    "include",
+    "truncation",
+    "metadata",
+    "text",
+    "reasoning",
+    "parallel_tool_calls",
+    "service_tier",
+    "user",
+];
 
 impl IngressDecoder for ResponsesDecoder {
     fn decode_request(&self, body: Value) -> Result<InternalRequest> {
@@ -33,8 +70,8 @@ impl IngressDecoder for ResponsesDecoder {
         let tools = parse_tools(obj.get("tools"))?;
         let tool_choice = obj.get("tool_choice").cloned();
 
-        if let Some(inst) = obj.get("instructions").and_then(|v| v.as_str()) {
-            if !inst.is_empty() {
+        if let Some(inst) = obj.get("instructions").and_then(|v| v.as_str())
+            && !inst.is_empty() {
                 messages.push(InternalMessage {
                     role: Role::System,
                     content: MessageContent::Text(inst.to_string()),
@@ -42,7 +79,6 @@ impl IngressDecoder for ResponsesDecoder {
                     tool_call_id: None,
                 });
             }
-        }
 
         let input = obj
             .get("input")
@@ -71,22 +107,31 @@ impl IngressDecoder for ResponsesDecoder {
             anyhow::bail!("no messages found in input");
         }
 
-        let known: &[&str] = &[
-            "model",
-            "input",
-            "instructions",
-            "max_output_tokens",
-            "stream",
-            "temperature",
-            "top_p",
-            "tools",
-            "tool_choice",
-        ];
-        let extra: HashMap<String, Value> = obj
+        // ── Build extra from unknown + PR-09 named fields ─────────────────────
+        let mut extra: HashMap<String, Value> = obj
             .iter()
-            .filter(|(k, _)| !known.contains(&k.as_str()))
+            .filter(|(k, _)| !KNOWN_FIELDS.contains(&k.as_str()))
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
+
+        // Carry PR-09 named fields explicitly so the encoder can forward them.
+        for key in &[
+            "background",
+            "previous_response_id",
+            "store",
+            "include",
+            "truncation",
+            "metadata",
+            "text",
+            "reasoning",
+            "parallel_tool_calls",
+            "service_tier",
+            "user",
+        ] {
+            if let Some(v) = obj.get(*key) {
+                extra.entry(key.to_string()).or_insert_with(|| v.clone());
+            }
+        }
 
         Ok(InternalRequest {
             messages,
@@ -109,68 +154,70 @@ fn decode_input_item(item: &Value) -> Result<Option<InternalMessage>> {
         .and_then(|v| v.as_str())
         .unwrap_or("message");
 
-    if item_type == "function_call_output" {
-        let call_id = item
-            .get("call_id")
-            .or_else(|| item.get("tool_call_id"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        if call_id.trim().is_empty() {
-            anyhow::bail!("function_call_output missing call_id");
+    match item_type {
+        "function_call_output" => {
+            let call_id = item
+                .get("call_id")
+                .or_else(|| item.get("tool_call_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            if call_id.trim().is_empty() {
+                anyhow::bail!("function_call_output missing call_id");
+            }
+            let output = item.get("output").cloned().unwrap_or(Value::Null);
+            let output_text = match output {
+                Value::String(s) => s,
+                Value::Null => String::new(),
+                other => other.to_string(),
+            };
+            Ok(Some(InternalMessage {
+                role: Role::Tool,
+                content: MessageContent::Text(output_text),
+                tool_calls: None,
+                tool_call_id: Some(call_id),
+            }))
         }
-        let output = item.get("output").cloned().unwrap_or(Value::Null);
-        let output_text = match output {
-            Value::String(s) => s,
-            Value::Null => String::new(),
-            other => other.to_string(),
-        };
 
-        return Ok(Some(InternalMessage {
-            role: Role::Tool,
-            content: MessageContent::Text(output_text),
-            tool_calls: None,
-            tool_call_id: Some(call_id),
-        }));
-    }
-
-    if item_type == "function_call" {
-        let call_id = item
-            .get("call_id")
-            .or_else(|| item.get("id"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let name = item
-            .get("name")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        let arguments = item
-            .get("arguments")
-            .and_then(|v| v.as_str())
-            .unwrap_or("{}")
-            .to_string();
-        if call_id.trim().is_empty() || name.trim().is_empty() {
-            anyhow::bail!("function_call item missing call_id or name");
+        "function_call" => {
+            let call_id = item
+                .get("call_id")
+                .or_else(|| item.get("id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let name = item
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let arguments = item
+                .get("arguments")
+                .and_then(|v| v.as_str())
+                .unwrap_or("{}")
+                .to_string();
+            if call_id.trim().is_empty() || name.trim().is_empty() {
+                anyhow::bail!("function_call item missing call_id or name");
+            }
+            Ok(Some(InternalMessage {
+                role: Role::Assistant,
+                content: MessageContent::Text(String::new()),
+                tool_calls: Some(vec![ToolCall { id: call_id, name, arguments }]),
+                tool_call_id: None,
+            }))
         }
-        return Ok(Some(InternalMessage {
-            role: Role::Assistant,
-            content: MessageContent::Text(String::new()),
-            tool_calls: Some(vec![ToolCall {
-                id: call_id,
-                name,
-                arguments,
-            }]),
-            tool_call_id: None,
-        }));
-    }
 
-    if item_type != "message" {
-        // Ignore other responses item types (reasoning, file_search_call, etc).
-        return Ok(None);
-    }
+        // PR-09: web_search_call, file_search_call, computer_call — pass through
+        // silently; their results are provided via `function_call_output`.
+        "web_search_call" | "file_search_call" | "computer_call" | "reasoning" => Ok(None),
 
+        "message" => decode_message_item(item),
+
+        _ => Ok(None),
+    }
+}
+
+fn decode_message_item(item: &Value) -> Result<Option<InternalMessage>> {
     let role_str = item.get("role").and_then(|v| v.as_str()).unwrap_or("user");
     let role = match role_str {
         "system" | "developer" => Role::System,
@@ -190,14 +237,13 @@ fn decode_input_item(item: &Value) -> Result<Option<InternalMessage>> {
                     "input_text" | "output_text" | "text" => {
                         if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
                             texts.push(text.to_string());
-                        } else {
-                            anyhow::bail!("text block missing 'text' field");
                         }
                     }
-                    other => {
-                        anyhow::bail!(
-                            "unsupported content block type in responses input: {other}"
-                        );
+                    "image_url" => {
+                        // Skip images in text accumulator; they'll be handled by multimodal codecs.
+                    }
+                    _ => {
+                        // Ignore unknown block types (e.g. `input_audio`, `reasoning_summary`).
                     }
                 }
             }
@@ -211,12 +257,7 @@ fn decode_input_item(item: &Value) -> Result<Option<InternalMessage>> {
         None => return Ok(None),
     };
 
-    Ok(Some(InternalMessage {
-        role,
-        content,
-        tool_calls: None,
-        tool_call_id: None,
-    }))
+    Ok(Some(InternalMessage { role, content, tool_calls: None, tool_call_id: None }))
 }
 
 fn parse_tools(raw_tools: Option<&Value>) -> Result<Option<Vec<ToolDef>>> {
@@ -226,43 +267,39 @@ fn parse_tools(raw_tools: Option<&Value>) -> Result<Option<Vec<ToolDef>>> {
 
     let mut tools = Vec::new();
     for item in items {
-        let Some(tool_type) = item
-            .get("type")
-            .and_then(|v| v.as_str())
-        else {
-            continue;
-        };
+        let tool_type = item.get("type").and_then(|v| v.as_str()).unwrap_or("function");
 
-        if tool_type != "function" {
-            // Responses 内置工具（如 web_search/file_search/code_interpreter）当前不在网关实现范围内，
-            // 为保证兼容 Codex 请求，不抛错，直接忽略。
-            continue;
+        match tool_type {
+            "function" => {
+                let name = item
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .ok_or_else(|| anyhow::anyhow!("function tool missing 'name' field"))?
+                    .to_string();
+                let description = item
+                    .get("description")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                let parameters = item
+                    .get("parameters")
+                    .cloned()
+                    .unwrap_or(Value::Object(Default::default()));
+                tools.push(ToolDef { name, description, parameters });
+            }
+            // PR-09: built-in tools preserved as sentinel ToolDef entries
+            // so the encoder can reconstruct them on the egress side.
+            "web_search_preview" | "file_search" | "computer_use_preview" | "code_interpreter" => {
+                tools.push(ToolDef {
+                    name: format!("__builtin__{}", tool_type),
+                    description: Some(format!("built-in tool: {}", tool_type)),
+                    parameters: item.clone(),
+                });
+            }
+            _ => {
+                // Ignore unknown tool types.
+            }
         }
-
-        let name = item
-            .get("name")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("function tool missing 'name' field"))?
-            .to_string();
-        let description = item
-            .get("description")
-            .and_then(|v| v.as_str())
-            .map(String::from);
-        let parameters = item
-            .get("parameters")
-            .cloned()
-            .unwrap_or(Value::Object(Default::default()));
-
-        tools.push(ToolDef {
-            name,
-            description,
-            parameters,
-        });
     }
 
-    if tools.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(tools))
-    }
+    if tools.is_empty() { Ok(None) } else { Ok(Some(tools)) }
 }

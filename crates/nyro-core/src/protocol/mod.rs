@@ -8,7 +8,21 @@
 //! - `dialect`: wire-format verb/noun (`chat`, `responses`, `messages`, `generate`).
 //! - `wire_version`: schema version as the vendor labels it (`v1`, `2023-06-01`, `v1beta`).
 //!
-//! See [`ids`], [`traits`], [`registry`], [`codec`], and [`handler`] for the model.
+//! See [`ids`], [`traits`], [`registry`], and [`codec`] for the model.
+//!
+//! ## Codec layout (PR-14)
+//!
+//! Each `codec/<family>/` directory now co-locates the wire codecs **and** the
+//! thin `ProtocolHandler` registration shell for every dialect:
+//!
+//! - `codec/openai/chat.rs` — `OpenAIChatV1` + `inventory::submit!`
+//! - `codec/openai/embeddings.rs` — `OpenAIEmbeddingsV1` + codec types
+//! - `codec/openai/responses/handler.rs` — `OpenAIResponsesV1`
+//! - `codec/anthropic/messages.rs` — `AnthropicMessages2023`
+//! - `codec/google/generate.rs` — `GoogleGenerateV1Beta`
+//!
+//! Shared semantic utilities live in `codec/reasoning.rs` and
+//! `codec/tool_correlation.rs`.
 //!
 //! ## Alias table (resolved at runtime in [`registry::ProtocolRegistry::resolve_alias`])
 //!
@@ -25,16 +39,11 @@
 
 pub mod types;
 pub mod codec;
-pub mod semantic;
 
 pub mod ids;
+pub mod ir;
 pub mod traits;
 pub mod registry;
-pub mod handler;
-pub mod vendor;
-pub mod normalize;
-
-use std::collections::HashMap;
 
 use reqwest::header::HeaderMap;
 
@@ -116,10 +125,17 @@ impl SseEvent {
 
 // ── Provider multi-protocol negotiation ──
 
+/// Declared protocol capabilities of a single provider, built from the DB row.
+///
+/// **`endpoints` is a `Vec` (ordered, not `HashMap`) so that fallback
+/// resolution is deterministic.**  The order matches the JSON key order of the
+/// stored `protocol_endpoints` column after normalization; later entries have
+/// lower priority.
 #[derive(Debug, Clone)]
 pub struct ProviderProtocols {
     pub default: ProtocolId,
-    pub endpoints: HashMap<ProtocolId, ProtocolEndpointEntry>,
+    /// Ordered list of supported endpoints.  First match wins in fallback logic.
+    pub endpoints: Vec<(ProtocolId, ProtocolEndpointEntry)>,
 }
 
 #[derive(Debug, Clone)]
@@ -131,52 +147,53 @@ pub struct ResolvedEgress {
 
 impl ProviderProtocols {
     /// Best-effort string → [`ProtocolId`] resolver.
-    ///
-    /// Accepts legacy strings (`openai` / `openai_responses` / `anthropic` /
-    /// `gemini`), short aliases (`openai-chat`, `responses`, `claude`, …),
-    /// and canonical `family/dialect/version` strings — all routed through
-    /// [`registry::ProtocolRegistry::resolve_alias`].
-    ///
-    /// Returns `None` for unknown keys so we silently drop garbage from old
-    /// DB rows instead of panicking.
     pub fn parse_protocol_key(s: &str) -> Option<ProtocolId> {
         registry::ProtocolRegistry::global().resolve_alias(s)
     }
 
+    /// Build from a provider DB row.  The `endpoints` Vec preserves the
+    /// iteration order of the JSON map (serde_json preserves insertion order).
     pub fn from_provider(provider: &Provider) -> Self {
         let raw_map = provider.parsed_protocol_endpoints();
-        let mut endpoints: HashMap<ProtocolId, ProtocolEndpointEntry> = HashMap::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut endpoints: Vec<(ProtocolId, ProtocolEndpointEntry)> = Vec::new();
+
         for (key, entry) in &raw_map {
             if let Some(id) = Self::parse_protocol_key(key)
-                && !endpoints.contains_key(&id)
-            {
-                endpoints.insert(id, entry.clone());
-            }
+                && seen.insert(id) {
+                    endpoints.push((id, entry.clone()));
+                }
         }
 
-        let declared_default = Self::parse_protocol_key(&provider.effective_default_protocol());
+        let declared_default = Self::parse_protocol_key(provider.effective_default_protocol());
         let default = declared_default
-            .filter(|id| endpoints.contains_key(id))
-            .or_else(|| endpoints.keys().next().copied())
+            .filter(|id| endpoints.iter().any(|(eid, _)| eid == id))
+            .or_else(|| endpoints.first().map(|(id, _)| *id))
             .or(declared_default)
             .unwrap_or(ids::OPENAI_CHAT_V1);
 
         Self { default, endpoints }
     }
 
+    /// Returns `true` if the provider declares support for `protocol`.
     pub fn supports(&self, protocol: ProtocolId) -> bool {
-        self.endpoints.contains_key(&protocol)
+        self.endpoints.iter().any(|(id, _)| *id == protocol)
     }
 
-    /// Three-tier egress resolution:
+    /// Look up the endpoint entry for a specific protocol.
+    pub fn get(&self, protocol: ProtocolId) -> Option<&ProtocolEndpointEntry> {
+        self.endpoints.iter().find_map(|(id, ep)| if *id == protocol { Some(ep) } else { None })
+    }
+
+    /// Deterministic three-tier egress resolution:
     ///
-    /// 1. **Exact [`ProtocolId`] match** — same wire format on both sides.
-    /// 2. **Same-family fallback** — e.g. ingress `openai/responses/v1` against
-    ///    a provider that only declares `openai/chat/v1`; we still talk OpenAI,
-    ///    but the codec layer must translate.
-    /// 3. **Global default** — last resort, also conversion needed.
+    /// 1. **Exact match** — ingress protocol declared by the provider.
+    /// 2. **Same-family, first declared** — iterates `endpoints` in Vec order,
+    ///    which is JSON insertion order after normalization.  Deterministic.
+    /// 3. **Provider default** — last resort.
     pub fn resolve_egress(&self, ingress: ProtocolId) -> ResolvedEgress {
-        if let Some(ep) = self.endpoints.get(&ingress) {
+        // Tier 1: exact match.
+        if let Some(ep) = self.get(ingress) {
             return ResolvedEgress {
                 protocol: ingress,
                 base_url: ep.base_url.clone(),
@@ -184,11 +201,8 @@ impl ProviderProtocols {
             };
         }
 
-        if let Some((id, ep)) = self
-            .endpoints
-            .iter()
-            .find(|(id, _)| id.family == ingress.family)
-        {
+        // Tier 2: same family, first in declared order.
+        if let Some((id, ep)) = self.endpoints.iter().find(|(id, _)| id.family == ingress.family) {
             return ResolvedEgress {
                 protocol: *id,
                 base_url: ep.base_url.clone(),
@@ -196,7 +210,8 @@ impl ProviderProtocols {
             };
         }
 
-        if let Some(ep) = self.endpoints.get(&self.default) {
+        // Tier 3: provider default.
+        if let Some(ep) = self.get(self.default) {
             ResolvedEgress {
                 protocol: self.default,
                 base_url: ep.base_url.clone(),

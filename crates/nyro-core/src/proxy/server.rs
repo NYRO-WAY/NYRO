@@ -1,24 +1,27 @@
+use axum::middleware;
 use axum::routing::{get, post};
 use axum::Router;
 use axum::http::{HeaderValue, Method, header};
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 
+use super::context::inject_context;
 use super::handler;
+use super::ingress;
 use crate::Gateway;
 
 pub fn create_router(gateway: Gateway) -> Router {
     let router = Router::new()
-        .route("/v1/chat/completions", post(handler::openai_proxy))
-        .route("/chat/completions", post(handler::openai_proxy))
-        .route("/v1/responses", post(handler::responses_proxy))
-        .route("/responses", post(handler::responses_proxy))
-        .route("/v1/messages", post(handler::anthropic_proxy))
-        .route("/messages", post(handler::anthropic_proxy))
-        .route("/v1/embeddings", post(handler::embeddings_proxy))
-        .route("/embeddings", post(handler::embeddings_proxy))
-        .route("/v1beta/models/:model_action",post(handler::gemini_proxy))
-        .route("/models/:model_action", post(handler::gemini_proxy))
+        .route("/v1/chat/completions", post(ingress::openai_chat::openai_chat))
+        .route("/chat/completions", post(ingress::openai_chat::openai_chat))
+        .route("/v1/responses", post(ingress::openai_responses::openai_responses))
+        .route("/responses", post(ingress::openai_responses::openai_responses))
+        .route("/v1/messages", post(ingress::anthropic_messages::anthropic_messages))
+        .route("/messages", post(ingress::anthropic_messages::anthropic_messages))
+        .route("/v1/embeddings", post(ingress::openai_embeddings::openai_embeddings))
+        .route("/embeddings", post(ingress::openai_embeddings::openai_embeddings))
+        .route("/v1beta/models/:model_action", post(ingress::google_generate::google_generate))
+        .route("/models/:model_action", post(ingress::google_generate::google_generate))
         .route("/v1/models", get(handler::models_list))
         .route("/models", get(handler::models_list))
         .route("/health", get(health));
@@ -26,6 +29,7 @@ pub fn create_router(gateway: Gateway) -> Router {
     let cors = build_proxy_cors_layer(&gateway.config.proxy_cors_origins, gateway.config.proxy_port);
 
     router
+        .layer(middleware::from_fn(inject_context))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(gateway)

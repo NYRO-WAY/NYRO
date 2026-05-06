@@ -18,8 +18,8 @@ use crate::auth::types::{
     StoredCredential,
 };
 use crate::db::models::Provider;
-use crate::protocol::vendor::VendorRegistry;
-use crate::protocol::vendor::types::{OAuthConfig, RuntimeConfig};
+use crate::provider::VendorRegistry;
+use crate::provider::{OAuthConfig, RuntimeConfig};
 
 const OPENAI_PRESET_ID: &str = "openai";
 const CODEX_CHANNEL_ID: &str = "codex";

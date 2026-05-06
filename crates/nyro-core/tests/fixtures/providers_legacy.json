@@ -1,8 +1,8 @@
 [
   {
-    "id": "nyro",
+    "id": "custom",
     "label": { "zh": "自定义", "en": "Custom" },
-    "icon": "nyro",
+    "icon": "custom",
     "defaultProtocol": "openai",
     "channels": [
       {

@@ -55,13 +55,37 @@ impl EgressEncoder for OpenAIEncoder {
             obj.insert("tool_choice".into(), tc.clone());
         }
 
+        // ── PR-08 fields forwarded from extra ─────────────────────────────────
+        // Always include_usage when streaming.
         if req.stream {
-            obj.insert(
-                "stream_options".into(),
-                serde_json::json!({"include_usage": true}),
-            );
+            let stream_opts = req.extra.get("stream_options").cloned().unwrap_or_else(|| {
+                serde_json::json!({"include_usage": true})
+            });
+            obj.insert("stream_options".into(), stream_opts);
         }
 
+        for key in &[
+            "parallel_tool_calls",
+            "prediction",
+            "modalities",
+            "audio",
+            "response_format",
+            "seed",
+            "stop",
+            "logit_bias",
+            "service_tier",
+            "reasoning_effort",
+            "frequency_penalty",
+            "presence_penalty",
+            "n",
+            "user",
+        ] {
+            if let Some(v) = req.extra.get(*key) {
+                obj.entry(key.to_string()).or_insert_with(|| v.clone());
+            }
+        }
+
+        // Passthrough any remaining unknown extra fields.
         for (k, v) in &req.extra {
             obj.entry(k.clone()).or_insert_with(|| v.clone());
         }
@@ -207,8 +231,8 @@ fn prune_orphan_assistant_tool_calls(messages: Vec<InternalMessage>) -> Vec<Inte
 
     let mut out: Vec<InternalMessage> = Vec::with_capacity(messages.len());
     for mut msg in messages {
-        if msg.role == Role::Assistant {
-            if let Some(calls) = msg.tool_calls.take() {
+        if msg.role == Role::Assistant
+            && let Some(calls) = msg.tool_calls.take() {
                 let kept: Vec<ToolCall> = calls
                     .into_iter()
                     .filter(|tc| referenced_tool_ids.contains(&tc.id))
@@ -217,7 +241,6 @@ fn prune_orphan_assistant_tool_calls(messages: Vec<InternalMessage>) -> Vec<Inte
                     msg.tool_calls = Some(kept);
                 }
             }
-        }
         out.push(msg);
     }
     out
@@ -278,11 +301,10 @@ fn remap_duplicate_tool_call_ids(messages: &[InternalMessage]) -> Vec<InternalMe
             continue;
         };
 
-        if let Some(stack) = pending_by_original.get_mut(&original_id) {
-            if let Some(unique_id) = stack.pop() {
+        if let Some(stack) = pending_by_original.get_mut(&original_id)
+            && let Some(unique_id) = stack.pop() {
                 msg.tool_call_id = Some(unique_id);
             }
-        }
     }
 
     out
@@ -307,11 +329,11 @@ fn make_matching_call_adjacent(out: &mut Vec<InternalMessage>, tool_call_id: &st
             && last
                 .tool_calls
                 .as_ref()
-                .map_or(true, |calls| calls.is_empty())
+                .is_none_or(|calls| calls.is_empty())
             && last
                 .tool_call_id
                 .as_ref()
-                .map_or(true, |id| id.trim().is_empty());
+                .is_none_or(|id| id.trim().is_empty());
         if drop_candidate {
             let _ = out.pop();
             continue;
@@ -351,11 +373,11 @@ fn trim_trailing_assistant_text_after_index(out: &mut Vec<InternalMessage>, sour
             && last
                 .tool_calls
                 .as_ref()
-                .map_or(true, |calls| calls.is_empty())
+                .is_none_or(|calls| calls.is_empty())
             && last
                 .tool_call_id
                 .as_ref()
-                .map_or(true, |id| id.trim().is_empty());
+                .is_none_or(|id| id.trim().is_empty());
         if drop_candidate {
             let _ = out.pop();
             continue;

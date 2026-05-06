@@ -104,12 +104,46 @@ pub const GOOGLE_GENERATE_V1BETA: ProtocolId =
 pub const OPENAI_EMBEDDINGS_V1: ProtocolId =
     ProtocolId::new(ProtocolFamily::OpenAI, "embeddings", "v1");
 
-/// Static, declarative description of what a `ProtocolHandler` can do.
+/// Vendor field policy: what happens when the codec encounters a field
+/// that the provider may or may not support.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VendorFieldPolicy {
+    /// The provider is known to support this field.
+    Supported,
+    /// The provider does not support this field; it MUST be dropped silently.
+    Drop,
+    /// Unknown — check at runtime via vendor extension.
+    Unknown,
+}
+
+/// Stream capabilities for this endpoint.
+#[derive(Debug, Clone, Copy)]
+pub struct StreamCaps {
+    /// Endpoint can produce SSE streaming responses.
+    pub server_sent_events: bool,
+    /// The `usage` object is present in the final stream chunk.
+    pub usage_in_stream: bool,
+    /// Provider requires the body to contain `"stream": true` to stream.
+    pub requires_stream_flag: bool,
+}
+
+impl StreamCaps {
+    pub const DEFAULT: Self = Self {
+        server_sent_events: true,
+        usage_in_stream: false,
+        requires_stream_flag: true,
+    };
+}
+
+/// Extended static capabilities of a `ProtocolHandler` endpoint.
 ///
-/// Replaces scattered `match` statements (e.g. `matches!(egress, ResponsesAPI)`,
-/// the Gemini `override_model` branch) with data inspected at the call site.
+/// PR-07 adds the feature flags, vendor field policy, and stream caps
+/// sections to the original `ProtocolCapabilities`.  The `lossy_default_reject`
+/// flag is consumed by `negotiator::negotiate` to decide whether to reject or
+/// accept lossy cross-protocol transforms.
 #[derive(Debug, Clone, Copy)]
 pub struct ProtocolCapabilities {
+    // ── Original fields (PR-01 through PR-06) ────────────────────────────────
     pub streaming: bool,
     pub tools: bool,
     pub reasoning: bool,
@@ -123,6 +157,34 @@ pub struct ProtocolCapabilities {
     /// Ingress routes this handler claims, as `(method, path)` tuples.
     /// Used by `ProtocolRegistry::find_by_ingress_route` for declarative routing.
     pub ingress_routes: &'static [(&'static str, &'static str)],
+
+    // ── PR-07 additions ───────────────────────────────────────────────────────
+
+    /// Whether multimodal (vision) input is accepted.
+    pub multimodal: bool,
+    /// Whether the provider accepts structured output / JSON-mode requests.
+    pub structured_output: bool,
+    /// Whether the provider supports named function tools.
+    pub function_calling: bool,
+    /// Whether the provider supports parallel tool calls.
+    pub parallel_tool_calls: bool,
+    /// Whether the provider exposes extended reasoning / thinking.
+    pub extended_reasoning: bool,
+    /// Whether the provider honours the `seed` parameter for determinism.
+    pub deterministic_seed: bool,
+    /// Stream capabilities for this endpoint.
+    pub stream: StreamCaps,
+    /// Default policy for unrecognised vendor fields in the egress body.
+    ///
+    /// If `Drop`, the codec will silently omit unknown extras.  If this is set
+    /// to `Supported`, the codec copies `VendorExtensions::passthrough_safe`
+    /// verbatim.
+    pub unknown_field_policy: VendorFieldPolicy,
+    /// When `true`, a request requiring a lossy cross-protocol transform is
+    /// **rejected** with `GatewayError::ProtocolLossyRejected` unless the
+    /// route has `allow_lossy = true`.  When `false`, the lossy transform is
+    /// accepted silently.
+    pub lossy_default_reject: bool,
 }
 
 impl ProtocolCapabilities {
@@ -134,6 +196,39 @@ impl ProtocolCapabilities {
         force_upstream_stream: false,
         override_model_in_body: false,
         ingress_routes: &[],
+        multimodal: false,
+        structured_output: false,
+        function_calling: false,
+        parallel_tool_calls: false,
+        extended_reasoning: false,
+        deterministic_seed: false,
+        stream: StreamCaps::DEFAULT,
+        unknown_field_policy: VendorFieldPolicy::Drop,
+        lossy_default_reject: true,
+    };
+
+    /// The standard set of capabilities for a typical chat-completions endpoint.
+    pub const CHAT_STANDARD: Self = Self {
+        streaming: true,
+        tools: true,
+        reasoning: false,
+        embeddings: false,
+        force_upstream_stream: false,
+        override_model_in_body: false,
+        ingress_routes: &[],
+        multimodal: true,
+        structured_output: true,
+        function_calling: true,
+        parallel_tool_calls: true,
+        extended_reasoning: false,
+        deterministic_seed: true,
+        stream: StreamCaps {
+            server_sent_events: true,
+            usage_in_stream: true,
+            requires_stream_flag: true,
+        },
+        unknown_field_policy: VendorFieldPolicy::Drop,
+        lossy_default_reject: true,
     };
 }
 

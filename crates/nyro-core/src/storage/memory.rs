@@ -106,7 +106,7 @@ impl ProviderStore for MemoryStorage {
     async fn exists_by_name(&self, name: &str, exclude_id: Option<&str>) -> anyhow::Result<bool> {
         let providers = self.providers.read().await;
         Ok(providers.iter().any(|p| {
-            p.name == name && exclude_id.map_or(true, |eid| p.id != eid)
+            p.name == name && exclude_id.is_none_or(|eid| p.id != eid)
         }))
     }
 
@@ -144,7 +144,7 @@ impl RouteStore for MemoryStorage {
     async fn exists_by_name(&self, name: &str, exclude_id: Option<&str>) -> anyhow::Result<bool> {
         let routes = self.routes.read().await;
         Ok(routes.iter().any(|r| {
-            r.name == name && exclude_id.map_or(true, |eid| r.id != eid)
+            r.name == name && exclude_id.is_none_or(|eid| r.id != eid)
         }))
     }
 
@@ -156,7 +156,7 @@ impl RouteStore for MemoryStorage {
         let routes = self.routes.read().await;
         Ok(routes.iter().any(|r| {
             r.virtual_model == virtual_model
-                && exclude_id.map_or(true, |eid| r.id != eid)
+                && exclude_id.is_none_or(|eid| r.id != eid)
         }))
     }
 }

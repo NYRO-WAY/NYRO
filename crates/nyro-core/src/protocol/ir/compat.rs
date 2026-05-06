@@ -1,0 +1,240 @@
+//! Compatibility shims between the old `InternalRequest`/`InternalResponse` and
+//! the new `AiRequest`/`AiResponse`.
+//!
+//! These `From` implementations allow progressive migration: codec decoders can
+//! be updated one by one from producing `InternalRequest` to producing
+//! `AiRequest`, while the dispatcher still accepts both via the shim.
+//!
+//! Round-trip property: `InternalRequest → AiRequest → InternalRequest` is
+//! lossless for all fields present in `InternalRequest`.
+
+use crate::protocol::ir::request::{
+    AiRequest, ContentBlock, GenerationConfig, Message, MessageContent, Role,
+    StreamConfig, ToolCall, ToolSpec,
+};
+use crate::protocol::ir::response::AiResponse;
+use crate::protocol::types::{
+    ContentBlock as OldContentBlock, InternalMessage, InternalRequest, InternalResponse,
+    MessageContent as OldMessageContent, Role as OldRole, ToolCall as OldToolCall,
+    ToolDef,
+};
+
+// ── InternalRequest → AiRequest ───────────────────────────────────────────────
+
+impl From<InternalRequest> for AiRequest {
+    fn from(old: InternalRequest) -> Self {
+        let messages = old.messages.into_iter().map(msg_from_old).collect();
+        let tools = old.tools.map(|ts| ts.into_iter().map(tool_spec_from_old).collect());
+        let mut req = AiRequest::new(old.model, messages);
+        req.generation = GenerationConfig {
+            temperature: old.temperature,
+            max_tokens: old.max_tokens,
+            top_p: old.top_p,
+            ..Default::default()
+        };
+        req.stream = StreamConfig { enabled: old.stream, include_usage: false };
+        req.tools = tools;
+        req.tool_choice = old.tool_choice.map(crate::protocol::ir::request::ToolChoice::Raw);
+        req.meta.source_protocol = Some(old.source_protocol);
+        // Copy unknown extra fields into the ingress vendor bag.
+        for (k, v) in old.extra {
+            req.meta.vendor.ingress.insert(k, v);
+        }
+        req
+    }
+}
+
+fn msg_from_old(old: InternalMessage) -> Message {
+    Message {
+        role: role_from_old(old.role),
+        content: content_from_old(old.content),
+        tool_calls: old.tool_calls.map(|tcs| tcs.into_iter().map(tc_from_old).collect()),
+        tool_call_id: old.tool_call_id,
+        meta: None,
+    }
+}
+
+fn role_from_old(r: OldRole) -> Role {
+    match r {
+        OldRole::System => Role::System,
+        OldRole::User => Role::User,
+        OldRole::Assistant => Role::Assistant,
+        OldRole::Tool => Role::Tool,
+    }
+}
+
+fn content_from_old(c: OldMessageContent) -> MessageContent {
+    match c {
+        OldMessageContent::Text(t) => MessageContent::Text(t),
+        OldMessageContent::Blocks(bs) => {
+            MessageContent::Blocks(bs.into_iter().map(block_from_old).collect())
+        }
+    }
+}
+
+fn block_from_old(b: OldContentBlock) -> ContentBlock {
+    match b {
+        OldContentBlock::Text { text } => ContentBlock::Text { text },
+        OldContentBlock::Image { source } => ContentBlock::Image {
+            media_type: source.media_type,
+            data: source.data,
+        },
+        OldContentBlock::Reasoning { text, signature } => ContentBlock::Reasoning { text, signature },
+        OldContentBlock::ToolUse { id, name, input } => ContentBlock::ToolUse { id, name, input },
+        OldContentBlock::ToolResult { tool_use_id, content } => {
+            ContentBlock::ToolResult { tool_use_id, content }
+        }
+    }
+}
+
+fn tc_from_old(tc: OldToolCall) -> ToolCall {
+    ToolCall { id: tc.id, name: tc.name, arguments: tc.arguments }
+}
+
+fn tool_spec_from_old(td: ToolDef) -> ToolSpec {
+    ToolSpec { name: td.name, description: td.description, parameters: td.parameters, meta: None }
+}
+
+// ── AiRequest → InternalRequest ───────────────────────────────────────────────
+
+impl From<AiRequest> for InternalRequest {
+    fn from(new: AiRequest) -> Self {
+        let messages = new.messages.into_iter().map(msg_to_old).collect();
+        let tools = new.tools.map(|ts: Vec<_>| ts.into_iter().map(tool_spec_to_old).collect());
+        let source_protocol = new.meta.source_protocol.unwrap_or(crate::protocol::ids::OPENAI_CHAT_V1);
+        let mut extra = std::collections::HashMap::new();
+        for (k, v) in new.meta.vendor.ingress {
+            extra.insert(k, v);
+        }
+        InternalRequest {
+            messages,
+            model: new.model,
+            stream: new.stream.enabled,
+            temperature: new.generation.temperature,
+            max_tokens: new.generation.max_tokens,
+            top_p: new.generation.top_p,
+            tools,
+            tool_choice: new.tool_choice.map(|tc| match tc {
+                crate::protocol::ir::request::ToolChoice::Raw(v) => v,
+                _ => serde_json::to_value(&tc).unwrap_or(serde_json::Value::Null),
+            }),
+            source_protocol,
+            extra,
+        }
+    }
+}
+
+fn msg_to_old(msg: Message) -> InternalMessage {
+    InternalMessage {
+        role: role_to_old(msg.role),
+        content: content_to_old(msg.content),
+        tool_calls: msg.tool_calls.map(|tcs| tcs.into_iter().map(tc_to_old).collect()),
+        tool_call_id: msg.tool_call_id,
+    }
+}
+
+fn role_to_old(r: Role) -> OldRole {
+    match r {
+        Role::System => OldRole::System,
+        Role::User => OldRole::User,
+        Role::Assistant => OldRole::Assistant,
+        Role::Tool => OldRole::Tool,
+    }
+}
+
+fn content_to_old(c: MessageContent) -> OldMessageContent {
+    match c {
+        MessageContent::Text(t) => OldMessageContent::Text(t),
+        MessageContent::Blocks(bs) => {
+            OldMessageContent::Blocks(bs.into_iter().filter_map(block_to_old).collect())
+        }
+    }
+}
+
+fn block_to_old(b: ContentBlock) -> Option<OldContentBlock> {
+    match b {
+        ContentBlock::Text { text } => Some(OldContentBlock::Text { text }),
+        ContentBlock::Image { media_type, data } => {
+            Some(OldContentBlock::Image {
+                source: crate::protocol::types::ImageSource { media_type, data },
+            })
+        }
+        ContentBlock::Reasoning { text, signature } => {
+            Some(OldContentBlock::Reasoning { text, signature })
+        }
+        ContentBlock::ToolUse { id, name, input } => Some(OldContentBlock::ToolUse { id, name, input }),
+        ContentBlock::ToolResult { tool_use_id, content } => {
+            Some(OldContentBlock::ToolResult { tool_use_id, content })
+        }
+        ContentBlock::Unknown { .. } => None,
+    }
+}
+
+fn tc_to_old(tc: ToolCall) -> OldToolCall {
+    OldToolCall { id: tc.id, name: tc.name, arguments: tc.arguments }
+}
+
+fn tool_spec_to_old(ts: ToolSpec) -> ToolDef {
+    ToolDef { name: ts.name, description: ts.description, parameters: ts.parameters }
+}
+
+// ── InternalResponse → AiResponse ────────────────────────────────────────────
+
+impl From<InternalResponse> for AiResponse {
+    fn from(old: InternalResponse) -> Self {
+        let mut resp = AiResponse::new(old.id, old.model);
+        resp.content = old.content;
+        resp.reasoning_content = old.reasoning_content;
+        resp.reasoning_signature = old.reasoning_signature;
+        resp.tool_calls = old.tool_calls.into_iter().map(|tc| ToolCall {
+            id: tc.id,
+            name: tc.name,
+            arguments: tc.arguments,
+        }).collect();
+        resp.stop_reason = old.stop_reason;
+        resp.usage = old.usage;
+        resp
+    }
+}
+
+// ── Round-trip tests ──────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::ids::OPENAI_CHAT_V1;
+
+    fn sample_old_request() -> InternalRequest {
+        InternalRequest {
+            messages: vec![InternalMessage {
+                role: OldRole::User,
+                content: OldMessageContent::Text("hello".into()),
+                tool_calls: None,
+                tool_call_id: None,
+            }],
+            model: "gpt-4o".to_string(),
+            stream: true,
+            temperature: Some(0.7),
+            max_tokens: Some(1024),
+            top_p: None,
+            tools: None,
+            tool_choice: None,
+            source_protocol: OPENAI_CHAT_V1,
+            extra: Default::default(),
+        }
+    }
+
+    #[test]
+    fn round_trip_internal_request() {
+        let old = sample_old_request();
+        let new: AiRequest = old.clone().into();
+        let back: InternalRequest = new.into();
+
+        assert_eq!(back.model, old.model);
+        assert_eq!(back.stream, old.stream);
+        assert_eq!(back.temperature, old.temperature);
+        assert_eq!(back.max_tokens, old.max_tokens);
+        assert_eq!(back.source_protocol, old.source_protocol);
+        assert_eq!(back.messages.len(), old.messages.len());
+    }
+}
