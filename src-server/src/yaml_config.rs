@@ -363,13 +363,10 @@ pub fn build_providers(yaml: &YamlConfig) -> Vec<Provider> {
                 })
                 .collect();
             let now = chrono::Utc::now().to_rfc3339();
-            // Explicit `vendor` field wins; fall back to name so that a provider
-            // named "zhipuai" automatically uses the ZhipuaiVendor adapter.
-            let vendor = yp.vendor.clone().or_else(|| Some(yp.name.clone()));
             Provider {
                 id,
                 name: yp.name.clone(),
-                vendor,
+                vendor: yp.vendor.clone(),
                 protocol: resolved_protocol.clone(),
                 base_url,
                 default_protocol: resolved_protocol,
