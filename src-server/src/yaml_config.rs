@@ -80,6 +80,7 @@ fn default_proxy_port() -> u16 {
 #[serde(try_from = "YamlProviderRaw")]
 pub struct YamlProvider {
     pub name: String,
+    pub vendor: Option<String>,
     pub default_protocol: Option<String>,
     pub endpoints: IndexMap<String, YamlEndpoint>,
     pub api_key: String,
@@ -92,6 +93,8 @@ pub struct YamlProvider {
 #[derive(Debug, Deserialize)]
 struct YamlProviderRaw {
     pub name: String,
+    #[serde(default)]
+    pub vendor: Option<String>,
     #[serde(default)]
     pub default_protocol: Option<String>,
     #[serde(default)]
@@ -140,6 +143,7 @@ impl TryFrom<YamlProviderRaw> for YamlProvider {
         };
         Ok(YamlProvider {
             name: r.name,
+            vendor: r.vendor,
             default_protocol,
             endpoints: r.endpoints,
             api_key,
@@ -208,8 +212,18 @@ fn default_priority() -> i32 {
 
 impl YamlConfig {
     pub fn load(path: &str) -> anyhow::Result<Self> {
-        let content = std::fs::read_to_string(path)
+        let raw = std::fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("failed to read config file {path}: {e}"))?;
+        let content = shellexpand::env_with_context_no_errors(&raw, |var: &str| {
+            match std::env::var(var) {
+                Ok(val) => Some(val),
+                Err(_) => {
+                    tracing::warn!("config: env var '{}' is not set, placeholder left as-is", var);
+                    None
+                }
+            }
+        })
+        .into_owned();
         let config: Self = serde_yaml::from_str(&content)
             .map_err(|e| anyhow::anyhow!("failed to parse YAML config: {e}"))?;
         config.validate()?;
@@ -349,10 +363,13 @@ pub fn build_providers(yaml: &YamlConfig) -> Vec<Provider> {
                 })
                 .collect();
             let now = chrono::Utc::now().to_rfc3339();
+            // Explicit `vendor` field wins; fall back to name so that a provider
+            // named "zhipuai" automatically uses the ZhipuaiVendor adapter.
+            let vendor = yp.vendor.clone().or_else(|| Some(yp.name.clone()));
             Provider {
                 id,
                 name: yp.name.clone(),
-                vendor: None,
+                vendor,
                 protocol: resolved_protocol.clone(),
                 base_url,
                 default_protocol: resolved_protocol,
