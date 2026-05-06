@@ -1347,11 +1347,28 @@ async fn get_provider<S: ProxyAccessStore + ?Sized>(
 }
 
 async fn load_route_targets(gw: &Gateway, route: &Route) -> Vec<RouteTarget> {
-    if let Some(store) = gw.storage.route_targets() {
-        store.list_targets_by_route(&route.id).await.unwrap_or_default()
-    } else {
-        Vec::new()
+    if let Some(store) = gw.storage.route_targets()
+        && let Ok(targets) = store.list_targets_by_route(&route.id).await
+        && !targets.is_empty()
+    {
+        return targets;
     }
+    // Fallback: synthesize a single target from the legacy
+    // `route.target_provider` / `route.target_model` columns. This keeps
+    // routes that were created before the `route_targets` table existed
+    // (and tests / imports that only set the legacy columns) working.
+    if route.target_provider.trim().is_empty() {
+        return Vec::new();
+    }
+    vec![RouteTarget {
+        id: String::new(),
+        route_id: route.id.clone(),
+        provider_id: route.target_provider.clone(),
+        model: route.target_model.clone(),
+        weight: 100,
+        priority: 1,
+        created_at: String::new(),
+    }]
 }
 
 fn is_retryable(status: u16) -> bool {
