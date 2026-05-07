@@ -14,7 +14,9 @@ use crate::provider::common::openai::{
     openai_compat_build_request, openai_compat_parse_response, openai_compat_stream_parser,
 };
 use crate::provider::inbound::InboundResponse;
-use crate::provider::metadata::{AuthMode, ChannelDef, Label, ProtocolBaseUrl, VendorMetadata};
+use crate::provider::metadata::{
+    AuthMode, ChannelDef, Label, OAuthConfig, ProtocolBaseUrl, VendorMetadata,
+};
 use crate::provider::outbound::OutboundRequest;
 use crate::protocol::ids::ProtocolFamily;
 use crate::provider::registry::{ProviderAdapterRegistration, VendorRegistration, VendorScope};
@@ -26,21 +28,68 @@ const METADATA: VendorMetadata = VendorMetadata {
     label: Label { zh: "Anthropic", en: "Anthropic" },
     icon: "anthropic",
     default_protocol: "anthropic",
-    channels: &[ChannelDef {
-        id: "default",
-        label: Label { zh: "默认", en: "Default" },
-        base_urls: &[ProtocolBaseUrl {
-            protocol: "anthropic",
-            base_url: "https://api.anthropic.com",
-        }],
-        api_key: None,
-        models_source: Some("https://api.anthropic.com/v1/models"),
-        capabilities_source: Some("ai://models.dev/anthropic"),
-        static_models: &[],
-        auth_mode: AuthMode::ApiKey,
-        oauth: None,
-        runtime: None,
-    }],
+    channels: &[
+        ChannelDef {
+            id: "default",
+            label: Label { zh: "默认", en: "Default" },
+            base_urls: &[ProtocolBaseUrl {
+                protocol: "anthropic",
+                base_url: "https://api.anthropic.com",
+            }],
+            api_key: None,
+            models_source: Some("https://api.anthropic.com/v1/models"),
+            capabilities_source: Some("ai://models.dev/anthropic"),
+            static_models: &[],
+            auth_mode: AuthMode::ApiKey,
+            oauth: None,
+            runtime: None,
+        },
+        ChannelDef {
+            id: "claude-code",
+            label: Label { zh: "Claude Code", en: "Claude Code" },
+            base_urls: &[ProtocolBaseUrl {
+                protocol: "anthropic",
+                base_url: "https://api.anthropic.com",
+            }],
+            api_key: None,
+            // OAuth Bearer cannot call Anthropic's `/v1/models` (that
+            // endpoint is x-api-key only). Even when we sidestep that
+            // and pull the full Anthropic catalog from models.dev, only
+            // a curated subset is actually reachable via the Claude
+            // Code OAuth subscription — the rest 403 at request time.
+            //
+            // List below tracks Wei-Shaw/claude-relay-service's
+            // `config/models.js::CLAUDE_MODELS` (the dropdown used for
+            // OAuth account selection + connectivity testing). Driver
+            // `ClaudeOAuthDriver::bind_runtime` plumbs this list into
+            // `RuntimeBinding.static_models_override` so admin model
+            // discovery returns it directly without hitting any
+            // upstream URL.
+            models_source: Some("ai://models.dev/anthropic"),
+            capabilities_source: Some("ai://models.dev/anthropic"),
+            static_models: &[
+                "claude-opus-4-6",
+                "claude-sonnet-4-6",
+                "claude-opus-4-5-20251101",
+                "claude-sonnet-4-5-20250929",
+                "claude-sonnet-4-20250514",
+                "claude-opus-4-1-20250805",
+                "claude-opus-4-20250514",
+                "claude-haiku-4-5-20251001",
+                "claude-3-5-haiku-20241022",
+            ],
+            auth_mode: AuthMode::OAuth,
+            oauth: Some(OAuthConfig {
+                auth_base_url: "https://claude.ai",
+                authorize_url: "https://claude.ai/oauth/authorize",
+                token_url: "https://console.anthropic.com/v1/oauth/token",
+                client_id: "9d1c250a-e61b-44d9-88ed-5944d1962f5e",
+                redirect_uri: "https://platform.claude.com/oauth/code/callback",
+                scope: "user:inference user:profile",
+            }),
+            runtime: None,
+        },
+    ],
 };
 
 pub struct AnthropicVendor;

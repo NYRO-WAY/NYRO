@@ -33,6 +33,14 @@ pub struct ProviderCtx<'a> {
     pub actual_model: &'a str,
     pub credential: Option<&'a StoredCredential>,
     pub gw: &'a Gateway,
+    /// Set when an OAuth driver has populated `RuntimeBinding.extra_headers`
+    /// with its own auth scheme (Bearer + provider-specific headers) and
+    /// the vendor extension's default `auth_headers` (typically
+    /// `x-api-key` / `Authorization: Bearer <api_key>`) must NOT be
+    /// applied — otherwise the upstream sees both schemes and either
+    /// rejects the request or, worse, interprets an empty `x-api-key`
+    /// from a row whose `api_key` field is blank under OAuth mode.
+    pub disable_default_auth: bool,
 }
 
 impl<'a> ProviderCtx<'a> {

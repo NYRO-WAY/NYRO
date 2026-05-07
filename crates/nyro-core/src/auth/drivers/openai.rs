@@ -328,6 +328,7 @@ impl AuthDriver for OpenAIOAuthDriver {
             models_source_override,
             capabilities_source_override,
             disable_default_auth: false,
+            static_models_override: None,
         })
     }
 }
