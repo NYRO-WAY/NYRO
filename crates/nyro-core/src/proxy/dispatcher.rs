@@ -413,6 +413,7 @@ pub async fn dispatch_pipeline(
             actual_model: &actual_model,
             credential: None,
             gw: &gw,
+            disable_default_auth: provider_runtime.binding.disable_default_auth,
         };
 
         // Build outbound request via ProviderAdapter.
@@ -1801,7 +1802,9 @@ async fn compute_embedding(gw: &Gateway, text: &str) -> anyhow::Result<Vec<f32>>
                 Ok(h) => h,
                 Err(_) => continue,
             };
-            request_headers.extend(extension.auth_headers(&ctx));
+            if !provider_runtime.binding.disable_default_auth {
+                request_headers.extend(extension.auth_headers(&ctx));
+            }
         }
         let client = match gw.http_client_for_provider(provider.use_proxy).await {
             Ok(c) => ProxyClient::new(c),

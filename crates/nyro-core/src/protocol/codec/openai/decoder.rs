@@ -181,5 +181,6 @@ fn decode_message(msg: OpenAIMessage) -> Result<InternalMessage> {
         content,
         tool_calls,
         tool_call_id: msg.tool_call_id,
+        extra: msg.extra,
     })
 }

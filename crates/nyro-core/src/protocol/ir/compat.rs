@@ -130,6 +130,7 @@ fn msg_to_old(msg: Message) -> InternalMessage {
         content: content_to_old(msg.content),
         tool_calls: msg.tool_calls.map(|tcs| tcs.into_iter().map(tc_to_old).collect()),
         tool_call_id: msg.tool_call_id,
+        extra: Default::default(),
     }
 }
 
@@ -211,6 +212,7 @@ mod tests {
                 content: OldMessageContent::Text("hello".into()),
                 tool_calls: None,
                 tool_call_id: None,
+                extra: Default::default(),
             }],
             model: "gpt-4o".to_string(),
             stream: true,

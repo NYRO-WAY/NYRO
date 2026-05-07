@@ -739,6 +739,16 @@ impl AdminService {
         let provider = self.get_provider(id).await?;
         let runtime = self.resolve_provider_runtime(&provider).await?;
         let credential = runtime.access_token.clone();
+        if let Some(static_list) = runtime.binding.static_models_override.as_deref() {
+            let models: Vec<String> = static_list
+                .iter()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if !models.is_empty() {
+                return Ok(models);
+            }
+        }
         let endpoint = runtime
             .binding
             .models_source_override
@@ -755,15 +765,15 @@ impl AdminService {
             return Ok(models);
         }
 
-        let mut headers = build_model_headers(
-            &provider.protocol,
-            provider.vendor.as_deref(),
-            &credential,
-        )?;
+        let mut headers = if runtime.binding.disable_default_auth {
+            HeaderMap::new()
+        } else {
+            build_model_headers(&provider.protocol, provider.vendor.as_deref(), &credential)?
+        };
         headers.extend(runtime_binding_headers(&runtime.binding)?);
         let mut request = self.gw.http_client.get(&endpoint).headers(headers).timeout(Duration::from_secs(10));
 
-        if provider.protocol == "gemini" {
+        if provider.protocol == "gemini" && !runtime.binding.disable_default_auth {
             let separator = if endpoint.contains('?') { '&' } else { '?' };
             let mut headers = build_model_headers(
                 &provider.protocol,
@@ -804,6 +814,16 @@ impl AdminService {
         let provider = self.get_provider(id).await?;
         let runtime = self.resolve_provider_runtime(&provider).await?;
         let credential = runtime.access_token.clone();
+        if let Some(static_list) = runtime.binding.static_models_override.as_deref() {
+            let models: Vec<String> = static_list
+                .iter()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if !models.is_empty() {
+                return Ok(models);
+            }
+        }
 
         if let Some(endpoint) = runtime
             .binding
@@ -816,15 +836,15 @@ impl AdminService {
                     return Ok(models);
                 }
 
-            let mut headers = build_model_headers(
-                &provider.protocol,
-                provider.vendor.as_deref(),
-                &credential,
-            )?;
+            let mut headers = if runtime.binding.disable_default_auth {
+                HeaderMap::new()
+            } else {
+                build_model_headers(&provider.protocol, provider.vendor.as_deref(), &credential)?
+            };
             headers.extend(runtime_binding_headers(&runtime.binding)?);
             let mut request = self.gw.http_client.get(&endpoint).headers(headers);
 
-            if provider.protocol == "gemini" {
+            if provider.protocol == "gemini" && !runtime.binding.disable_default_auth {
                 let separator = if endpoint.contains('?') { '&' } else { '?' };
                 let mut headers = build_model_headers(
                     &provider.protocol,
@@ -912,10 +932,11 @@ impl AdminService {
                 Some(ext) => ext.clone(),
                 None => continue,
             };
-            let credential = match resolve_provider_credential(&provider) {
-                Ok(value) => value,
+            let runtime = match self.resolve_provider_runtime(&provider).await {
+                Ok(runtime) => runtime,
                 Err(_) => continue,
             };
+            let credential = runtime.access_token.clone();
             let upstream_url;
             let mut request_headers;
             {
@@ -927,8 +948,13 @@ impl AdminService {
                     credential: None,
                 };
                 upstream_url = extension.build_url(&ctx, &openai_base_url, "/v1/embeddings");
-                request_headers = HeaderMap::new();
-                request_headers.extend(extension.auth_headers(&ctx));
+                request_headers = match runtime_binding_headers(&runtime.binding) {
+                    Ok(headers) => headers,
+                    Err(_) => continue,
+                };
+                if !runtime.binding.disable_default_auth {
+                    request_headers.extend(extension.auth_headers(&ctx));
+                }
             }
             let client = match self.gw.http_client_for_provider(provider.use_proxy).await {
                 Ok(http_client) => ProxyClient::new(http_client),
@@ -997,29 +1023,31 @@ impl AdminService {
         url: &str,
         model: &str,
     ) -> anyhow::Result<ModelCapabilities> {
-        let credential = resolve_provider_credential(provider)?;
+        let runtime = self.resolve_provider_runtime(provider).await?;
+        let credential = runtime.access_token;
+        let mut headers = if runtime.binding.disable_default_auth {
+            HeaderMap::new()
+        } else {
+            build_model_headers(&provider.protocol, provider.vendor.as_deref(), &credential)?
+        };
+        headers.extend(runtime_binding_headers(&runtime.binding)?);
         let mut request = self
             .gw
             .http_client
             .get(url)
-            .headers(build_model_headers(
-                &provider.protocol,
-                provider.vendor.as_deref(),
-                &credential,
-            )?)
+            .headers(headers)
             .timeout(Duration::from_secs(10));
 
-        if provider.protocol == "gemini" {
+        if provider.protocol == "gemini" && !runtime.binding.disable_default_auth {
             let separator = if url.contains('?') { '&' } else { '?' };
+            let mut headers =
+                build_model_headers(&provider.protocol, provider.vendor.as_deref(), &credential)?;
+            headers.extend(runtime_binding_headers(&runtime.binding)?);
             request = self
                 .gw
                 .http_client
                 .get(format!("{url}{separator}key={}", credential))
-                .headers(build_model_headers(
-                    &provider.protocol,
-                    provider.vendor.as_deref(),
-                    &credential,
-                )?)
+                .headers(headers)
                 .timeout(Duration::from_secs(10));
         }
 
@@ -2558,34 +2586,6 @@ fn resolve_openai_base_url(provider: &Provider) -> Option<String> {
     Some(trimmed.to_string())
 }
 
-fn resolve_provider_credential(provider: &Provider) -> anyhow::Result<String> {
-    let effective_auth_mode = provider.effective_auth_mode();
-    let auth_mode = effective_auth_mode.trim();
-    let credential = match auth_mode {
-        "apikey" | "" => provider.api_key.trim(),
-        "oauth" => {
-            // OAuth credentials are in the separate credential table.
-            // This sync function cannot access them; callers should use
-            // resolve_provider_runtime() for OAuth providers instead.
-            anyhow::bail!("oauth provider credentials must be resolved via resolve_provider_runtime");
-        }
-        other => anyhow::bail!("unsupported provider auth_mode: {other}"),
-    };
-
-    if credential.is_empty() {
-        let source = "api_key";
-        anyhow::bail!(
-            "provider credential is empty for auth_mode={} ({source})",
-            if auth_mode.is_empty() {
-                "apikey"
-            } else {
-                auth_mode
-            }
-        );
-    }
-
-    Ok(credential.to_string())
-}
 
 fn sync_runtime_protocol_endpoints(provider: &Provider, base_url: &str) -> anyhow::Result<String> {
     use crate::protocol::registry::ProtocolRegistry;

@@ -140,6 +140,14 @@ pub struct RuntimeBinding {
     pub models_source_override: Option<String>,
     pub capabilities_source_override: Option<String>,
     pub disable_default_auth: bool,
+    /// When `Some`, the admin model-discovery paths return this exact
+    /// list and skip every URL/HTTP fallback. OAuth drivers (Claude
+    /// Code, future Codex tiers) use this to ship a curated allow-list
+    /// since their upstream `/v1/models` either does not accept the
+    /// minted Bearer or returns models the OAuth subscription cannot
+    /// actually run.
+    #[serde(default)]
+    pub static_models_override: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
