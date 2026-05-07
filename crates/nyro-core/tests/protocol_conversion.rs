@@ -1203,6 +1203,7 @@ fn openai_encoder_preserves_reasoning_content_across_parallel_tool_calls() {
     }
 }
 
+#[test]
 fn openai_encoder_drops_orphan_assistant_tool_calls_without_results() {
     let req = InternalRequest {
         messages: vec![

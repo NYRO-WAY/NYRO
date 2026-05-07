@@ -456,6 +456,7 @@ mod tests {
                 content: MessageContent::Text("ping".into()),
                 tool_calls: None,
                 tool_call_id: None,
+                extra: Default::default(),
             }],
             model: "ignored-by-actual-model".into(),
             stream: false,
