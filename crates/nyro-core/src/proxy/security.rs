@@ -242,7 +242,7 @@ pub fn extract_api_key(headers: &HeaderMap) -> Option<String> {
         .map(ToString::to_string)
 }
 
-fn is_key_expired(expires_at: &str) -> bool {
+pub(crate) fn is_key_expired(expires_at: &str) -> bool {
     if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(expires_at) {
         return parsed.with_timezone(&Utc) <= Utc::now();
     }

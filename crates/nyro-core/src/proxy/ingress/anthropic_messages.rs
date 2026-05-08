@@ -7,9 +7,9 @@ use axum::Json;
 use serde_json::Value;
 
 use crate::protocol::ids::ANTHROPIC_MESSAGES_2023_06_01;
+use crate::protocol::ir::{AiRequest, RawEnvelope};
 use crate::proxy::context::RequestContext;
 use crate::proxy::dispatcher::{dispatch_pipeline, error_response};
-use crate::proxy::observability::headers_to_json;
 use crate::Gateway;
 
 pub async fn anthropic_messages(
@@ -19,12 +19,16 @@ pub async fn anthropic_messages(
     Json(body): Json<Value>,
 ) -> Response {
     ctx.ingress_protocol = ANTHROPIC_MESSAGES_2023_06_01;
-    let request_headers_str = headers_to_json(&headers);
-    let request_body_str = serde_json::to_string(&body).ok();
+    let flat_headers: std::collections::HashMap<String, String> = headers
+        .iter()
+        .filter_map(|(k, v)| v.to_str().ok().map(|vs| (k.as_str().to_lowercase(), vs.to_string())))
+        .collect();
+    let envelope = RawEnvelope::new(Some(body.clone()), flat_headers, "POST", "/v1/messages");
     let decoder = ANTHROPIC_MESSAGES_2023_06_01.handler().make_decoder();
     let internal = match decoder.decode_request(body) {
         Ok(r) => r,
         Err(e) => return error_response(400, &format!("invalid request: {e}")),
     };
-    dispatch_pipeline(gw, headers, internal, ANTHROPIC_MESSAGES_2023_06_01, "POST", "/v1/messages", request_headers_str, request_body_str).await
+    let request: AiRequest = internal.into();
+    dispatch_pipeline(gw, headers, envelope, request, ANTHROPIC_MESSAGES_2023_06_01).await
 }

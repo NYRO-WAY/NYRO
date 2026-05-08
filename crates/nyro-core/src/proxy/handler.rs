@@ -11,11 +11,11 @@
 use std::collections::{BTreeSet, HashSet};
 
 use axum::extract::State;
-use axum::http::{HeaderMap, header};
+use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use chrono::{NaiveDateTime, Utc};
 
+use crate::proxy::security::{extract_api_key, is_key_expired};
 use crate::Gateway;
 
 // ── GET /v1/models ────────────────────────────────────────────────────────────
@@ -68,29 +68,3 @@ pub async fn models_list(State(gw): State<Gateway>, headers: HeaderMap) -> Respo
     .into_response()
 }
 
-// ── Local helpers for models_list ────────────────────────────────────────────
-
-fn extract_api_key(headers: &HeaderMap) -> Option<String> {
-    if let Some(value) = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok())
-        && let Some(token) = value.strip_prefix("Bearer ") {
-            let token = token.trim();
-            if !token.is_empty() {
-                return Some(token.to_string());
-            }
-        }
-    headers
-        .get("x-api-key")
-        .and_then(|v| v.to_str().ok())
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .map(ToString::to_string)
-}
-
-fn is_key_expired(expires_at: &str) -> bool {
-    if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(expires_at) {
-        return parsed.with_timezone(&Utc) <= Utc::now();
-    }
-    NaiveDateTime::parse_from_str(expires_at, "%Y-%m-%d %H:%M:%S")
-        .map(|parsed| parsed.and_utc() <= Utc::now())
-        .unwrap_or(false)
-}

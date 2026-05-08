@@ -17,6 +17,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
+use arc_swap::ArcSwap;
 use dashmap::DashMap;
 use sqlx::{Pool, Postgres, SqlitePool};
 use tokio::sync::broadcast;
@@ -58,9 +59,9 @@ pub struct Gateway {
     pub health_registry: Arc<HealthRegistry>,
     pub ollama_capability_cache: Arc<tokio::sync::RwLock<HashMap<String, CapabilityCacheEntry>>>,
     pub log_tx: mpsc::Sender<LogEntry>,
-    pub runtime_cache_config: Arc<tokio::sync::RwLock<CacheConfig>>,
-    pub cache_backend: Arc<tokio::sync::RwLock<Option<Arc<dyn CacheBackend>>>>,
-    pub vector_store: Arc<tokio::sync::RwLock<Option<Arc<dyn VectorStore>>>>,
+    pub runtime_cache_config: Arc<ArcSwap<CacheConfig>>,
+    pub cache_backend: Arc<ArcSwap<Option<Arc<dyn CacheBackend>>>>,
+    pub vector_store: Arc<ArcSwap<Option<Arc<dyn VectorStore>>>>,
     pub cache_in_flight: Arc<DashMap<String, broadcast::Sender<Vec<u8>>>>,
     pub(crate) auth_sessions: Arc<tokio::sync::RwLock<HashMap<String, AuthSession>>>,
     sqlite_pool: Option<SqlitePool>,
@@ -166,9 +167,9 @@ impl Gateway {
             health_registry,
             ollama_capability_cache,
             log_tx,
-            runtime_cache_config: Arc::new(tokio::sync::RwLock::new(bootstrap_cache)),
-            cache_backend: Arc::new(tokio::sync::RwLock::new(None)),
-            vector_store: Arc::new(tokio::sync::RwLock::new(None)),
+            runtime_cache_config: Arc::new(ArcSwap::new(Arc::new(bootstrap_cache))),
+            cache_backend: Arc::new(ArcSwap::new(Arc::new(None))),
+            vector_store: Arc::new(ArcSwap::new(Arc::new(None))),
             cache_in_flight: Arc::new(DashMap::new()),
             auth_sessions: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             sqlite_pool,
@@ -214,12 +215,13 @@ impl Gateway {
         Ok((gw, log_rx))
     }
 
-    pub async fn effective_cache_config(&self) -> CacheConfig {
-        self.runtime_cache_config.read().await.clone()
+    /// Returns the current runtime cache configuration (lock-free, sync).
+    pub fn effective_cache_config(&self) -> CacheConfig {
+        (**self.runtime_cache_config.load()).clone()
     }
 
     pub async fn reload_cache_runtime(&self, mut next: CacheConfig) -> anyhow::Result<()> {
-        let current = self.runtime_cache_config.read().await.clone();
+        let current = (**self.runtime_cache_config.load()).clone();
 
         let exact_needs_rebuild = current.exact.enabled != next.exact.enabled
             || current.exact.max_entries != next.exact.max_entries;
@@ -237,7 +239,7 @@ impl Gateway {
                 None
             }
         } else {
-            self.cache_backend.read().await.clone()
+            (**self.cache_backend.load()).clone()
         };
 
         let semantic_needs_rebuild = current.semantic.enabled != next.semantic.enabled
@@ -246,8 +248,8 @@ impl Gateway {
             || current.semantic.vector_dimensions != next.semantic.vector_dimensions;
 
         if current.semantic.vector_dimensions != next.semantic.vector_dimensions {
-            let previous_vector_store = self.vector_store.read().await.clone();
-            *self.vector_store.write().await = None;
+            let previous_vector_store = (**self.vector_store.load()).clone();
+            self.vector_store.store(Arc::new(None));
 
             let recreate_result = match self.storage_kind {
                 RuntimeStorageKind::Memory => Ok(()),
@@ -268,7 +270,7 @@ impl Gateway {
             };
 
             if let Err(error) = recreate_result {
-                *self.vector_store.write().await = previous_vector_store;
+                self.vector_store.store(Arc::new(previous_vector_store));
                 return Err(error);
             }
         }
@@ -337,12 +339,12 @@ impl Gateway {
                 None
             }
         } else {
-            self.vector_store.read().await.clone()
+            (**self.vector_store.load()).clone()
         };
 
-        *self.cache_backend.write().await = next_cache_backend;
-        *self.vector_store.write().await = next_vector_store;
-        *self.runtime_cache_config.write().await = next;
+        self.cache_backend.store(Arc::new(next_cache_backend));
+        self.vector_store.store(Arc::new(next_vector_store));
+        self.runtime_cache_config.store(Arc::new(next));
         Ok(())
     }
 

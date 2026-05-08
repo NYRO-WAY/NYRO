@@ -11,15 +11,20 @@
 //!   4. Semantic-cache check.
 //!   5. Target iteration (health-aware): for each live target →
 //!      a. Resolve `Provider` + `ProviderRuntime`.
-//!      b. Resolve egress protocol + base URL via `ProviderProtocols`.
-//!      c. Look up `ProviderAdapter` from `ProviderAdapterRegistry`.
-//!      d. Build outbound request via `adapter.build_request`.
+//!      b. Resolve egress protocol + base URL via `negotiate()`.
+//!      c. Look up `Vendor` from `VendorRegistry`.
+//!      d. Build outbound: `ProtocolMode::Native` + no mutations → `passthrough_run`;
+//!         else full 7-step `adapter.build_request`.
 //!      e. Merge `runtime_binding` extra-headers.
 //!      f. HTTP call → `handle_non_stream` / `handle_stream`.
 //!      g. On success: record health, return; on retryable error: continue.
 //!   6. Finalize singleflight; return last error or 502.
 
-use std::collections::{HashMap, VecDeque};
+mod accumulator;
+mod util;
+use self::accumulator::*;
+use self::util::*;
+
 use std::convert::Infallible;
 use std::time::Instant;
 
@@ -28,10 +33,9 @@ use axum::body::Body;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use chrono::{NaiveDateTime, Utc};
 use dashmap::mapref::entry::Entry as DashEntry;
 use futures::StreamExt;
-use reqwest::header::{HeaderMap as ReqwestHeaderMap, HeaderValue as ReqwestHeaderValue};
+use reqwest::header::HeaderMap as ReqwestHeaderMap;
 use serde_json::Value;
 use tokio::sync::broadcast;
 use tokio::time::{Duration, timeout};
@@ -39,42 +43,51 @@ use tokio_stream::wrappers::ReceiverStream;
 
 use crate::cache::entry::CacheEntry;
 use crate::cache::key::{build_cache_key, build_semantic_partition};
-use crate::db::models::{Provider, Route, RouteCacheConfig, RouteExactCacheConfig, RouteSemanticCacheConfig, RouteTarget};
+use crate::db::models::{Provider, Route};
 use crate::error::{AuthFailure, GatewayError};
 use crate::protocol::ids::{OPENAI_CHAT_V1, OPENAI_EMBEDDINGS_V1, ProtocolId};
-use crate::protocol::types::{ContentBlock, InternalRequest, InternalResponse, MessageContent, Role, StreamDelta, TokenUsage, ToolCall};
+use crate::protocol::ir::{AiRequest, RawEnvelope};
+use crate::protocol::types::{InternalRequest, InternalResponse, StreamDelta, TokenUsage};
 use crate::protocol::ProviderProtocols;
 use crate::provider::{VendorCtx, VendorRegistry};
-use crate::provider::adapter::ProviderCtx;
+use crate::provider::vendor::ProviderCtx;
 use crate::provider::inbound::InboundResponse;
-use crate::provider::registry::ProviderAdapterRegistry;
 use crate::proxy::client::ProxyClient;
 use crate::proxy::context::RequestContext;
+use crate::proxy::planner::{ProtocolMode, negotiate};
 use crate::proxy::observability::{LogExtras, emit_log, headers_to_json};
+use crate::proxy::security::{extract_api_key, is_key_expired};
 use crate::router::TargetSelector;
 use crate::storage::traits::{ApiKeyAccessRecord, UsageWindow};
 use crate::Gateway;
 
 // ── Public entry points ───────────────────────────────────────────────────────
 
-/// Full pipeline entry point. Ingress shells decode the body into
-/// `InternalRequest` and hand off here.
+/// Full pipeline entry point.
 ///
-/// `method` / `path` are purely for logging; they may be static strings or
-/// dynamically built (e.g. Gemini's `path` contains the model name).
-#[allow(clippy::too_many_arguments)]
+/// Each ingress shell captures the raw body in a `RawEnvelope` and decodes
+/// the body into an `AiRequest`, then hands off here.
+///
+/// Pipeline:
+///   a. Resolve egress protocol + base URL via `negotiate()`.
+///   b. Auth + cache check.
+///   c. Look up `Vendor` from `VendorRegistry`.
+///   d. Build outbound: `ProtocolMode::Native` + no mutations → `passthrough_run`;
+///      else full 7-step `adapter.build_request`.
+///   e. HTTP call → `handle_non_stream` / `handle_stream`.
 pub async fn dispatch_pipeline(
     gw: Gateway,
     headers: HeaderMap,
-    internal: InternalRequest,
+    envelope: RawEnvelope,
+    request: AiRequest,
     ingress: ProtocolId,
-    method: &str,
-    path: &str,
-    request_headers_str: Option<String>,
-    request_body_str: Option<String>,
 ) -> Response {
-    let method_owned = method.to_string();
-    let path_owned = path.to_string();
+    // Derive logging strings from envelope; convert new IR → old IR for backward-compat.
+    let method_owned = envelope.method.clone();
+    let path_owned = envelope.path.clone();
+    let request_body_str = envelope.body.as_ref().and_then(|b| serde_json::to_string(b).ok());
+    let request_headers_str = serde_json::to_string(&envelope.headers).ok();
+    let internal: InternalRequest = request.into();
     let start = Instant::now();
     let request_model = internal.model.clone();
     let is_stream = internal.stream;
@@ -162,9 +175,9 @@ pub async fn dispatch_pipeline(
 
     // ── Cache setup ───────────────────────────────────────────────────────────
 
-    let cache_config = gw.effective_cache_config().await;
-    let cache_backend = gw.cache_backend.read().await.clone();
-    let vector_store = gw.vector_store.read().await.clone();
+    let cache_config = gw.effective_cache_config();
+    let cache_backend = (**gw.cache_backend.load()).clone();
+    let vector_store = (**gw.vector_store.load()).clone();
     let route_cache = resolve_route_cache(&route);
     let request_has_image = request_has_image_input(&internal);
     let exact_enabled_for_route = cache_config.exact.enabled
@@ -177,7 +190,7 @@ pub async fn dispatch_pipeline(
         && !request_has_image;
     let semantic_write_temp_allowed = internal.temperature.unwrap_or(0.0) <= 0.0;
     let request_cache_key = if exact_enabled_for_route || semantic_enabled_for_route {
-        Some(build_cache_key(&internal))
+        Some(build_cache_key(&internal, ingress))
     } else {
         None
     };
@@ -188,7 +201,7 @@ pub async fn dispatch_pipeline(
         route_semantic_threshold(&route_cache, cache_config.semantic.similarity_threshold);
     let semantic_entry_key = request_cache_key
         .clone()
-        .unwrap_or_else(|| build_cache_key(&internal));
+        .unwrap_or_else(|| build_cache_key(&internal, ingress));
     let semantic_embedding = extract_semantic_embedding_input(&internal);
     let semantic_partition = semantic_embedding
         .as_ref()
@@ -374,10 +387,17 @@ pub async fn dispatch_pipeline(
             }
         };
 
-        // Resolve egress protocol + base URL.
+        // Resolve egress protocol + base URL via negotiate().
         let provider_protocols = ProviderProtocols::from_provider(&provider);
-        let resolved = provider_protocols.resolve_egress(ingress);
-        let egress = resolved.protocol;
+        let mut req_ctx = RequestContext::new(ingress, std::time::Duration::from_secs(30));
+        let plan = match negotiate(ingress, None, Some(&provider_protocols), &mut req_ctx) {
+            Ok(p) => p,
+            Err(e) => {
+                last_response = Some(e.render(None));
+                continue;
+            }
+        };
+        let egress = plan.egress;
         let egress_base_url = if let Some(base_url_override) = provider_runtime
             .binding
             .base_url_override
@@ -385,20 +405,20 @@ pub async fn dispatch_pipeline(
             .filter(|v| !v.trim().is_empty())
         {
             base_url_override
-        } else if resolved.base_url.is_empty() {
+        } else if plan.base_url.is_empty() {
             provider.base_url.clone()
         } else {
-            resolved.base_url
+            plan.base_url.clone()
         };
 
-        // Look up ProviderAdapter for this vendor.
+        // Look up Vendor for this vendor_id.
         let vendor_id = provider.vendor.as_deref().map(str::trim).filter(|v| !v.is_empty()).unwrap_or("custom");
-        let adapter = match ProviderAdapterRegistry::global().get(vendor_id) {
+        let adapter = match VendorRegistry::global().get_vendor(vendor_id) {
             Some(a) => a.clone(),
             None => {
                 last_response = Some(error_response(
                     503,
-                    &format!("no provider adapter for vendor '{vendor_id}'"),
+                    &format!("no vendor registered for '{vendor_id}'"),
                 ));
                 continue;
             }
@@ -416,12 +436,29 @@ pub async fn dispatch_pipeline(
             disable_default_auth: provider_runtime.binding.disable_default_auth,
         };
 
-        // Build outbound request via ProviderAdapter.
-        let mut outbound = match adapter.build_request(&mut internal_for_target, &ctx).await {
-            Ok(o) => o,
-            Err(e) => {
-                last_response = Some(e.render(None));
-                continue;
+        // Build outbound request — PassThrough (Native + no mutations) or full 7-step pipeline.
+        let passthrough_req = plan.mode == ProtocolMode::Native
+            && !adapter.declared_request_mutations();
+        let passthrough_resp = plan.mode == ProtocolMode::Native
+            && !adapter.declared_response_mutations();
+        let mut outbound = if passthrough_req {
+            let raw = envelope.body.clone().unwrap_or_default();
+            match crate::provider::common::pipeline::passthrough_run(adapter.as_ref(), raw, &ctx)
+                .await
+            {
+                Ok(o) => o,
+                Err(e) => {
+                    last_response = Some(e.render(None));
+                    continue;
+                }
+            }
+        } else {
+            match adapter.build_request(&mut internal_for_target, &ctx).await {
+                Ok(o) => o,
+                Err(e) => {
+                    last_response = Some(e.render(None));
+                    continue;
+                }
             }
         };
 
@@ -530,6 +567,7 @@ pub async fn dispatch_pipeline(
                 &path_owned,
                 request_headers_str.clone(),
                 request_body_str.clone(),
+                passthrough_resp,
             )
             .await
         };
@@ -566,8 +604,8 @@ pub async fn dispatch_pipeline(
     })
 }
 
-/// Legacy entry point kept for ingress shells that pass a raw `Value`.
-/// Decodes the ingress body then calls `dispatch_pipeline`.
+/// Legacy entry point: takes a raw `Value` body, wraps it in a `RawEnvelope`,
+/// decodes it, and calls `dispatch_pipeline`.
 pub async fn dispatch(
     gw: Gateway,
     headers: HeaderMap,
@@ -579,6 +617,12 @@ pub async fn dispatch(
 ) -> Response {
     let request_headers_str = headers_to_json(&headers);
     let request_body_str = serde_json::to_string(&body).ok();
+
+    let flat_headers: std::collections::HashMap<String, String> = headers
+        .iter()
+        .filter_map(|(k, v)| v.to_str().ok().map(|vs| (k.as_str().to_lowercase(), vs.to_string())))
+        .collect();
+    let envelope = RawEnvelope::new(Some(body.clone()), flat_headers, method, path);
 
     let decoder = ingress.handler().make_decoder();
     let internal = match decoder.decode_request(body) {
@@ -598,7 +642,8 @@ pub async fn dispatch(
         }
     };
 
-    dispatch_pipeline(gw, headers, internal, ingress, method, path, request_headers_str, request_body_str).await
+    let request: AiRequest = internal.into();
+    dispatch_pipeline(gw, headers, envelope, request, ingress).await
 }
 
 // ── Non-streaming response handler ───────────────────────────────────────────
@@ -610,7 +655,7 @@ async fn handle_non_stream(
     url: &str,
     headers: ReqwestHeaderMap,
     provider: &Provider,
-    adapter: &dyn crate::provider::adapter::ProviderAdapter,
+    adapter: &dyn crate::provider::vendor::Vendor,
     ctx: &ProviderCtx<'_>,
     egress: ProtocolId,
     ingress: ProtocolId,
@@ -630,6 +675,8 @@ async fn handle_non_stream(
     ingress_path: &str,
     request_headers_str: Option<String>,
     request_body_str: Option<String>,
+    // When true: Native protocol + no response mutations → skip IR round-trip.
+    passthrough_resp: bool,
 ) -> Response {
     let make_extras = |response_body: Option<String>| LogExtras {
         method: Some(ingress_method.to_string()),
@@ -682,6 +729,21 @@ async fn handle_non_stream(
             &gw, ingress_str, egress_str, request_model, actual_model,
             api_key_id, &provider.name, status as i32, start.elapsed().as_millis() as f64,
             usage, false, false, None, preview,
+            make_extras(resp_str),
+        );
+        return (StatusCode::from_u16(status).unwrap_or(StatusCode::OK), Json(resp)).into_response();
+    }
+
+    // PassThrough: Native protocol + no response mutations → forward upstream JSON verbatim,
+    // skipping the IR round-trip (parse_response → InternalResponse → format_response).
+    if passthrough_resp {
+        tracing::debug!(mode = "passthrough", egress = egress_str, "bypassing IR round-trip");
+        let resp_str = serde_json::to_string(&resp).ok();
+        let preview = resp_str.as_ref().map(|s| s.chars().take(500).collect());
+        emit_log(
+            &gw, ingress_str, egress_str, request_model, actual_model,
+            api_key_id, &provider.name, status as i32, start.elapsed().as_millis() as f64,
+            TokenUsage::default(), false, false, None, preview,
             make_extras(resp_str),
         );
         return (StatusCode::from_u16(status).unwrap_or(StatusCode::OK), Json(resp)).into_response();
@@ -743,12 +805,12 @@ async fn handle_non_stream(
         };
         if let Ok(bytes) = serde_json::to_vec(&entry) {
             if allow_exact_store {
-                let cache_backend = gw.cache_backend.read().await.clone();
+                let cache_backend = (**gw.cache_backend.load()).clone();
                 if let (Some(key), Some(cache_backend)) = (cache_key, cache_backend.as_ref()) {
                     let _ = cache_backend.set(key, &bytes, exact_cache_ttl).await;
                 }
             }
-            let vector_store = gw.vector_store.read().await.clone();
+            let vector_store = (**gw.vector_store.load()).clone();
             if let (Some(vector_store), Some(ctx)) = (vector_store.as_ref(), semantic_write_ctx.as_ref()) {
                 let vector = if let Some(existing) = ctx.query_vector.clone() {
                     Some(existing)
@@ -896,12 +958,12 @@ async fn handle_non_stream_via_upstream_stream(
         };
         if let Ok(bytes) = serde_json::to_vec(&entry) {
             if allow_exact_store {
-                let cache_backend = gw.cache_backend.read().await.clone();
+                let cache_backend = (**gw.cache_backend.load()).clone();
                 if let (Some(key), Some(cache_backend)) = (cache_key, cache_backend.as_ref()) {
                     let _ = cache_backend.set(key, &bytes, exact_cache_ttl).await;
                 }
             }
-            let vector_store = gw.vector_store.read().await.clone();
+            let vector_store = (**gw.vector_store.load()).clone();
             if let (Some(vector_store), Some(ctx)) =
                 (vector_store.as_ref(), semantic_write_ctx.as_ref())
             {
@@ -1089,7 +1151,7 @@ async fn handle_stream(
 
         let mut singleflight_payload: Option<Vec<u8>> = None;
         if allow_exact_store && internal.tool_calls.is_empty() {
-            let cache_backend = gw_log.cache_backend.read().await.clone();
+            let cache_backend = (**gw_log.cache_backend.load()).clone();
             if let (Some(cache_backend), Some(cache_key)) =
                 (cache_backend.as_ref(), cache_key_owned.as_deref())
             {
@@ -1107,7 +1169,7 @@ async fn handle_stream(
                 if let Ok(bytes) = serde_json::to_vec(&entry) {
                     let _ = cache_backend.set(cache_key, &bytes, exact_cache_ttl_owned).await;
                     singleflight_payload = Some(bytes.clone());
-                    let vector_store = gw_log.vector_store.read().await.clone();
+                    let vector_store = (**gw_log.vector_store.load()).clone();
                     if let (Some(vector_store), Some(ctx)) =
                         (vector_store.as_ref(), semantic_write_ctx_owned.as_ref())
                     {
@@ -1125,7 +1187,7 @@ async fn handle_stream(
                 }
             }
         } else if internal.tool_calls.is_empty() {
-            let vector_store = gw_log.vector_store.read().await.clone();
+            let vector_store = (**gw_log.vector_store.load()).clone();
             if let (Some(vector_store), Some(ctx)) =
                 (vector_store.as_ref(), semantic_write_ctx_owned.as_ref())
             {
@@ -1312,31 +1374,6 @@ async fn authorize_route_access<S: ProxyAccessStore + ?Sized>(
     Ok(AuthenticatedKey { id: Some(key_row.id) })
 }
 
-fn is_key_expired(expires_at: &str) -> bool {
-    if let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(expires_at) {
-        return parsed.with_timezone(&Utc) <= Utc::now();
-    }
-    NaiveDateTime::parse_from_str(expires_at, "%Y-%m-%d %H:%M:%S")
-        .map(|parsed| parsed.and_utc() <= Utc::now())
-        .unwrap_or(false)
-}
-
-fn extract_api_key(headers: &HeaderMap) -> Option<String> {
-    if let Some(value) = headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok())
-        && let Some(token) = value.strip_prefix("Bearer ") {
-            let token = token.trim();
-            if !token.is_empty() {
-                return Some(token.to_string());
-            }
-        }
-    headers
-        .get("x-api-key")
-        .and_then(|v| v.to_str().ok())
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .map(ToString::to_string)
-}
-
 async fn get_provider<S: ProxyAccessStore + ?Sized>(
     access_store: &S,
     id: &str,
@@ -1347,128 +1384,10 @@ async fn get_provider<S: ProxyAccessStore + ?Sized>(
         .ok_or_else(|| anyhow::anyhow!("provider not found or inactive: {id}"))
 }
 
-async fn load_route_targets(gw: &Gateway, route: &Route) -> Vec<RouteTarget> {
-    if let Some(store) = gw.storage.route_targets()
-        && let Ok(targets) = store.list_targets_by_route(&route.id).await
-        && !targets.is_empty()
-    {
-        return targets;
-    }
-    // Fallback: synthesize a single target from the legacy
-    // `route.target_provider` / `route.target_model` columns. This keeps
-    // routes that were created before the `route_targets` table existed
-    // (and tests / imports that only set the legacy columns) working.
-    if route.target_provider.trim().is_empty() {
-        return Vec::new();
-    }
-    vec![RouteTarget {
-        id: String::new(),
-        route_id: route.id.clone(),
-        provider_id: route.target_provider.clone(),
-        model: route.target_model.clone(),
-        weight: 100,
-        priority: 1,
-        created_at: String::new(),
-    }]
-}
 
-fn is_retryable(status: u16) -> bool {
-    matches!(status, 408 | 429 | 500 | 502 | 503 | 529)
-}
-
-fn runtime_binding_headers(
-    binding: &crate::auth::RuntimeBinding,
-) -> anyhow::Result<ReqwestHeaderMap> {
-    let mut headers = ReqwestHeaderMap::new();
-    for (key, value) in &binding.extra_headers {
-        headers.insert(
-            reqwest::header::HeaderName::from_bytes(key.as_bytes())?,
-            ReqwestHeaderValue::from_str(value)?,
-        );
-    }
-    Ok(headers)
-}
-
-// ── Cache helpers ─────────────────────────────────────────────────────────────
-
-#[derive(Clone)]
-struct SemanticWriteContext {
-    partition: String,
-    embedding_text: String,
-    key: String,
-    query_vector: Option<Vec<f32>>,
-}
-
-fn resolve_route_cache(route: &Route) -> RouteCacheConfig {
-    let exact = route.cache_exact_ttl.map(|ttl| RouteExactCacheConfig {
-        ttl: if ttl > 0 { Some(ttl) } else { None },
-    });
-    let semantic = route.cache_semantic_ttl.map(|ttl| RouteSemanticCacheConfig {
-        ttl: if ttl > 0 { Some(ttl) } else { None },
-        threshold: route.cache_semantic_threshold,
-    });
-    RouteCacheConfig { exact, semantic }
-}
-
-fn route_exact_ttl(cache: &RouteCacheConfig, default_ttl: Duration) -> Duration {
-    cache.exact.as_ref()
-        .and_then(|e| e.ttl)
-        .and_then(|ttl| (ttl > 0).then_some(Duration::from_secs(ttl as u64)))
-        .unwrap_or(default_ttl)
-}
-
-fn route_semantic_ttl(cache: &RouteCacheConfig, default_ttl: Duration) -> Duration {
-    cache.semantic.as_ref()
-        .and_then(|s| s.ttl)
-        .and_then(|ttl| (ttl > 0).then_some(Duration::from_secs(ttl as u64)))
-        .unwrap_or(default_ttl)
-}
-
-fn route_semantic_threshold(cache: &RouteCacheConfig, default_threshold: f64) -> f64 {
-    cache.semantic.as_ref()
-        .and_then(|s| s.threshold)
-        .filter(|t| *t > 0.0)
-        .unwrap_or(default_threshold)
-}
-
-fn is_semantic_entry_expired(entry: &CacheEntry, ttl: Duration) -> bool {
-    let now_ms = chrono::Utc::now().timestamp_millis();
-    let ttl_ms = ttl.as_millis() as i64;
-    now_ms.saturating_sub(entry.created_at_epoch_ms) > ttl_ms
-}
-
-fn request_has_image_input(request: &InternalRequest) -> bool {
-    for message in &request.messages {
-        if let MessageContent::Blocks(blocks) = &message.content
-            && blocks.iter().any(|b| matches!(b, ContentBlock::Image { .. })) {
-                return true;
-            }
-    }
-    false
-}
-
-fn extract_semantic_embedding_input(request: &InternalRequest) -> Option<(String, String)> {
-    let system_prompt = request
-        .messages.iter()
-        .filter(|m| matches!(m.role, Role::System))
-        .map(|m| m.content.as_text())
-        .filter(|t| !t.trim().is_empty())
-        .collect::<Vec<_>>()
-        .join("\n");
-
-    let last_user = request
-        .messages.iter().rev()
-        .find(|m| matches!(m.role, Role::User))
-        .map(|m| m.content.as_text())
-        .filter(|t| !t.trim().is_empty())?;
-
-    let combined = if system_prompt.is_empty() {
-        last_user.clone()
-    } else {
-        format!("{system_prompt}\n{last_user}")
-    };
-    Some((system_prompt, combined))
-}
+// Cache helpers (SemanticWriteContext, resolve_route_cache, route_*_ttl,
+// is_semantic_entry_expired, request_has_image_input, extract_semantic_embedding_input,
+// is_retryable, runtime_binding_headers, load_route_targets) are in util.rs.
 
 fn set_cache_headers(
     response: &mut Response,
@@ -1625,7 +1544,7 @@ async fn finalize_singleflight(
 ) {
     let Some((key, tx)) = leader else { return; };
     let payload = if success {
-        let cache_backend = gw.cache_backend.read().await.clone();
+        let cache_backend = (**gw.cache_backend.load()).clone();
         if let Some(cache_backend) = cache_backend.as_ref() {
             cache_backend.get(key).await.ok().flatten().unwrap_or_default()
         } else {
@@ -1654,89 +1573,17 @@ pub(crate) fn error_response(status: u16, message: &str) -> Response {
     err.render(None)
 }
 
-// ── Stream accumulator ────────────────────────────────────────────────────────
-
-#[derive(Default)]
-struct StreamResponseAccumulator {
-    id: String,
-    model: String,
-    content: String,
-    reasoning_content: String,
-    reasoning_signature: String,
-    tool_calls: Vec<Option<ToolCall>>,
-    stop_reason: Option<String>,
-    usage: TokenUsage,
-}
-
-impl StreamResponseAccumulator {
-    fn apply_all(&mut self, deltas: &[StreamDelta]) {
-        for delta in deltas { self.apply(delta); }
-    }
-
-    fn apply(&mut self, delta: &StreamDelta) {
-        match delta {
-            StreamDelta::MessageStart { id, model } => {
-                if self.id.is_empty() { self.id = id.clone(); }
-                if self.model.is_empty() { self.model = model.clone(); }
-            }
-            StreamDelta::ReasoningDelta(text) => self.reasoning_content.push_str(text),
-            StreamDelta::ReasoningSignature(sig) => self.reasoning_signature.push_str(sig),
-            StreamDelta::TextDelta(text) => self.content.push_str(text),
-            StreamDelta::ToolCallStart { index, id, name } => {
-                ensure_tool_index(&mut self.tool_calls, *index);
-                self.tool_calls[*index] = Some(ToolCall { id: id.clone(), name: name.clone(), arguments: String::new() });
-            }
-            StreamDelta::ToolCallDelta { index, arguments } => {
-                ensure_tool_index(&mut self.tool_calls, *index);
-                if let Some(tc) = self.tool_calls[*index].as_mut() {
-                    tc.arguments.push_str(arguments);
-                } else {
-                    self.tool_calls[*index] = Some(ToolCall {
-                        id: format!("tool-{index}"),
-                        name: String::new(),
-                        arguments: arguments.clone(),
-                    });
-                }
-            }
-            StreamDelta::Usage(usage) => self.usage = usage.clone(),
-            StreamDelta::Done { stop_reason } => self.stop_reason = Some(stop_reason.clone()),
-        }
-    }
-
-    fn into_internal_response(self) -> InternalResponse {
-        let tool_calls = self.tool_calls.into_iter().flatten()
-            .filter(|tc| !tc.name.is_empty())
-            .collect::<Vec<_>>();
-        InternalResponse {
-            id: self.id,
-            model: self.model,
-            content: self.content,
-            reasoning_content: if self.reasoning_content.is_empty() { None } else { Some(self.reasoning_content) },
-            reasoning_signature: if self.reasoning_signature.is_empty() { None } else { Some(self.reasoning_signature) },
-            tool_calls,
-            stop_reason: self.stop_reason,
-            usage: self.usage,
-            response_items: None,
-        }
-    }
-}
-
-fn ensure_tool_index(tool_calls: &mut Vec<Option<ToolCall>>, index: usize) {
-    if tool_calls.len() <= index {
-        tool_calls.resize(index + 1, None);
-    }
-}
+// StreamResponseAccumulator and ensure_tool_index are in accumulator.rs.
 
 // ── Semantic embedding computation ────────────────────────────────────────────
 
 /// Compute an embedding vector for the given text using the configured
 /// semantic-cache embedding route.
 ///
-/// Uses `VendorRegistry` directly (not ProviderAdapter) because this is
-/// an internal embedding call on the embeddings endpoint, not part of the
-/// main proxy pipeline. Migration to ProviderAdapter is tracked as P2.
+/// Uses `VendorRegistry` directly because this is an internal embedding
+/// call on the embeddings endpoint, outside the main chat proxy pipeline.
 async fn compute_embedding(gw: &Gateway, text: &str) -> anyhow::Result<Vec<f32>> {
-    let runtime_cache = gw.effective_cache_config().await;
+    let runtime_cache = gw.effective_cache_config();
     let embedding_route = runtime_cache.semantic.embedding_route.trim();
     if embedding_route.is_empty() {
         anyhow::bail!("semantic cache embedding_route is empty");
@@ -1849,6 +1696,3 @@ fn resolve_openai_base_url(provider: &Provider) -> Option<String> {
     if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
 }
 
-// Suppress unused import warning for HashMap/VecDeque used only transitively.
-#[allow(dead_code)]
-fn _use_imports(_: HashMap<(), ()>, _: VecDeque<()>) {}

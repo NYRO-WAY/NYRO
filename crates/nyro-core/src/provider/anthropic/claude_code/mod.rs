@@ -8,7 +8,7 @@
 
 use reqwest::header::HeaderMap;
 
-use crate::provider::registry::{VendorRegistration, VendorScope};
+use crate::provider::registry::{ExtensionRegistration, VendorScope};
 use crate::provider::vendor_ext::{VendorCtx, VendorExtension};
 
 pub struct AnthropicClaudeCodeChannel;
@@ -26,9 +26,8 @@ impl VendorExtension for AnthropicClaudeCodeChannel {
     // three-tier `Channel → Vendor → Family` resolution path (used by
     // admin-side flows), where this channel extension can be the seam
     // that would otherwise fall back to `AnthropicVendor.auth_headers`'s
-    // `x-api-key`. The proxy `ProviderAdapter` path resolves the adapter
-    // by `vendor_id` and never reaches this `auth_headers` impl — that
-    // path's gate lives in `provider::common::openai::openai_compat_build_request`
+    // `x-api-key`. The proxy pipeline resolves the vendor by `vendor_id`
+    // and the gate lives in `provider::common::pipeline::build_request`
     // (`if ctx.disable_default_auth { HeaderMap::new() }`).
     fn auth_headers(&self, _ctx: &VendorCtx<'_>) -> HeaderMap {
         HeaderMap::new()
@@ -36,5 +35,5 @@ impl VendorExtension for AnthropicClaudeCodeChannel {
 }
 
 inventory::submit! {
-    VendorRegistration { make: || Box::new(AnthropicClaudeCodeChannel) }
+    ExtensionRegistration { make: || Box::new(AnthropicClaudeCodeChannel) }
 }

@@ -1,4 +1,4 @@
-//! Ollama vendor extension. The `pre_request` hook probes `/api/show` and
+//! Ollama vendor. The `pre_request` hook probes `/api/show` and
 //! strips tool definitions when the model does not support tools.
 
 mod capabilities;
@@ -11,17 +11,15 @@ use crate::Gateway;
 use crate::error::GatewayError;
 use crate::protocol::ids::ProtocolId;
 use crate::protocol::types::{InternalRequest, InternalResponse};
-use crate::provider::adapter::{ProviderAdapter, ProviderCtx};
-use crate::provider::common::openai::{
-    openai_bearer_auth_headers, openai_build_url, openai_compat_build_request,
-    openai_compat_parse_response, openai_compat_stream_parser, openai_map_error,
-};
+use crate::provider::common::openai::{openai_bearer_auth_headers, openai_build_url, openai_map_error};
+use crate::provider::common::pipeline;
 use crate::provider::inbound::InboundResponse;
 use crate::provider::metadata::{AuthMode, ChannelDef, Label, ProtocolBaseUrl, VendorMetadata};
 use crate::provider::outbound::OutboundRequest;
-use crate::provider::registry::{ProviderAdapterRegistration, VendorRegistration, VendorScope};
+use crate::provider::registry::{VendorRegistration, VendorScope};
 use crate::provider::stream::ProviderStreamParser;
-use crate::provider::vendor_ext::{VendorCtx, VendorExtension};
+use crate::provider::vendor::{ProviderCtx, Vendor};
+use crate::provider::vendor_ext::VendorCtx;
 
 const METADATA: VendorMetadata = VendorMetadata {
     id: "ollama",
@@ -48,7 +46,7 @@ const METADATA: VendorMetadata = VendorMetadata {
 pub struct OllamaVendor;
 
 #[async_trait]
-impl VendorExtension for OllamaVendor {
+impl Vendor for OllamaVendor {
     fn scope(&self) -> VendorScope { VendorScope::Vendor { vendor_id: "ollama" } }
     fn metadata(&self) -> Option<&'static VendorMetadata> { Some(&METADATA) }
     fn auth_headers(&self, ctx: &VendorCtx<'_>) -> HeaderMap { openai_bearer_auth_headers(ctx) }
@@ -85,24 +83,20 @@ impl VendorExtension for OllamaVendor {
         }
         Ok(())
     }
-}
 
-#[async_trait]
-impl ProviderAdapter for OllamaVendor {
     fn vendor_id(&self) -> &'static str { "ollama" }
     fn supported_protocols(&self) -> &'static [ProtocolId] {
         use crate::protocol::ids::OPENAI_CHAT_V1;
         &[OPENAI_CHAT_V1]
     }
     async fn build_request(&self, req: &mut InternalRequest, ctx: &ProviderCtx<'_>) -> Result<OutboundRequest, GatewayError> {
-        openai_compat_build_request(self, req, ctx).await
+        pipeline::build_request(self, req, ctx).await
     }
     async fn parse_response(&self, resp: InboundResponse, ctx: &ProviderCtx<'_>) -> Result<InternalResponse, GatewayError> {
-        openai_compat_parse_response(self, resp, ctx).await
+        pipeline::parse_response(self, resp, ctx).await
     }
-    fn stream_parser(&self, ctx: &ProviderCtx<'_>) -> Box<dyn ProviderStreamParser + Send> { openai_compat_stream_parser(ctx) }
+    fn stream_parser(&self, ctx: &ProviderCtx<'_>) -> Box<dyn ProviderStreamParser + Send> { pipeline::stream_parser(ctx) }
     fn map_error(&self, status: u16, body: Value) -> GatewayError { openai_map_error("ollama", status, body) }
 }
 
 inventory::submit! { VendorRegistration { make: || Box::new(OllamaVendor) } }
-inventory::submit! { ProviderAdapterRegistration { make: || Box::new(OllamaVendor) } }

@@ -23,6 +23,8 @@ pub struct InternalRequest {
     pub tools: Option<Vec<ToolDef>>,
     pub tool_choice: Option<Value>,
     pub source_protocol: ProtocolId,
+    /// Superseded by `AiRequest.meta.vendor.ingress`. Will be removed once all
+    /// codec decoders migrate to the new IR (protocol/ir/request.rs).
     pub extra: HashMap<String, Value>,
 }
 
@@ -32,8 +34,8 @@ pub struct InternalMessage {
     pub content: MessageContent,
     pub tool_calls: Option<Vec<ToolCall>>,
     pub tool_call_id: Option<String>,
-    /// Pass-through fields that don't map to the internal schema
-    /// (e.g. `reasoning_content` in DeepSeek thinking mode).
+    /// Superseded by per-message metadata in `AiRequest`. Will be removed once all
+    /// codec decoders migrate to the new IR (protocol/ir/request.rs).
     pub extra: HashMap<String, Value>,
 }
 

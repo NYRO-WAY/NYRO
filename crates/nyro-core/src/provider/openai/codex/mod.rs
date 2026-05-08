@@ -3,7 +3,7 @@
 use reqwest::header::HeaderMap;
 
 use crate::provider::common::openai::{openai_bearer_auth_headers, openai_build_url};
-use crate::provider::registry::{VendorRegistration, VendorScope};
+use crate::provider::registry::{ExtensionRegistration, VendorScope};
 use crate::provider::vendor_ext::{VendorCtx, VendorExtension};
 
 pub struct OpenAiCodexChannel;
@@ -24,5 +24,5 @@ impl VendorExtension for OpenAiCodexChannel {
 }
 
 inventory::submit! {
-    VendorRegistration { make: || Box::new(OpenAiCodexChannel) }
+    ExtensionRegistration { make: || Box::new(OpenAiCodexChannel) }
 }

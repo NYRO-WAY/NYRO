@@ -1371,7 +1371,7 @@ impl AdminService {
     }
 
     pub async fn get_cache_settings(&self) -> anyhow::Result<serde_json::Value> {
-        let runtime = self.gw.effective_cache_config().await;
+        let runtime = self.gw.effective_cache_config();
         Ok(runtime.to_admin_json())
     }
 
@@ -1384,7 +1384,7 @@ impl AdminService {
     }
 
     pub async fn flush_cache(&self) -> anyhow::Result<()> {
-        let cache_backend = self.gw.cache_backend.read().await.clone();
+        let cache_backend = (**self.gw.cache_backend.load()).clone();
         if let Some(cache) = cache_backend {
             cache.flush().await?;
         }
@@ -1392,7 +1392,7 @@ impl AdminService {
     }
 
     pub async fn delete_cache_key(&self, key: &str) -> anyhow::Result<()> {
-        let cache_backend = self.gw.cache_backend.read().await.clone();
+        let cache_backend = (**self.gw.cache_backend.load()).clone();
         if let Some(cache) = cache_backend {
             cache.delete(key).await?;
         }
@@ -1400,9 +1400,9 @@ impl AdminService {
     }
 
     pub async fn get_cache_stats(&self) -> anyhow::Result<serde_json::Value> {
-        let runtime = self.gw.effective_cache_config().await;
-        let cache_backend = self.gw.cache_backend.read().await.clone();
-        let vector_store = self.gw.vector_store.read().await.clone();
+        let runtime = self.gw.effective_cache_config();
+        let cache_backend = (**self.gw.cache_backend.load()).clone();
+        let vector_store = (**self.gw.vector_store.load()).clone();
         let healthy = if let Some(cache) = cache_backend.as_ref() {
             cache.ping().await.unwrap_or(false)
         } else {

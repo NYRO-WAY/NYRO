@@ -38,6 +38,7 @@ rand = "0.8"
 sha2 = "0.10"
 dashmap = "6"
 inventory = "0.3"
+arc-swap = "1"
 
 [dev-dependencies]
 tempfile = "3"

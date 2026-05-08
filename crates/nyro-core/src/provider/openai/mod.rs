@@ -7,21 +7,18 @@ use reqwest::header::HeaderMap;
 use serde_json::Value;
 
 use crate::error::GatewayError;
-use crate::protocol::ids::ProtocolId;
+use crate::protocol::ids::{ProtocolFamily, ProtocolId};
 use crate::protocol::types::{InternalRequest, InternalResponse};
-use crate::provider::adapter::{ProviderAdapter, ProviderCtx};
-use crate::provider::common::openai::{
-    openai_bearer_auth_headers, openai_build_url, openai_compat_build_request,
-    openai_compat_parse_response, openai_compat_stream_parser, openai_map_error,
-};
+use crate::provider::common::openai::{openai_bearer_auth_headers, openai_build_url, openai_map_error};
+use crate::provider::common::pipeline;
 use crate::provider::inbound::InboundResponse;
 use crate::provider::metadata::{
     AuthMode, ChannelDef, Label, OAuthConfig, ProtocolBaseUrl, RuntimeConfig, VendorMetadata,
 };
 use crate::provider::outbound::OutboundRequest;
-use crate::protocol::ids::ProtocolFamily;
-use crate::provider::registry::{ProviderAdapterRegistration, VendorRegistration, VendorScope};
+use crate::provider::registry::{ExtensionRegistration, VendorRegistration, VendorScope};
 use crate::provider::stream::ProviderStreamParser;
+use crate::provider::vendor::{ProviderCtx, Vendor};
 use crate::provider::vendor_ext::{VendorCtx, VendorExtension};
 
 const METADATA: VendorMetadata = VendorMetadata {
@@ -76,79 +73,40 @@ const METADATA: VendorMetadata = VendorMetadata {
 
 pub struct OpenAiVendor;
 
-impl VendorExtension for OpenAiVendor {
-    fn scope(&self) -> VendorScope {
-        VendorScope::Vendor { vendor_id: "openai" }
-    }
-    fn metadata(&self) -> Option<&'static VendorMetadata> {
-        Some(&METADATA)
-    }
-    fn auth_headers(&self, ctx: &VendorCtx<'_>) -> HeaderMap {
-        openai_bearer_auth_headers(ctx)
-    }
-    fn build_url(&self, _ctx: &VendorCtx<'_>, base_url: &str, path: &str) -> String {
-        openai_build_url(base_url, path)
-    }
-}
-
 #[async_trait]
-impl ProviderAdapter for OpenAiVendor {
-    fn vendor_id(&self) -> &'static str {
-        "openai"
-    }
+impl Vendor for OpenAiVendor {
+    fn scope(&self) -> VendorScope { VendorScope::Vendor { vendor_id: "openai" } }
+    fn metadata(&self) -> Option<&'static VendorMetadata> { Some(&METADATA) }
+    fn auth_headers(&self, ctx: &VendorCtx<'_>) -> HeaderMap { openai_bearer_auth_headers(ctx) }
+    fn build_url(&self, _ctx: &VendorCtx<'_>, base_url: &str, path: &str) -> String { openai_build_url(base_url, path) }
+    fn vendor_id(&self) -> &'static str { "openai" }
     fn supported_protocols(&self) -> &'static [ProtocolId] {
         use crate::protocol::ids::{OPENAI_CHAT_V1, OPENAI_EMBEDDINGS_V1, OPENAI_RESPONSES_V1};
         &[OPENAI_CHAT_V1, OPENAI_RESPONSES_V1, OPENAI_EMBEDDINGS_V1]
     }
-    async fn build_request(
-        &self,
-        req: &mut InternalRequest,
-        ctx: &ProviderCtx<'_>,
-    ) -> Result<OutboundRequest, GatewayError> {
-        openai_compat_build_request(self, req, ctx).await
+    fn declared_request_mutations(&self) -> bool { false }
+    fn declared_response_mutations(&self) -> bool { false }
+    async fn build_request(&self, req: &mut InternalRequest, ctx: &ProviderCtx<'_>) -> Result<OutboundRequest, GatewayError> {
+        pipeline::build_request(self, req, ctx).await
     }
-    async fn parse_response(
-        &self,
-        resp: InboundResponse,
-        ctx: &ProviderCtx<'_>,
-    ) -> Result<InternalResponse, GatewayError> {
-        openai_compat_parse_response(self, resp, ctx).await
+    async fn parse_response(&self, resp: InboundResponse, ctx: &ProviderCtx<'_>) -> Result<InternalResponse, GatewayError> {
+        pipeline::parse_response(self, resp, ctx).await
     }
-    fn stream_parser(&self, ctx: &ProviderCtx<'_>) -> Box<dyn ProviderStreamParser + Send> {
-        openai_compat_stream_parser(ctx)
-    }
-    fn map_error(&self, status: u16, body: Value) -> GatewayError {
-        openai_map_error("openai", status, body)
-    }
+    fn stream_parser(&self, ctx: &ProviderCtx<'_>) -> Box<dyn ProviderStreamParser + Send> { pipeline::stream_parser(ctx) }
+    fn map_error(&self, status: u16, body: Value) -> GatewayError { openai_map_error("openai", status, body) }
 }
 
-inventory::submit! {
-    VendorRegistration { make: || Box::new(OpenAiVendor) }
-}
-
-inventory::submit! {
-    ProviderAdapterRegistration { make: || Box::new(OpenAiVendor) }
-}
+inventory::submit! { VendorRegistration { make: || Box::new(OpenAiVendor) } }
 
 /// Family-level fallback for any provider whose `vendor` field is blank or unknown
 /// but whose egress protocol belongs to the OpenAI family.
 pub struct OpenAIFamilyExt;
 
 impl VendorExtension for OpenAIFamilyExt {
-    fn scope(&self) -> VendorScope {
-        VendorScope::Family(ProtocolFamily::OpenAI)
-    }
-    fn metadata(&self) -> Option<&'static VendorMetadata> {
-        None
-    }
-    fn auth_headers(&self, ctx: &VendorCtx<'_>) -> HeaderMap {
-        openai_bearer_auth_headers(ctx)
-    }
-    fn build_url(&self, _ctx: &VendorCtx<'_>, base_url: &str, path: &str) -> String {
-        openai_build_url(base_url, path)
-    }
+    fn scope(&self) -> VendorScope { VendorScope::Family(ProtocolFamily::OpenAI) }
+    fn metadata(&self) -> Option<&'static VendorMetadata> { None }
+    fn auth_headers(&self, ctx: &VendorCtx<'_>) -> HeaderMap { openai_bearer_auth_headers(ctx) }
+    fn build_url(&self, _ctx: &VendorCtx<'_>, base_url: &str, path: &str) -> String { openai_build_url(base_url, path) }
 }
 
-inventory::submit! {
-    VendorRegistration { make: || Box::new(OpenAIFamilyExt) }
-}
+inventory::submit! { ExtensionRegistration { make: || Box::new(OpenAIFamilyExt) } }

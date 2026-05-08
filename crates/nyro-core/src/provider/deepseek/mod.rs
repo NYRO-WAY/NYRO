@@ -7,17 +7,15 @@ use serde_json::Value;
 use crate::error::GatewayError;
 use crate::protocol::ids::ProtocolId;
 use crate::protocol::types::{InternalRequest, InternalResponse};
-use crate::provider::adapter::{ProviderAdapter, ProviderCtx};
-use crate::provider::common::openai::{
-    openai_bearer_auth_headers, openai_build_url, openai_compat_build_request,
-    openai_compat_parse_response, openai_compat_stream_parser, openai_map_error,
-};
+use crate::provider::common::openai::{openai_bearer_auth_headers, openai_build_url, openai_map_error};
+use crate::provider::common::pipeline;
 use crate::provider::inbound::InboundResponse;
 use crate::provider::metadata::{AuthMode, ChannelDef, Label, ProtocolBaseUrl, VendorMetadata};
 use crate::provider::outbound::OutboundRequest;
-use crate::provider::registry::{ProviderAdapterRegistration, VendorRegistration, VendorScope};
+use crate::provider::registry::{VendorRegistration, VendorScope};
 use crate::provider::stream::ProviderStreamParser;
-use crate::provider::vendor_ext::{VendorCtx, VendorExtension};
+use crate::provider::vendor::{ProviderCtx, Vendor};
+use crate::provider::vendor_ext::VendorCtx;
 
 const METADATA: VendorMetadata = VendorMetadata {
     id: "deepseek",
@@ -29,10 +27,7 @@ const METADATA: VendorMetadata = VendorMetadata {
         label: Label { zh: "默认", en: "Default" },
         base_urls: &[
             ProtocolBaseUrl { protocol: "openai", base_url: "https://api.deepseek.com/v1" },
-            ProtocolBaseUrl {
-                protocol: "anthropic",
-                base_url: "https://api.deepseek.com/anthropic",
-            },
+            ProtocolBaseUrl { protocol: "anthropic", base_url: "https://api.deepseek.com/anthropic" },
         ],
         api_key: None,
         models_source: Some("https://api.deepseek.com/v1/models"),
@@ -46,36 +41,27 @@ const METADATA: VendorMetadata = VendorMetadata {
 
 pub struct DeepseekVendor;
 
-impl VendorExtension for DeepseekVendor {
-    fn scope(&self) -> VendorScope {
-        VendorScope::Vendor { vendor_id: "deepseek" }
-    }
-    fn metadata(&self) -> Option<&'static VendorMetadata> {
-        Some(&METADATA)
-    }
-    fn auth_headers(&self, ctx: &VendorCtx<'_>) -> HeaderMap {
-        openai_bearer_auth_headers(ctx)
-    }
-    fn build_url(&self, _ctx: &VendorCtx<'_>, base_url: &str, path: &str) -> String {
-        openai_build_url(base_url, path)
-    }
-}
-
 #[async_trait]
-impl ProviderAdapter for DeepseekVendor {
+impl Vendor for DeepseekVendor {
+    fn scope(&self) -> VendorScope { VendorScope::Vendor { vendor_id: "deepseek" } }
+    fn metadata(&self) -> Option<&'static VendorMetadata> { Some(&METADATA) }
+    fn auth_headers(&self, ctx: &VendorCtx<'_>) -> HeaderMap { openai_bearer_auth_headers(ctx) }
+    fn build_url(&self, _ctx: &VendorCtx<'_>, base_url: &str, path: &str) -> String { openai_build_url(base_url, path) }
     fn vendor_id(&self) -> &'static str { "deepseek" }
     fn supported_protocols(&self) -> &'static [ProtocolId] {
         use crate::protocol::ids::OPENAI_CHAT_V1;
         &[OPENAI_CHAT_V1]
     }
+    fn declared_request_mutations(&self) -> bool { false }
+    fn declared_response_mutations(&self) -> bool { false }
     async fn build_request(&self, req: &mut InternalRequest, ctx: &ProviderCtx<'_>) -> Result<OutboundRequest, GatewayError> {
-        openai_compat_build_request(self, req, ctx).await
+        pipeline::build_request(self, req, ctx).await
     }
     async fn parse_response(&self, resp: InboundResponse, ctx: &ProviderCtx<'_>) -> Result<InternalResponse, GatewayError> {
-        openai_compat_parse_response(self, resp, ctx).await
+        pipeline::parse_response(self, resp, ctx).await
     }
     fn stream_parser(&self, ctx: &ProviderCtx<'_>) -> Box<dyn ProviderStreamParser + Send> {
-        openai_compat_stream_parser(ctx)
+        pipeline::stream_parser(ctx)
     }
     fn map_error(&self, status: u16, body: Value) -> GatewayError {
         openai_map_error("deepseek", status, body)
@@ -83,4 +69,3 @@ impl ProviderAdapter for DeepseekVendor {
 }
 
 inventory::submit! { VendorRegistration { make: || Box::new(DeepseekVendor) } }
-inventory::submit! { ProviderAdapterRegistration { make: || Box::new(DeepseekVendor) } }

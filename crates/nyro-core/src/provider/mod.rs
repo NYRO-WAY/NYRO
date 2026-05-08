@@ -1,28 +1,29 @@
-//! Provider layer — vendor adapters, metadata, and orchestration traits.
+//! Provider layer — unified `Vendor` trait, metadata, and orchestration.
 //!
-//! # Architecture (PR-15)
+//! # Architecture
 //!
 //! ```text
 //! provider/
-//! ├── adapter.rs          — ProviderAdapter trait + ProviderCtx
-//! ├── vendor_ext.rs       — VendorExtension trait + VendorCtx (hooks)
-//! ├── registry.rs         — VendorRegistry + ProviderAdapterRegistry
-//! ├── metadata.rs         — VendorMetadata types (moved from protocol/vendor/types.rs)
+//! ├── vendor.rs           — Vendor trait + ProviderCtx (primary abstraction)
+//! ├── vendor_ext.rs       — VendorExtension trait + VendorCtx (channel/family hooks)
+//! ├── registry.rs         — VendorRegistry (unified, replaces dual registry)
+//! ├── metadata.rs         — VendorMetadata types
 //! ├── outbound.rs         — OutboundRequest (wire-format outbound)
 //! ├── inbound.rs          — InboundResponse (wire-format inbound)
 //! ├── stream.rs           — ProviderStreamParser trait
 //! ├── common/
-//! │   └── openai.rs       — shared Bearer auth / URL helpers + pipeline helpers
-//! └── <vendor>/mod.rs     — per-vendor VendorExtension + ProviderAdapter impls
+//! │   ├── openai.rs       — shared Bearer auth / URL helpers
+//! │   └── pipeline.rs     — standard 7-step request/response pipeline
+//! └── <vendor>/mod.rs     — per-vendor Vendor impls
 //! ```
 
-pub mod adapter;
 pub mod common;
 pub mod inbound;
 pub mod metadata;
 pub mod outbound;
 pub mod registry;
 pub mod stream;
+pub mod vendor;
 pub mod vendor_ext;
 
 // ── Known vendors (each registers itself via inventory::submit!) ──────────────
@@ -40,17 +41,15 @@ pub mod xai;
 pub mod zai;
 pub mod zhipuai;
 
-// ── Flat re-exports for convenient import paths ───────────────────────────────
+// ── Flat re-exports ───────────────────────────────────────────────────────────
 
-pub use adapter::{ProviderAdapter, ProviderCtx};
+pub use vendor::ProviderCtx;
 pub use inbound::InboundResponse;
 pub use metadata::{
     AuthMode, ChannelDef, Label, OAuthConfig, ProtocolBaseUrl, RuntimeConfig, VendorMetadata,
 };
 pub use outbound::OutboundRequest;
-pub use registry::{
-    ProviderAdapterRegistration, ProviderAdapterRegistry, VendorRegistration, VendorRegistry,
-    VendorScope,
-};
+pub use registry::{ExtensionRegistration, VendorRegistration, VendorRegistry, VendorScope};
 pub use stream::{LegacyStreamParserAdapter, ProviderStreamParser};
+pub use vendor::Vendor;
 pub use vendor_ext::{VendorCtx, VendorExtension};

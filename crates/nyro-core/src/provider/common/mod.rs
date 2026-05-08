@@ -11,3 +11,4 @@
 //!   directory (e.g. `provider/my_family/shared.rs`).
 
 pub mod openai;
+pub mod pipeline;

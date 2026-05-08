@@ -198,6 +198,46 @@ impl From<InternalResponse> for AiResponse {
     }
 }
 
+// ── AiResponse → InternalResponse ────────────────────────────────────────────
+
+impl From<AiResponse> for InternalResponse {
+    fn from(new: AiResponse) -> Self {
+        let tool_calls = new
+            .tool_calls
+            .into_iter()
+            .map(|tc| crate::protocol::types::ToolCall { id: tc.id, name: tc.name, arguments: tc.arguments })
+            .collect();
+        let response_items = new.items.map(|items| {
+            items
+                .into_iter()
+                .filter_map(|item| match item {
+                    crate::protocol::ir::response::ResponseItem::OutputText { text } => {
+                        Some(crate::protocol::types::ResponseItem::Message { text })
+                    }
+                    crate::protocol::ir::response::ResponseItem::Reasoning { text } => {
+                        Some(crate::protocol::types::ResponseItem::Reasoning { text })
+                    }
+                    crate::protocol::ir::response::ResponseItem::FunctionCall { call_id, name, arguments } => {
+                        Some(crate::protocol::types::ResponseItem::FunctionCall { call_id, name, arguments })
+                    }
+                    _ => None,
+                })
+                .collect()
+        });
+        InternalResponse {
+            id: new.id,
+            model: new.model,
+            content: new.content,
+            reasoning_content: new.reasoning_content,
+            reasoning_signature: new.reasoning_signature,
+            tool_calls,
+            response_items,
+            stop_reason: new.stop_reason,
+            usage: new.usage,
+        }
+    }
+}
+
 // ── Round-trip tests ──────────────────────────────────────────────────────────
 
 #[cfg(test)]
