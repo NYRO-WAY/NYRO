@@ -167,9 +167,15 @@ pub fn stream_parser(
 /// URL are computed; the client body is forwarded verbatim.
 pub async fn passthrough_run(
     vendor: &dyn Vendor,
-    raw_body: serde_json::Value,
+    mut raw_body: serde_json::Value,
     ctx: &crate::provider::vendor::ProviderCtx<'_>,
 ) -> Result<crate::provider::outbound::OutboundRequest, GatewayError> {
+    // Replace the model field with the route-configured actual model so the
+    // upstream receives the real model name, not the client's virtual alias.
+    if let Some(obj) = raw_body.as_object_mut() {
+        obj.insert("model".to_string(), serde_json::Value::String(ctx.actual_model.to_string()));
+    }
+
     let vendor_ctx = ctx.to_vendor_ctx();
 
     let mut headers = if ctx.disable_default_auth {
