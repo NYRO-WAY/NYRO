@@ -257,11 +257,17 @@ async fn passthrough_run_preserves_vendor_specific_fields() {
     .await
     .expect("passthrough_run must succeed");
 
-    // Body is forwarded verbatim (JSON-value equality).
+    // Vendor-specific extension fields must survive; model is replaced with
+    // actual_model (same value here, so body equality still holds).
     assert_eq!(
-        out.body, raw_body,
-        "passthrough_run must not modify the request body"
+        out.body["vendor_extension_field"], raw_body["vendor_extension_field"],
+        "vendor extension fields must be forwarded verbatim"
     );
+    assert_eq!(
+        out.body["another_custom"], raw_body["another_custom"],
+        "nested vendor fields must be forwarded verbatim"
+    );
+    assert_eq!(out.body["model"], "gpt-4o", "model must equal actual_model");
     // Auth header must be present.
     assert!(
         out.headers.contains_key(reqwest::header::AUTHORIZATION),
@@ -272,6 +278,40 @@ async fn passthrough_run_preserves_vendor_specific_fields() {
         out.url.contains("/v1/chat/completions"),
         "URL must include the egress path, got: {}",
         out.url
+    );
+}
+
+#[tokio::test]
+async fn passthrough_run_rewrites_model_to_actual_model() {
+    let gw = build_test_gateway().await;
+    let provider = fake_provider("sk-test");
+    let vendor = BearerVendor("test");
+
+    // Client sends a virtual alias; route target maps it to the real model name.
+    let raw_body = json!({
+        "model": "my-virtual-alias",
+        "messages": [{"role": "user", "content": "hello"}],
+        "stream": false,
+    });
+
+    let ctx = ProviderCtx {
+        provider: &provider,
+        protocol: OPENAI_CHAT_V1,
+        egress_base_url: "https://api.openai.com",
+        api_key: &provider.api_key,
+        actual_model: "glm-4-flash",
+        credential: None,
+        gw: &gw,
+        disable_default_auth: false,
+    };
+
+    let out = nyro_core::provider::common::pipeline::passthrough_run(&vendor, raw_body, &ctx)
+        .await
+        .expect("passthrough_run must succeed");
+
+    assert_eq!(
+        out.body["model"], "glm-4-flash",
+        "passthrough_run must substitute the virtual alias with the route-configured actual model"
     );
 }
 
