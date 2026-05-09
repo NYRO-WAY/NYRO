@@ -28,6 +28,8 @@ use self::util::*;
 use std::convert::Infallible;
 use std::time::Instant;
 
+use bytes::Bytes;
+
 use async_trait::async_trait;
 use axum::body::Body;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
@@ -515,6 +517,7 @@ pub async fn dispatch_pipeline(
                 &path_owned,
                 request_headers_str.clone(),
                 request_body_str.clone(),
+                passthrough_resp,
             )
             .await
         } else if upstream_forces_stream {
@@ -1012,6 +1015,7 @@ async fn handle_stream(
     ingress_path: &str,
     request_headers_str: Option<String>,
     request_body_str: Option<String>,
+    passthrough_resp: bool,
 ) -> Response {
     let make_extras_owned = {
         let method = ingress_method.to_string();
@@ -1063,6 +1067,114 @@ async fn handle_stream(
             .into_response();
     }
 
+    // ── Byte-level SSE passthrough ────────────────────────────────────────────
+    // Used when ingress == egress protocol and the vendor declares no response
+    // mutations (passthrough_resp=true). Upstream bytes are forwarded verbatim;
+    // a side-channel parser accumulates usage stats for logging only.
+    if passthrough_resp {
+        let (pt_tx, pt_rx) = tokio::sync::mpsc::channel::<Result<Bytes, Infallible>>(64);
+
+        let gw_pt = gw.clone();
+        let provider_name_pt = provider.name.clone();
+        let ingress_s_pt = ingress_str.to_string();
+        let egress_s_pt = egress_str.to_string();
+        let req_model_pt = request_model.to_string();
+        let act_model_pt = actual_model.to_string();
+        let key_id_pt = api_key_id.map(ToString::to_string);
+        let leader_key_pt = singleflight_key.map(ToString::to_string);
+        let leader_tx_pt = singleflight_tx.clone();
+        let ingress_method_pt = ingress_method.to_string();
+        let ingress_path_pt = ingress_path.to_string();
+        let request_headers_pt = request_headers_str.clone();
+        let request_body_pt = request_body_str.clone();
+
+        tokio::spawn(async move {
+            let mut log_buf: Vec<u8> = Vec::new();
+            let mut byte_stream = resp.bytes_stream();
+            let mut stream_error: Option<String> = None;
+
+            while let Some(result) = byte_stream.next().await {
+                match result {
+                    Ok(b) => {
+                        log_buf.extend_from_slice(&b);
+                        if pt_tx.send(Ok(b)).await.is_err() {
+                            break; // client disconnected
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(error = %e, "upstream stream error during passthrough");
+                        stream_error = Some(e.to_string());
+                        // Emit an Anthropic-protocol error event so the client
+                        // gets an explicit signal instead of a truncated stream.
+                        let msg = e.to_string().replace('"', "\\\"");
+                        let err_sse = format!(
+                            "event: error\ndata: {{\"type\":\"error\",\"error\":{{\"type\":\"stream_error\",\"message\":\"{msg}\"}}}}\n\n"
+                        );
+                        let _ = pt_tx.send(Ok(Bytes::from(err_sse))).await;
+                        break;
+                    }
+                }
+            }
+
+            // Parse accumulated buffer for usage stats and log entry (best-effort).
+            let log_text = String::from_utf8_lossy(&log_buf);
+            let mut log_parser = egress.handler().make_stream_parser();
+            let mut accumulator = StreamResponseAccumulator::default();
+            if let Ok(deltas) = log_parser.parse_chunk(&log_text) {
+                accumulator.apply_all(&deltas);
+            }
+            if let Ok(deltas) = log_parser.finish() {
+                accumulator.apply_all(&deltas);
+            }
+
+            let mut internal = accumulator.into_internal_response();
+            if internal.id.is_empty() {
+                internal.id = format!("msg_{}", uuid::Uuid::new_v4().simple());
+            }
+            if internal.model.is_empty() {
+                internal.model = act_model_pt.clone();
+            }
+
+            let aggregated_formatter = ingress.handler().make_response_formatter();
+            let aggregated_output = aggregated_formatter.format_response(&internal);
+            let aggregated_body_str = serde_json::to_string(&aggregated_output).ok();
+
+            emit_log(
+                &gw_pt, &ingress_s_pt, &egress_s_pt, &req_model_pt, &act_model_pt,
+                key_id_pt.as_deref(), &provider_name_pt, 200,
+                start.elapsed().as_millis() as f64,
+                internal.usage.clone(), true, !internal.tool_calls.is_empty(),
+                stream_error, None,
+                LogExtras {
+                    method: Some(ingress_method_pt.clone()),
+                    path: Some(ingress_path_pt.clone()),
+                    request_headers: request_headers_pt.clone(),
+                    request_body: request_body_pt.clone(),
+                    response_headers: None,
+                    response_body: aggregated_body_str,
+                },
+            );
+
+            if let (Some(key), Some(tx)) = (leader_key_pt.as_deref(), leader_tx_pt.as_ref()) {
+                let _ = tx.send(vec![]);
+                gw_pt.cache_in_flight.remove(key);
+            }
+        });
+
+        let stream = ReceiverStream::new(pt_rx);
+        let body = Body::from_stream(stream);
+        let mut response = Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/event-stream")
+            .header(header::CACHE_CONTROL, "no-cache")
+            .header(header::CONNECTION, "keep-alive")
+            .body(body)
+            .unwrap();
+        set_cache_headers(&mut response, "MISS", cache_key, None, expose_headers);
+        return response;
+    }
+
+    // ── IR round-trip path ────────────────────────────────────────────────────
     let mut stream_parser = egress.handler().make_stream_parser();
     let mut stream_formatter = ingress.handler().make_stream_formatter();
     let mut byte_stream = resp.bytes_stream();
@@ -1090,7 +1202,17 @@ async fn handle_stream(
         while let Some(chunk) = byte_stream.next().await {
             let bytes = match chunk {
                 Ok(b) => b,
-                Err(_) => break,
+                Err(e) => {
+                    // P1: emit an explicit terminal event instead of silently breaking,
+                    // so the client receives a defined stop_reason and does not hang.
+                    tracing::warn!(error = %e, "upstream stream error; emitting terminal event");
+                    let error_deltas = [StreamDelta::Done { stop_reason: "error".to_string() }];
+                    let events = stream_formatter.format_deltas(&error_deltas);
+                    for ev in events {
+                        let _ = tx.send(Ok(ev.to_sse_string())).await;
+                    }
+                    break;
+                }
             };
             let text = String::from_utf8_lossy(&bytes);
             if let Ok(deltas) = stream_parser.parse_chunk(&text) {

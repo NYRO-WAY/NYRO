@@ -326,6 +326,7 @@ impl StreamFormatter for GoogleStreamFormatter {
                         self.usage.output_tokens = u.output_tokens;
                     }
                 }
+                StreamDelta::RawEvent { .. } => {}
                 StreamDelta::Done { stop_reason } => {
                     let gemini_reason = match stop_reason.as_str() {
                         "stop" => "STOP",

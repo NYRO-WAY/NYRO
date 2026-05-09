@@ -51,6 +51,7 @@ impl StreamResponseAccumulator {
             }
             StreamDelta::Usage(usage) => self.usage = usage.clone(),
             StreamDelta::Done { stop_reason } => self.stop_reason = Some(stop_reason.clone()),
+            StreamDelta::RawEvent { .. } => {}
         }
     }
 

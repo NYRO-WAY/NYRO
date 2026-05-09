@@ -161,4 +161,8 @@ pub enum StreamDelta {
     ToolCallDelta { index: usize, arguments: String },
     Usage(TokenUsage),
     Done { stop_reason: String },
+    /// A verbatim SSE event that was not classified into a known delta type.
+    /// Forwarded as-is by same-protocol formatters so no upstream data is silently dropped.
+    /// Other formatters (e.g. OpenAI, Google) ignore it.
+    RawEvent { event_type: String, data: Value },
 }

@@ -248,24 +248,32 @@ fn parse_anthropic_event(event_type: Option<&str>, data: &Value, deltas: &mut Ve
                 .get("index")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as usize;
-            if let Some(block) = data.get("content_block")
-                && let Some("tool_use") = block.get("type").and_then(|t| t.as_str()) {
-                    let id = block
-                        .get("id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let name = block
-                        .get("name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    deltas.push(StreamDelta::ToolCallStart {
-                        index: idx,
-                        id,
-                        name,
-                    });
+            if let Some(block) = data.get("content_block") {
+                match block.get("type").and_then(|t| t.as_str()) {
+                    Some("tool_use") => {
+                        let id = block
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let name = block
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        deltas.push(StreamDelta::ToolCallStart { index: idx, id, name });
+                    }
+                    // Anthropic server-side tool blocks (web_search, code_execution,
+                    // mcp_tool_use, etc.) and any future block types not yet known:
+                    // forward verbatim so downstream clients receive the full event.
+                    _ => {
+                        deltas.push(StreamDelta::RawEvent {
+                            event_type: "content_block_start".to_string(),
+                            data: data.clone(),
+                        });
+                    }
                 }
+            }
         }
         Some("content_block_delta") => {
             if let Some(delta) = data.get("delta") {
@@ -307,7 +315,15 @@ fn parse_anthropic_event(event_type: Option<&str>, data: &Value, deltas: &mut Ve
                             });
                         }
                     }
-                    _ => {}
+                    // Unknown delta types (e.g. web_search_tool_result_delta,
+                    // citations_delta, code_execution_tool_result_delta):
+                    // forward verbatim.
+                    _ => {
+                        deltas.push(StreamDelta::RawEvent {
+                            event_type: "content_block_delta".to_string(),
+                            data: data.clone(),
+                        });
+                    }
                 }
             }
         }
@@ -337,7 +353,14 @@ fn parse_anthropic_event(event_type: Option<&str>, data: &Value, deltas: &mut Ve
             }
         }
         Some("ping") | Some("content_block_stop") | Some("message_stop") => {}
-        _ => {}
+        // Unknown top-level event types: forward verbatim so no data is dropped.
+        Some(_) => {
+            deltas.push(StreamDelta::RawEvent {
+                event_type: event_type.unwrap_or("unknown").to_string(),
+                data: data.clone(),
+            });
+        }
+        None => {}
     }
 }
 
@@ -545,6 +568,14 @@ impl StreamFormatter for AnthropicStreamFormatter {
                     events.push(SseEvent::new(
                         Some("message_stop"),
                         r#"{"type":"message_stop"}"#,
+                    ));
+                }
+                // Verbatim pass-through for Anthropic server-tool events and any
+                // future event types not yet handled by the codec.
+                StreamDelta::RawEvent { event_type, data } => {
+                    events.push(SseEvent::new(
+                        Some(event_type.as_str()),
+                        data.to_string(),
                     ));
                 }
             }
@@ -901,5 +932,112 @@ mod tests {
         assert!(has_tool_start, "expected ToolCallStart(get_weather), got: {deltas:?}");
         assert!(has_tool_delta, "expected ToolCallDelta, got: {deltas:?}");
         assert!(has_done_tool, "expected Done(tool_calls), got: {deltas:?}");
+    }
+
+    // ── P2: RawEvent forwarding ───────────────────────────────────────────────
+
+    #[test]
+    fn test_unknown_content_block_start_emits_raw_event() {
+        // GLM server-side tool (e.g. webReader) sends a content_block_start with
+        // type "server_tool_use". The parser must emit RawEvent instead of dropping it.
+        let sse = [
+            make_sse_block(
+                "message_start",
+                r#"{"type":"message_start","message":{"id":"msg_5","model":"glm-5","content":[],"stop_reason":null,"usage":{"input_tokens":5,"output_tokens":0}}}"#,
+            ),
+            make_sse_block(
+                "content_block_start",
+                r#"{"type":"content_block_start","index":0,"content_block":{"type":"server_tool_use","id":"srvtool_01","name":"webReader","input":{}}}"#,
+            ),
+            make_sse_block(
+                "content_block_stop",
+                r#"{"type":"content_block_stop","index":0}"#,
+            ),
+            make_sse_block(
+                "message_delta",
+                r#"{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":4}}"#,
+            ),
+        ]
+        .concat();
+
+        let mut parser = AnthropicStreamParser::new();
+        let deltas = parser.parse_chunk(&sse).unwrap();
+
+        let raw = deltas.iter().find_map(|d| {
+            if let StreamDelta::RawEvent { event_type, data } = d {
+                Some((event_type.as_str(), data.clone()))
+            } else {
+                None
+            }
+        });
+        assert!(raw.is_some(), "expected RawEvent for server_tool_use, got: {deltas:?}");
+        let (ev_type, data) = raw.unwrap();
+        assert_eq!(ev_type, "content_block_start");
+        assert_eq!(
+            data.pointer("/content_block/type").and_then(|v| v.as_str()),
+            Some("server_tool_use"),
+        );
+    }
+
+    #[test]
+    fn test_unknown_top_level_event_emits_raw_event() {
+        // A future or provider-specific event type must not be silently dropped.
+        let sse = make_sse_block(
+            "web_search_result",
+            r#"{"type":"web_search_result","results":[{"title":"foo","url":"https://example.com"}]}"#,
+        );
+
+        let mut parser = AnthropicStreamParser::new();
+        let deltas = parser.parse_chunk(&sse).unwrap();
+
+        let raw = deltas.iter().find(|d| matches!(d, StreamDelta::RawEvent { event_type, .. } if event_type == "web_search_result"));
+        assert!(raw.is_some(), "expected RawEvent for web_search_result, got: {deltas:?}");
+    }
+
+    #[test]
+    fn test_raw_event_forwarded_verbatim_by_formatter() {
+        // AnthropicStreamFormatter must emit a verbatim SSE event for RawEvent.
+        let raw_data = serde_json::json!({
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "server_tool_use", "id": "srv_01", "name": "webSearch", "input": {}}
+        });
+
+        let mut formatter = AnthropicStreamFormatter::new();
+        let events = formatter.format_deltas(&[
+            StreamDelta::MessageStart {
+                id: "msg_6".to_string(),
+                model: "glm-5".to_string(),
+            },
+            StreamDelta::RawEvent {
+                event_type: "content_block_start".to_string(),
+                data: raw_data.clone(),
+            },
+        ]);
+
+        let raw_forwarded = events.iter().find(|ev| {
+            ev.event.as_deref() == Some("content_block_start")
+                && ev.data.contains("server_tool_use")
+        });
+        assert!(
+            raw_forwarded.is_some(),
+            "formatter must forward RawEvent verbatim; events: {events:?}",
+        );
+    }
+
+    #[test]
+    fn test_unknown_content_block_delta_type_emits_raw_event() {
+        // Unknown delta types (citations_delta, web_search_tool_result_delta, etc.)
+        // must be forwarded as RawEvent, not silently dropped.
+        let sse = make_sse_block(
+            "content_block_delta",
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"citations_delta","citation":{"url":"https://example.com","title":"Example"}}}"#,
+        );
+
+        let mut parser = AnthropicStreamParser::new();
+        let deltas = parser.parse_chunk(&sse).unwrap();
+
+        let raw = deltas.iter().find(|d| matches!(d, StreamDelta::RawEvent { event_type, .. } if event_type == "content_block_delta"));
+        assert!(raw.is_some(), "expected RawEvent for citations_delta, got: {deltas:?}");
     }
 }

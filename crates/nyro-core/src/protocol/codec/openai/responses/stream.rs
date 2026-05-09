@@ -399,6 +399,7 @@ impl StreamFormatter for ResponsesStreamFormatter {
                 StreamDelta::Usage(u) => {
                     self.usage = u.clone();
                 }
+                StreamDelta::RawEvent { .. } => {}
                 StreamDelta::Done { .. } => {
                     if !self.completed {
                         self.completed = true;

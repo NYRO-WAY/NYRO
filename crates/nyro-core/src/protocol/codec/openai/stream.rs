@@ -437,6 +437,7 @@ impl StreamFormatter for OpenAIStreamFormatter {
                 StreamDelta::Usage(u) => {
                     self.usage = u.clone();
                 }
+                StreamDelta::RawEvent { .. } => {}
                 StreamDelta::Done { stop_reason } => {
                     let final_reason = if self.saw_tool_call {
                         "tool_calls".to_string()
