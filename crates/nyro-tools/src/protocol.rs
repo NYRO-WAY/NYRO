@@ -65,53 +65,6 @@ impl ProtocolKind {
         }
     }
 
-    /// Strip the protocol's standard version prefix from an incoming client path.
-    /// Used by `proxy` to convert what an OpenAI/Anthropic/Google SDK actually sends
-    /// (e.g. `/v1/chat/completions`) into the suffix expected by the user-supplied
-    /// versioned `--upstream-endpoint` (e.g. `/chat/completions`).
-    pub fn strip_client_version_prefix(self, client_path: &str) -> Result<String> {
-        match self {
-            ProtocolKind::OpenAiChat => {
-                if client_path == "/v1/chat/completions" {
-                    Ok("/chat/completions".to_string())
-                } else {
-                    bail!(
-                        "openai-chat client path must be `/v1/chat/completions`, got `{client_path}`"
-                    )
-                }
-            }
-            ProtocolKind::OpenAiResponses => {
-                if client_path == "/v1/responses" {
-                    Ok("/responses".to_string())
-                } else {
-                    bail!("openai-responses client path must be `/v1/responses`, got `{client_path}`")
-                }
-            }
-            ProtocolKind::AnthropicMessages => {
-                if client_path == "/v1/messages" {
-                    Ok("/messages".to_string())
-                } else {
-                    bail!(
-                        "anthropic-messages client path must be `/v1/messages`, got `{client_path}`"
-                    )
-                }
-            }
-            ProtocolKind::GoogleContent => {
-                const PREFIX: &str = "/v1beta";
-                let rest = client_path.strip_prefix(PREFIX).with_context(|| {
-                    format!(
-                        "google-content client path must start with `{PREFIX}/models/...`, got `{client_path}`"
-                    )
-                })?;
-                if !rest.starts_with("/models/") {
-                    bail!(
-                        "google-content client path must continue with `/models/...`, got `{client_path}`"
-                    );
-                }
-                Ok(rest.to_string())
-            }
-        }
-    }
 }
 
 /// Validate that `-e/--upstream-endpoint` carries a non-empty path component.
@@ -239,64 +192,6 @@ mod tests {
         let (p, q) = ProtocolKind::GoogleContent.record_path_suffix(false, "gemini-2.0-flash");
         assert_eq!(p, "/models/gemini-2.0-flash:generateContent");
         assert!(q.is_none());
-    }
-
-    #[test]
-    fn strip_client_version_prefix_happy_path() {
-        assert_eq!(
-            ProtocolKind::OpenAiChat
-                .strip_client_version_prefix("/v1/chat/completions")
-                .unwrap(),
-            "/chat/completions"
-        );
-        assert_eq!(
-            ProtocolKind::OpenAiResponses
-                .strip_client_version_prefix("/v1/responses")
-                .unwrap(),
-            "/responses"
-        );
-        assert_eq!(
-            ProtocolKind::AnthropicMessages
-                .strip_client_version_prefix("/v1/messages")
-                .unwrap(),
-            "/messages"
-        );
-        assert_eq!(
-            ProtocolKind::GoogleContent
-                .strip_client_version_prefix("/v1beta/models/x:generateContent")
-                .unwrap(),
-            "/models/x:generateContent"
-        );
-        assert_eq!(
-            ProtocolKind::GoogleContent
-                .strip_client_version_prefix("/v1beta/models/x:streamGenerateContent")
-                .unwrap(),
-            "/models/x:streamGenerateContent"
-        );
-    }
-
-    #[test]
-    fn strip_client_version_prefix_rejects_garbage() {
-        assert!(
-            ProtocolKind::OpenAiChat
-                .strip_client_version_prefix("/v2/chat/completions")
-                .is_err()
-        );
-        assert!(
-            ProtocolKind::AnthropicMessages
-                .strip_client_version_prefix("/messages")
-                .is_err()
-        );
-        assert!(
-            ProtocolKind::GoogleContent
-                .strip_client_version_prefix("/v1/models/x:generateContent")
-                .is_err()
-        );
-        assert!(
-            ProtocolKind::GoogleContent
-                .strip_client_version_prefix("/v1beta/foo/x:generateContent")
-                .is_err()
-        );
     }
 
     #[test]
