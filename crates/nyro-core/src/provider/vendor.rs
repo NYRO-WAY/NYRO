@@ -17,6 +17,51 @@
 //!
 //! Channel-scoped extensions (e.g. `claude-code`, `codex`) keep
 //! implementing `VendorExtension` and register via `ExtensionRegistration`.
+//!
+//! # Where to place field adjustments — layering rules
+//!
+//! ## Global codec  (`protocol/codec/{anthropic,openai,google}/`)
+//!
+//! Put logic here when the adjustment applies to **all** vendors that speak
+//! the same wire protocol, regardless of who they are:
+//! * Normalising enum spellings that differ across protocol versions
+//!   (`tool_use` ↔ `tool_calls`, `stop_reason` ↔ `finish_reason`).
+//! * Parsing / emitting standard event types defined in the spec
+//!   (`content_block_start`, `message_delta`, `text_delta`, …).
+//! * Forwarding unknown event types as [`StreamDelta::RawEvent`] so
+//!   the downstream client receives them verbatim instead of losing them.
+//!
+//! ## Vendor hook  (`pre_encode` / `post_encode` / `pre_parse` / `post_parse`)
+//!
+//! Put logic here when the adjustment is **vendor-specific**, i.e. required
+//! because a particular provider deviates from the spec or adds proprietary
+//! fields:
+//! * Adding / stripping provider-only top-level keys in the request body.
+//! * Renaming a field that the provider misnamed relative to the spec.
+//! * Injecting a vendor token or signing headers.
+//!
+//! If the same deviation appears in ≥ 2 unrelated providers, promote it to
+//! the global codec instead.
+//!
+//! ## Decision flowchart
+//!
+//! ```text
+//! Is the field/event defined in the protocol spec?
+//!   YES → global codec.
+//!   NO  → Is it specific to one vendor?
+//!           YES → vendor hook (pre_/post_encode or pre_/post_parse).
+//!           NO  → global codec with a feature-flag or a RawEvent fallback.
+//! ```
+//!
+//! ## PassThrough shortcut
+//!
+//! When a vendor sets `declared_request_mutations() → false` **and**
+//! `declared_response_mutations() → false`, and the route resolves to
+//! [`ProtocolMode::Native`][crate::proxy::planner::ProtocolMode::Native]
+//! (same ingress / egress protocol), the dispatcher skips the entire
+//! encode → IR → decode round-trip and forwards bytes verbatim.  This is the
+//! correct default for providers whose wire format matches the spec exactly —
+//! it avoids any risk of silent data loss from unrecognised fields.
 
 use async_trait::async_trait;
 use reqwest::header::HeaderMap;
