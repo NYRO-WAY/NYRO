@@ -13,6 +13,7 @@ use nyro_core::protocol::codec::openai::responses::parser::{
 };
 use nyro_core::protocol::codec::reasoning::normalize_response_reasoning;
 use nyro_core::protocol::codec::tool_correlation::normalize_request_tool_results;
+use nyro_core::protocol::ir::AiRequest;
 use nyro_core::protocol::types::{
     ContentBlock, InternalMessage, InternalRequest, InternalResponse, MessageContent, ResponseItem, Role,
     StreamDelta,
@@ -52,6 +53,95 @@ fn openai_to_anthropic_thinking_blocks() {
         content[0].get("thinking").and_then(|v| v.as_str()),
         Some("reasoning summary")
     );
+}
+
+#[test]
+fn ir_compat_preserves_per_message_reasoning_extra() {
+    let mut extra = std::collections::HashMap::new();
+    extra.insert(
+        "reasoning_content".to_string(),
+        serde_json::Value::String("preserved reasoning".to_string()),
+    );
+
+    let req = InternalRequest {
+        messages: vec![InternalMessage {
+            role: Role::Assistant,
+            content: MessageContent::Text(String::new()),
+            tool_calls: Some(vec![ToolCall {
+                id: "call_1".to_string(),
+                name: "exec_command".to_string(),
+                arguments: "{\"cmd\":\"echo hello\"}".to_string(),
+            }]),
+            tool_call_id: None,
+            extra,
+        }],
+        model: "deepseek-v4-flash".to_string(),
+        stream: false,
+        temperature: None,
+        max_tokens: None,
+        top_p: None,
+        tools: None,
+        tool_choice: None,
+        source_protocol: OPENAI_RESPONSES_V1,
+        extra: Default::default(),
+    };
+
+    let ai: AiRequest = req.into();
+    let back: InternalRequest = ai.into();
+
+    assert_eq!(
+        back.messages[0]
+            .extra
+            .get("reasoning_content")
+            .and_then(|v| v.as_str()),
+        Some("preserved reasoning")
+    );
+}
+
+#[test]
+fn anthropic_encoder_replays_reasoning_extra_as_thinking_block() {
+    let mut extra = std::collections::HashMap::new();
+    extra.insert(
+        "reasoning_content".to_string(),
+        serde_json::Value::String("I should run a shell command.".to_string()),
+    );
+
+    let req = InternalRequest {
+        messages: vec![InternalMessage {
+            role: Role::Assistant,
+            content: MessageContent::Text("".to_string()),
+            tool_calls: Some(vec![ToolCall {
+                id: "call_1".to_string(),
+                name: "exec_command".to_string(),
+                arguments: "{\"cmd\":\"echo hello\"}".to_string(),
+            }]),
+            tool_call_id: None,
+            extra,
+        }],
+        model: "deepseek-v4-flash".to_string(),
+        stream: false,
+        temperature: None,
+        max_tokens: None,
+        top_p: None,
+        tools: None,
+        tool_choice: None,
+        source_protocol: OPENAI_RESPONSES_V1,
+        extra: Default::default(),
+    };
+
+    let (body, _) = AnthropicEncoder
+        .encode_request(&req)
+        .expect("encode anthropic body");
+    let blocks = body["messages"][0]["content"]
+        .as_array()
+        .expect("assistant content blocks");
+
+    assert_eq!(blocks[0]["type"].as_str(), Some("thinking"));
+    assert_eq!(
+        blocks[0]["thinking"].as_str(),
+        Some("I should run a shell command.")
+    );
+    assert_eq!(blocks[1]["type"].as_str(), Some("tool_use"));
 }
 
 #[test]
@@ -1738,4 +1828,85 @@ fn responses_response_parser_extracts_text_tool_calls_and_usage() {
     assert_eq!(resp.tool_calls[0].id, "call_1");
     assert_eq!(resp.tool_calls[0].name, "search");
     assert_eq!(resp.tool_calls[0].arguments, "{\"q\":\"rust\"}");
+}
+
+#[test]
+fn codex_parallel_calls_with_intermediate_text_anthropic_egress() {
+    let body = serde_json::json!({
+        "model": "deepseek-v4-flash",
+        "input": [
+            {"type": "message", "role": "user",
+                "content": [{"type":"input_text","text":"do parallel work"}]},
+            {"type": "function_call", "call_id": "call_00_A",
+                "name": "exec_command", "arguments": "{\"cmd\":\"ls\"}"},
+            {"type": "function_call", "call_id": "call_00_B",
+                "name": "exec_command", "arguments": "{\"cmd\":\"pwd\"}"},
+            {"type": "message", "role": "assistant",
+                "content": [{"type":"output_text","text":"running both"}]},
+            {"type": "function_call_output", "call_id": "call_00_A",
+                "output": "{\"stdout\":\"a\"}"},
+            {"type": "function_call_output", "call_id": "call_00_B",
+                "output": "{\"stdout\":\"b\"}"},
+        ]
+    });
+    let internal = ResponsesDecoder.decode_request(body).expect("decode");
+    let mut req: InternalRequest = internal;
+    normalize_request_tool_results(&mut req);
+
+    let (encoded, _) = AnthropicEncoder
+        .encode_request(&req)
+        .expect("encode anthropic body");
+    let msgs = encoded
+        .get("messages")
+        .and_then(|v| v.as_array())
+        .expect("messages array");
+
+    for (i, m) in msgs.iter().enumerate() {
+        if m.get("role").and_then(|v| v.as_str()) != Some("assistant") {
+            continue;
+        }
+        let blocks = m
+            .get("content")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let tool_use_ids: Vec<String> = blocks
+            .iter()
+            .filter(|b| b.get("type").and_then(|v| v.as_str()) == Some("tool_use"))
+            .filter_map(|b| b.get("id").and_then(|v| v.as_str()).map(String::from))
+            .collect();
+        if tool_use_ids.is_empty() {
+            continue;
+        }
+
+        assert_eq!(
+            blocks
+                .last()
+                .and_then(|b| b.get("type"))
+                .and_then(|v| v.as_str()),
+            Some("tool_use"),
+            "assistant message {i} must end with tool_use; got blocks={blocks:?}",
+        );
+
+        let next = msgs.get(i + 1).expect("must have next user msg");
+        assert_eq!(next.get("role").and_then(|v| v.as_str()), Some("user"));
+        let next_blocks = next
+            .get("content")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let result_ids: Vec<String> = next_blocks
+            .iter()
+            .filter(|b| b.get("type").and_then(|v| v.as_str()) == Some("tool_result"))
+            .filter_map(|b| {
+                b.get("tool_use_id").and_then(|v| v.as_str()).map(String::from)
+            })
+            .collect();
+        for id in &tool_use_ids {
+            assert!(
+                result_ids.contains(id),
+                "tool_use {id} has no matching tool_result in next user message; got {next_blocks:?}",
+            );
+        }
+    }
 }

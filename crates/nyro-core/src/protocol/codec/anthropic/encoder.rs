@@ -348,20 +348,44 @@ fn encode_message(msg: &InternalMessage) -> Result<Value> {
 
     let content = match &msg.content {
         MessageContent::Text(t) => {
-            if let Some(ref tcs) = msg.tool_calls {
+            let reasoning = msg
+                .extra
+                .get("reasoning_content")
+                .and_then(|v| v.as_str())
+                .filter(|v| !v.trim().is_empty());
+            let reasoning_signature = msg
+                .extra
+                .get("reasoning_signature")
+                .and_then(|v| v.as_str())
+                .filter(|v| !v.trim().is_empty());
+
+            if reasoning.is_some() || msg.tool_calls.is_some() {
                 let mut blocks: Vec<Value> = vec![];
+                if let Some(text) = reasoning {
+                    let mut block = serde_json::json!({
+                        "type": "thinking",
+                        "thinking": text,
+                    });
+                    if let Some(signature) = reasoning_signature
+                        && let Some(obj) = block.as_object_mut() {
+                            obj.insert("signature".into(), serde_json::json!(signature));
+                        }
+                    blocks.push(block);
+                }
                 if !t.is_empty() {
                     blocks.push(serde_json::json!({"type": "text", "text": t}));
                 }
-                for tc in tcs {
-                    let input: Value = serde_json::from_str(&tc.arguments)
-                        .unwrap_or(Value::Object(Default::default()));
-                    blocks.push(serde_json::json!({
-                        "type": "tool_use",
-                        "id": normalize_anthropic_tool_id(&tc.id),
-                        "name": tc.name,
-                        "input": input,
-                    }));
+                if let Some(ref tcs) = msg.tool_calls {
+                    for tc in tcs {
+                        let input: Value = serde_json::from_str(&tc.arguments)
+                            .unwrap_or(Value::Object(Default::default()));
+                        blocks.push(serde_json::json!({
+                            "type": "tool_use",
+                            "id": normalize_anthropic_tool_id(&tc.id),
+                            "name": tc.name,
+                            "input": input,
+                        }));
+                    }
                 }
                 Value::Array(blocks)
             } else {
@@ -496,6 +520,42 @@ fn normalize_anthropic_messages(messages: Vec<Value>) -> Vec<Value> {
             "content": Value::Array(blocks),
         }));
     }
+
+    // DeepSeek's Anthropic-compatible endpoint requires assistant tool_use
+    // blocks to trail the assistant turn when the next user turn contains
+    // matching tool_result blocks. Codex Responses input may place assistant
+    // commentary after function_call items, which otherwise normalizes into
+    // `[tool_use, tool_use, text]`.
+    for msg in &mut normalized {
+        if msg.get("role").and_then(|v| v.as_str()) != Some("assistant") {
+            continue;
+        }
+        let Some(arr) = msg.get_mut("content").and_then(|v| v.as_array_mut()) else {
+            continue;
+        };
+        if !arr.iter().any(|b| {
+            b.get("type").and_then(|v| v.as_str()) == Some("tool_use")
+        }) {
+            continue;
+        }
+        let mut thinking: Vec<Value> = Vec::new();
+        let mut others: Vec<Value> = Vec::new();
+        let mut tool_uses: Vec<Value> = Vec::new();
+        for b in arr.drain(..) {
+            match b.get("type").and_then(|v| v.as_str()).unwrap_or("") {
+                "thinking" => thinking.push(b),
+                "tool_use" => tool_uses.push(b),
+                _ => others.push(b),
+            }
+        }
+        let mut reordered = thinking;
+        reordered.extend(others);
+        reordered.extend(tool_uses);
+        if let Some(obj) = msg.as_object_mut() {
+            obj.insert("content".into(), Value::Array(reordered));
+        }
+    }
+
     normalized
 }
 

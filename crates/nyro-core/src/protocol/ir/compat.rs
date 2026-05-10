@@ -45,12 +45,17 @@ impl From<InternalRequest> for AiRequest {
 }
 
 fn msg_from_old(old: InternalMessage) -> Message {
+    let meta = if old.extra.is_empty() {
+        None
+    } else {
+        Some(serde_json::Value::Object(old.extra.into_iter().collect()))
+    };
     Message {
         role: role_from_old(old.role),
         content: content_from_old(old.content),
         tool_calls: old.tool_calls.map(|tcs| tcs.into_iter().map(tc_from_old).collect()),
         tool_call_id: old.tool_call_id,
-        meta: None,
+        meta,
     }
 }
 
@@ -125,12 +130,16 @@ impl From<AiRequest> for InternalRequest {
 }
 
 fn msg_to_old(msg: Message) -> InternalMessage {
+    let extra = match msg.meta {
+        Some(serde_json::Value::Object(obj)) => obj.into_iter().collect(),
+        _ => Default::default(),
+    };
     InternalMessage {
         role: role_to_old(msg.role),
         content: content_to_old(msg.content),
         tool_calls: msg.tool_calls.map(|tcs| tcs.into_iter().map(tc_to_old).collect()),
         tool_call_id: msg.tool_call_id,
-        extra: Default::default(),
+        extra,
     }
 }
 
