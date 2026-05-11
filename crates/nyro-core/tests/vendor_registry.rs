@@ -80,7 +80,9 @@ fn resolve_falls_back_to_vendor_when_channel_unknown() {
     let ext = reg.resolve(&p, OPENAI_CHAT_V1).expect("openai vendor ext");
     assert!(matches!(
         ext.scope(),
-        VendorScope::Vendor { vendor_id: "openai" }
+        VendorScope::Vendor {
+            vendor_id: "openai"
+        }
     ));
 }
 
@@ -92,7 +94,9 @@ fn resolve_falls_back_to_family_when_vendor_unknown() {
     let anthropic = reg
         .resolve(&p, ANTHROPIC_MESSAGES_2023_06_01)
         .expect("anthropic family");
-    let google = reg.resolve(&p, GOOGLE_GENERATE_V1BETA).expect("google family");
+    let google = reg
+        .resolve(&p, GOOGLE_GENERATE_V1BETA)
+        .expect("google family");
 
     assert!(matches!(
         openai.scope(),
@@ -128,7 +132,9 @@ fn ollama_vendor_resolves_even_without_channel() {
     let ext = reg.resolve(&p, OPENAI_CHAT_V1).expect("ollama vendor");
     assert!(matches!(
         ext.scope(),
-        VendorScope::Vendor { vendor_id: "ollama" }
+        VendorScope::Vendor {
+            vendor_id: "ollama"
+        }
     ));
 }
 
@@ -166,7 +172,11 @@ fn google_family_default_appends_key_query_param() {
     let ext = reg.resolve(&p, GOOGLE_GENERATE_V1BETA).unwrap();
     let c = ctx(&p, GOOGLE_GENERATE_V1BETA, "AIzaXYZ", "gemini-1.5", None);
 
-    let url1 = ext.build_url(&c, "https://generativelanguage.googleapis.com", "/v1beta/models");
+    let url1 = ext.build_url(
+        &c,
+        "https://generativelanguage.googleapis.com",
+        "/v1beta/models",
+    );
     assert_eq!(
         url1,
         "https://generativelanguage.googleapis.com/v1beta/models?key=AIzaXYZ"

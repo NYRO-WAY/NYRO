@@ -5,8 +5,8 @@
 //! - Audit logging (what did the client actually send?).
 //! - Debug round-trip verification.
 
-use std::collections::HashMap;
 use serde_json::Value;
+use std::collections::HashMap;
 
 /// A snapshot of the original inbound request, captured before any codec
 /// transformation.
@@ -23,7 +23,12 @@ pub struct RawEnvelope {
 }
 
 impl RawEnvelope {
-    pub fn new(body: Option<Value>, headers: HashMap<String, String>, method: &str, path: &str) -> Self {
+    pub fn new(
+        body: Option<Value>,
+        headers: HashMap<String, String>,
+        method: &str,
+        path: &str,
+    ) -> Self {
         Self {
             body,
             headers,

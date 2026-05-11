@@ -1,9 +1,8 @@
-use nyro_core::protocol::codec::anthropic::stream::AnthropicResponseFormatter;
 use nyro_core::protocol::codec::anthropic::decoder::AnthropicDecoder;
 use nyro_core::protocol::codec::anthropic::encoder::AnthropicEncoder;
+use nyro_core::protocol::codec::anthropic::stream::AnthropicResponseFormatter;
 use nyro_core::protocol::codec::google::encoder::GoogleEncoder;
 use nyro_core::protocol::codec::google::stream::GoogleStreamFormatter;
-use nyro_core::protocol::codec::openai::stream::OpenAIStreamFormatter;
 use nyro_core::protocol::codec::openai::encoder::OpenAIEncoder;
 use nyro_core::protocol::codec::openai::responses::decoder::ResponsesDecoder;
 use nyro_core::protocol::codec::openai::responses::encoder::ResponsesEncoder;
@@ -11,15 +10,15 @@ use nyro_core::protocol::codec::openai::responses::formatter::ResponsesResponseF
 use nyro_core::protocol::codec::openai::responses::parser::{
     ResponsesResponseParser, ResponsesStreamParser,
 };
+use nyro_core::protocol::codec::openai::stream::OpenAIStreamFormatter;
 use nyro_core::protocol::codec::reasoning::normalize_response_reasoning;
 use nyro_core::protocol::codec::tool_correlation::normalize_request_tool_results;
-use nyro_core::protocol::types::{
-    ContentBlock, InternalMessage, InternalRequest, InternalResponse, MessageContent, ResponseItem, Role,
-    StreamDelta,
-    TokenUsage, ToolCall, ToolDef,
-};
 use nyro_core::protocol::ids::{
     ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GENERATE_V1BETA, OPENAI_CHAT_V1, OPENAI_RESPONSES_V1,
+};
+use nyro_core::protocol::types::{
+    ContentBlock, InternalMessage, InternalRequest, InternalResponse, MessageContent, ResponseItem,
+    Role, StreamDelta, TokenUsage, ToolCall, ToolDef,
 };
 use nyro_core::protocol::{
     EgressEncoder, IngressDecoder, ResponseFormatter, ResponseParser, StreamFormatter, StreamParser,
@@ -47,7 +46,10 @@ fn openai_to_anthropic_thinking_blocks() {
         .get("content")
         .and_then(|v| v.as_array())
         .expect("content should be array");
-    assert_eq!(content[0].get("type").and_then(|v| v.as_str()), Some("thinking"));
+    assert_eq!(
+        content[0].get("type").and_then(|v| v.as_str()),
+        Some("thinking")
+    );
     assert_eq!(
         content[0].get("thinking").and_then(|v| v.as_str()),
         Some("reasoning summary")
@@ -127,7 +129,8 @@ fn openai_formatter_sets_tool_calls_finish_reason_when_tool_calls_present() {
         },
     };
 
-    let out = nyro_core::protocol::codec::openai::stream::OpenAIResponseFormatter.format_response(&resp);
+    let out =
+        nyro_core::protocol::codec::openai::stream::OpenAIResponseFormatter.format_response(&resp);
     let finish_reason = out
         .get("choices")
         .and_then(|v| v.as_array())
@@ -344,7 +347,9 @@ fn anthropic_tool_result_decodes_to_tool_role() {
         ]
     });
 
-    let req = AnthropicDecoder.decode_request(body).expect("decode anthropic request");
+    let req = AnthropicDecoder
+        .decode_request(body)
+        .expect("decode anthropic request");
     assert_eq!(req.messages.len(), 2);
     assert_eq!(req.messages[1].role, Role::Tool);
     assert_eq!(req.messages[1].tool_call_id.as_deref(), Some("call_abc"));
@@ -372,7 +377,9 @@ fn anthropic_multi_tool_result_decodes_to_multiple_tool_messages() {
             }
         ]
     });
-    let req = AnthropicDecoder.decode_request(body).expect("decode anthropic request");
+    let req = AnthropicDecoder
+        .decode_request(body)
+        .expect("decode anthropic request");
     assert_eq!(req.messages.len(), 3);
     assert_eq!(req.messages[1].role, Role::Tool);
     assert_eq!(req.messages[2].role, Role::Tool);
@@ -468,7 +475,10 @@ fn openai_encoder_injects_synthetic_tool_call_before_orphan_tool_result() {
         messages[0].get("role").and_then(|v| v.as_str()),
         Some("assistant")
     );
-    assert_eq!(messages[1].get("role").and_then(|v| v.as_str()), Some("tool"));
+    assert_eq!(
+        messages[1].get("role").and_then(|v| v.as_str()),
+        Some("tool")
+    );
     assert_eq!(
         messages[1].get("tool_call_id").and_then(|v| v.as_str()),
         Some("call_orphan_1")
@@ -529,7 +539,10 @@ fn openai_encoder_injects_adjacent_tool_call_for_non_adjacent_match() {
         messages[2].get("role").and_then(|v| v.as_str()),
         Some("assistant")
     );
-    assert_eq!(messages[3].get("role").and_then(|v| v.as_str()), Some("tool"));
+    assert_eq!(
+        messages[3].get("role").and_then(|v| v.as_str()),
+        Some("tool")
+    );
     let tool_id = messages[3]
         .get("tool_call_id")
         .and_then(|v| v.as_str())
@@ -596,7 +609,10 @@ fn openai_encoder_drops_intermediate_assistant_text_before_tool_result() {
 
     // intermediate assistant text should be dropped to keep tool_result adjacent
     assert_eq!(messages.len(), 3);
-    assert_eq!(messages[0].get("role").and_then(|v| v.as_str()), Some("assistant"));
+    assert_eq!(
+        messages[0].get("role").and_then(|v| v.as_str()),
+        Some("assistant")
+    );
     assert_eq!(
         messages[1]
             .get("tool_calls")
@@ -606,7 +622,10 @@ fn openai_encoder_drops_intermediate_assistant_text_before_tool_result() {
             .and_then(|v| v.as_str()),
         Some("call_keep")
     );
-    assert_eq!(messages[2].get("role").and_then(|v| v.as_str()), Some("tool"));
+    assert_eq!(
+        messages[2].get("role").and_then(|v| v.as_str()),
+        Some("tool")
+    );
     assert_eq!(
         messages[2].get("tool_call_id").and_then(|v| v.as_str()),
         Some("call_keep")
@@ -675,7 +694,11 @@ fn openai_encoder_remaps_duplicate_tool_call_ids() {
 
     let ids: Vec<String> = messages
         .iter()
-        .filter_map(|m| m.get("tool_calls").and_then(|v| v.as_array()).and_then(|arr| arr.first()))
+        .filter_map(|m| {
+            m.get("tool_calls")
+                .and_then(|v| v.as_array())
+                .and_then(|arr| arr.first())
+        })
         .filter_map(|tc| tc.get("id").and_then(|v| v.as_str()).map(|s| s.to_string()))
         .collect();
     assert_eq!(ids.len(), 2);
@@ -684,7 +707,11 @@ fn openai_encoder_remaps_duplicate_tool_call_ids() {
     let tool_ids: Vec<String> = messages
         .iter()
         .filter(|m| m.get("role").and_then(|v| v.as_str()) == Some("tool"))
-        .filter_map(|m| m.get("tool_call_id").and_then(|v| v.as_str()).map(|s| s.to_string()))
+        .filter_map(|m| {
+            m.get("tool_call_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        })
         .collect();
     assert_eq!(tool_ids.len(), 2);
     assert!(ids.contains(&tool_ids[0]));
@@ -836,7 +863,10 @@ fn anthropic_encoder_merges_consecutive_roles_and_drops_empty_text() {
         .expect("messages array");
     assert_eq!(msgs.len(), 3);
     assert_eq!(msgs[0].get("role").and_then(|v| v.as_str()), Some("user"));
-    assert_eq!(msgs[1].get("role").and_then(|v| v.as_str()), Some("assistant"));
+    assert_eq!(
+        msgs[1].get("role").and_then(|v| v.as_str()),
+        Some("assistant")
+    );
     assert_eq!(msgs[2].get("role").and_then(|v| v.as_str()), Some("user"));
 
     let first_blocks = msgs[0]
@@ -895,7 +925,9 @@ fn anthropic_encoder_normalizes_tool_use_ids_for_tool_and_result() {
         extra: Default::default(),
     };
 
-    let (body, _) = AnthropicEncoder.encode_request(&req).expect("encode anthropic body");
+    let (body, _) = AnthropicEncoder
+        .encode_request(&req)
+        .expect("encode anthropic body");
     let msgs = body
         .get("messages")
         .and_then(|v| v.as_array())
@@ -1074,12 +1106,24 @@ fn openai_encoder_rewrites_multi_tool_call_history_to_adjacent_pairs() {
         .and_then(|v| v.as_array())
         .expect("messages");
     assert_eq!(msgs.len(), 4);
-    assert_eq!(msgs[0].get("role").and_then(|v| v.as_str()), Some("assistant"));
+    assert_eq!(
+        msgs[0].get("role").and_then(|v| v.as_str()),
+        Some("assistant")
+    );
     assert_eq!(msgs[1].get("role").and_then(|v| v.as_str()), Some("tool"));
-    assert_eq!(msgs[2].get("role").and_then(|v| v.as_str()), Some("assistant"));
+    assert_eq!(
+        msgs[2].get("role").and_then(|v| v.as_str()),
+        Some("assistant")
+    );
     assert_eq!(msgs[3].get("role").and_then(|v| v.as_str()), Some("tool"));
-    let id1 = msgs[1].get("tool_call_id").and_then(|v| v.as_str()).unwrap_or("");
-    let id2 = msgs[3].get("tool_call_id").and_then(|v| v.as_str()).unwrap_or("");
+    let id1 = msgs[1]
+        .get("tool_call_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let id2 = msgs[3]
+        .get("tool_call_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     let prev1 = msgs[0]
         .get("tool_calls")
         .and_then(|v| v.as_array())
@@ -1171,7 +1215,9 @@ fn openai_encoder_preserves_reasoning_content_across_parallel_tool_calls() {
         extra: Default::default(),
     };
 
-    let (body, _) = OpenAIEncoder.encode_request(&req).expect("encode openai body");
+    let (body, _) = OpenAIEncoder
+        .encode_request(&req)
+        .expect("encode openai body");
     let msgs = body
         .get("messages")
         .and_then(|v| v.as_array())
@@ -1180,7 +1226,11 @@ fn openai_encoder_preserves_reasoning_content_across_parallel_tool_calls() {
     // We expect: [user, assistant(call_tokyo, reasoning_content), tool(call_tokyo),
     //             assistant(call_paris, reasoning_content), tool(call_paris)]
     // The original assistant with both calls gets pruned (empty content, no calls left).
-    assert_eq!(msgs.len(), 5, "expected 5 messages: user + 2 assistant+tool pairs");
+    assert_eq!(
+        msgs.len(),
+        5,
+        "expected 5 messages: user + 2 assistant+tool pairs"
+    );
 
     // Every assistant message must carry reasoning_content
     for (i, msg) in msgs.iter().enumerate() {
@@ -1192,12 +1242,14 @@ fn openai_encoder_preserves_reasoning_content_across_parallel_tool_calls() {
                 "assistant message at index {} is missing reasoning_content. \
                  Bug: std::mem::take() on source.extra drops it after first extraction. \
                  Full msg: {:?}",
-                i, msg
+                i,
+                msg
             );
             assert_eq!(
                 rc,
                 Some("I need to check the time in Tokyo and Paris."),
-                "assistant[{}] has wrong reasoning_content value", i
+                "assistant[{}] has wrong reasoning_content value",
+                i
             );
         }
     }
@@ -1273,7 +1325,10 @@ fn openai_encoder_drops_orphan_assistant_tool_calls_without_results() {
         .expect("messages");
     assert_eq!(msgs.len(), 3);
     assert_eq!(msgs[0].get("role").and_then(|v| v.as_str()), Some("system"));
-    assert_eq!(msgs[1].get("role").and_then(|v| v.as_str()), Some("assistant"));
+    assert_eq!(
+        msgs[1].get("role").and_then(|v| v.as_str()),
+        Some("assistant")
+    );
     assert_eq!(msgs[2].get("role").and_then(|v| v.as_str()), Some("tool"));
     let call_id = msgs[1]
         .get("tool_calls")
@@ -1372,13 +1427,16 @@ fn gemini_stream_formatter_normalizes_common_tool_argument_aliases() {
         })
         .expect("functionCall payload");
 
-    assert_eq!(
-        payload.get("name").and_then(|v| v.as_str()),
-        Some("glob")
-    );
+    assert_eq!(payload.get("name").and_then(|v| v.as_str()), Some("glob"));
     let args = payload.get("args").expect("args object");
-    assert_eq!(args.get("pattern").and_then(|v| v.as_str()), Some("**/*.py"));
-    assert_eq!(args.get("root_dir").and_then(|v| v.as_str()), Some("/tmp/work"));
+    assert_eq!(
+        args.get("pattern").and_then(|v| v.as_str()),
+        Some("**/*.py")
+    );
+    assert_eq!(
+        args.get("root_dir").and_then(|v| v.as_str()),
+        Some("/tmp/work")
+    );
     assert_eq!(
         args.get("exclude_patterns")
             .and_then(|v| v.as_array())
@@ -1524,7 +1582,10 @@ fn responses_encoder_splits_system_to_instructions_and_user_to_input_text() {
     );
     let input = body.get("input").and_then(|v| v.as_array()).expect("input");
     assert_eq!(input.len(), 1);
-    assert_eq!(input[0].get("type").and_then(|v| v.as_str()), Some("message"));
+    assert_eq!(
+        input[0].get("type").and_then(|v| v.as_str()),
+        Some("message")
+    );
     assert_eq!(input[0].get("role").and_then(|v| v.as_str()), Some("user"));
     let first_block = input[0]
         .get("content")
@@ -1566,7 +1627,11 @@ fn responses_encoder_emits_function_call_and_function_call_output_items() {
 
     let (body, _) = ResponsesEncoder.encode_request(&req).expect("encode");
     let input = body.get("input").and_then(|v| v.as_array()).expect("input");
-    assert_eq!(input.len(), 2, "one function_call + one function_call_output");
+    assert_eq!(
+        input.len(),
+        2,
+        "one function_call + one function_call_output"
+    );
 
     assert_eq!(
         input[0].get("type").and_then(|v| v.as_str()),
@@ -1724,9 +1789,7 @@ fn responses_response_parser_extracts_text_tool_calls_and_usage() {
         "usage": {"input_tokens": 11, "output_tokens": 3}
     });
 
-    let resp = ResponsesResponseParser
-        .parse_response(body)
-        .expect("parse");
+    let resp = ResponsesResponseParser.parse_response(body).expect("parse");
 
     assert_eq!(resp.id, "resp_42");
     assert_eq!(resp.model, "gpt-5.4");

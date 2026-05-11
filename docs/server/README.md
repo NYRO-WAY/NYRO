@@ -2,6 +2,11 @@
 
 Nyro Server 是 Nyro AI Gateway 的独立服务端二进制，提供完整的 Admin API、WebUI 和数据持久化。
 
+配套服务文档：
+
+- [统一启动与部署](./nyro-upstream-gateway-startup.md)
+- [Gateway 管理手册](./gateway-admin-manual.md)
+
 ## 快速开始
 
 ```bash

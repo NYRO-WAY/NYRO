@@ -14,12 +14,12 @@ use crate::fixture::{Fixture, scan_jsonl_files};
 use crate::protocol::ProtocolKind;
 use anyhow::{Context, Result, bail};
 use axum::{
+    Json, Router,
     body::Body,
     extract::{Path as AxumPath, State},
     http::{HeaderMap, HeaderName, HeaderValue, StatusCode},
     response::{IntoResponse, Response},
     routing::post,
-    Json, Router,
 };
 use clap::Args;
 use serde_json::Value;
@@ -118,10 +118,9 @@ fn build_router(protocol: ProtocolKind, state: Arc<ReplayState>) -> Router {
         ProtocolKind::OpenAiChat => router.route("/v1/chat/completions", post(handle_body_model)),
         ProtocolKind::OpenAiResponses => router.route("/v1/responses", post(handle_body_model)),
         ProtocolKind::AnthropicMessages => router.route("/v1/messages", post(handle_body_model)),
-        ProtocolKind::GoogleContent => router.route(
-            "/v1beta/models/*tail",
-            post(handle_google_path_model),
-        ),
+        ProtocolKind::GoogleContent => {
+            router.route("/v1beta/models/*tail", post(handle_google_path_model))
+        }
     };
     router.with_state(state)
 }
@@ -130,14 +129,13 @@ async fn health() -> &'static str {
     "ok"
 }
 
-async fn handle_body_model(
-    State(state): State<Arc<ReplayState>>,
-    body: Json<Value>,
-) -> Response {
+async fn handle_body_model(State(state): State<Arc<ReplayState>>, body: Json<Value>) -> Response {
     let path = state.protocol.ingress_path_template().to_string();
     let model = match state.protocol.extract_request_model(&path, &body) {
         Ok(m) => m,
-        Err(e) => return error_response(StatusCode::BAD_REQUEST, &e.to_string(), state.loaded_keys()),
+        Err(e) => {
+            return error_response(StatusCode::BAD_REQUEST, &e.to_string(), state.loaded_keys());
+        }
     };
     serve_fixture(&state, &model)
 }
@@ -155,7 +153,9 @@ async fn handle_google_path_model(
         .extract_request_model(&full_path, &Value::Null)
     {
         Ok(m) => m,
-        Err(e) => return error_response(StatusCode::BAD_REQUEST, &e.to_string(), state.loaded_keys()),
+        Err(e) => {
+            return error_response(StatusCode::BAD_REQUEST, &e.to_string(), state.loaded_keys());
+        }
     };
     serve_fixture(&state, &model)
 }
@@ -183,7 +183,10 @@ fn serve_fixture(state: &ReplayState, model: &str) -> Response {
         .status(StatusCode::from_u16(fx.response.status).unwrap_or(StatusCode::OK));
     let headers_map = response.headers_mut().expect("response builder valid");
     *headers_map = build_response_headers(&fx.response.headers);
-    response.body(Body::from(body)).expect("valid body").into_response()
+    response
+        .body(Body::from(body))
+        .expect("valid body")
+        .into_response()
 }
 
 fn build_response_headers(stored: &std::collections::BTreeMap<String, String>) -> HeaderMap {
@@ -242,10 +245,7 @@ mod tests {
             },
             response: RecordedResponse {
                 status: 200,
-                headers: BTreeMap::from([(
-                    "content-type".into(),
-                    "text/event-stream".into(),
-                )]),
+                headers: BTreeMap::from([("content-type".into(), "text/event-stream".into())]),
                 body_base64: base64::engine::general_purpose::STANDARD.encode(body),
             },
         };
@@ -259,12 +259,24 @@ mod tests {
         let dir = tmp.path().join("openai-chat/deepseek");
         std::fs::create_dir_all(&dir).unwrap();
         write_fx(&dir, "deepseek--openai-chat--basic-stream", b"hello stream");
-        write_fx(&dir, "deepseek--openai-chat--reasoning-stream", b"hi reason");
+        write_fx(
+            &dir,
+            "deepseek--openai-chat--reasoning-stream",
+            b"hi reason",
+        );
 
         let state = ReplayState::load(ProtocolKind::OpenAiChat, tmp.path()).unwrap();
         assert_eq!(state.index.len(), 2);
-        assert!(state.index.contains_key("deepseek--openai-chat--basic-stream"));
-        assert!(state.index.contains_key("deepseek--openai-chat--reasoning-stream"));
+        assert!(
+            state
+                .index
+                .contains_key("deepseek--openai-chat--basic-stream")
+        );
+        assert!(
+            state
+                .index
+                .contains_key("deepseek--openai-chat--reasoning-stream")
+        );
     }
 
     #[test]
@@ -318,7 +330,11 @@ mod tests {
 
         let state = ReplayState::load(ProtocolKind::OpenAiChat, tmp.path()).unwrap();
         assert_eq!(state.index.len(), 1);
-        assert!(state.index.contains_key("deepseek--openai-chat--basic-stream"));
+        assert!(
+            state
+                .index
+                .contains_key("deepseek--openai-chat--basic-stream")
+        );
     }
 
     async fn spawn_replay(
@@ -386,10 +402,7 @@ mod tests {
             },
             response: RecordedResponse {
                 status: 200,
-                headers: BTreeMap::from([(
-                    "content-type".into(),
-                    "text/event-stream".into(),
-                )]),
+                headers: BTreeMap::from([("content-type".into(), "text/event-stream".into())]),
                 body_base64: base64::engine::general_purpose::STANDARD.encode(body),
             },
         };
@@ -434,7 +447,11 @@ mod tests {
         assert_eq!(resp.status(), 404);
         let body: serde_json::Value = resp.json().await.unwrap();
         let available = body["error"]["available_replay_models"].as_array().unwrap();
-        assert!(available.iter().any(|v| v == "deepseek--openai-chat--basic-stream"));
+        assert!(
+            available
+                .iter()
+                .any(|v| v == "deepseek--openai-chat--basic-stream")
+        );
 
         handle.abort();
     }

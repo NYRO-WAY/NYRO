@@ -7,11 +7,11 @@
 
 use anyhow::{Context, Result};
 use axum::{
+    Router,
     body::Body,
     extract::{Request, State},
     http::{HeaderMap, HeaderName, HeaderValue, StatusCode, Uri},
     response::{IntoResponse, Response},
-    Router,
 };
 use bytes::Bytes;
 use clap::Args;
@@ -712,8 +712,7 @@ mod tests {
 
     #[test]
     fn google_content_keeps_action_segment() {
-        let upstream =
-            url::Url::parse("https://generativelanguage.googleapis.com/v1beta").unwrap();
+        let upstream = url::Url::parse("https://generativelanguage.googleapis.com/v1beta").unwrap();
         let uri: Uri = "/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse"
             .parse()
             .unwrap();

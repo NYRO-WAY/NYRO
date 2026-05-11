@@ -29,7 +29,6 @@ const MODELS_DEV_RUNTIME_FILE: &str = "models.dev.json";
 const MODELS_DEV_SOURCE_URL: &str = "https://models.dev/api.json";
 const MODELS_DEV_RUNTIME_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 
-
 #[derive(Debug, Clone, Serialize)]
 pub struct ProviderOAuthStatusData {
     pub provider_id: String,
@@ -199,10 +198,7 @@ impl AdminService {
             }
             AuthPollState::Error { code, message } => {
                 self.delete_auth_session_record(&session.id).await?;
-                Ok(AuthSessionStatusData::Error {
-                    code,
-                    message,
-                })
+                Ok(AuthSessionStatusData::Error { code, message })
             }
         }
     }
@@ -275,9 +271,7 @@ impl AdminService {
         session_id: &str,
         mut input: CreateProvider,
     ) -> anyhow::Result<Provider> {
-        let session = self
-            .take_ready_auth_session_record(session_id)
-            .await?;
+        let session = self.take_ready_auth_session_record(session_id).await?;
         if is_expired_at(session.expires_at.as_deref()) {
             anyhow::bail!("auth session expired");
         }
@@ -302,21 +296,18 @@ impl AdminService {
             }
         };
 
-        let credential_input = upsert_credential_from_bundle(
-            &session.driver_key,
-            &session.scheme,
-            &bundle,
-        );
+        let credential_input =
+            upsert_credential_from_bundle(&session.driver_key, &session.scheme, &bundle);
         let provisioned = async {
-            self.gw.storage.oauth_credentials()
+            self.gw
+                .storage
+                .oauth_credentials()
                 .upsert(&provider.id, credential_input)
                 .await?;
-            let credential = stored_credential_from_bundle(
-                &session.driver_key,
-                &session.scheme,
-                &bundle,
-            );
-            self.sync_provider_runtime_fields(&provider, &credential).await
+            let credential =
+                stored_credential_from_bundle(&session.driver_key, &session.scheme, &bundle);
+            self.sync_provider_runtime_fields(&provider, &credential)
+                .await
         }
         .await;
 
@@ -356,9 +347,16 @@ impl AdminService {
         let oauth_cred = self.gw.storage.oauth_credentials().get(id).await?;
         match oauth_cred {
             Some(cred) => Ok(build_provider_oauth_status_from_credential(
-                &provider, &driver_key, &cred,
+                &provider,
+                &driver_key,
+                &cred,
             )),
-            None => Ok(build_provider_oauth_status(&provider, &driver_key, None, None)),
+            None => Ok(build_provider_oauth_status(
+                &provider,
+                &driver_key,
+                None,
+                None,
+            )),
         }
     }
 
@@ -382,7 +380,10 @@ impl AdminService {
             anyhow::bail!("auth vendor does not support reconnect: {driver_key}");
         }
 
-        let oauth_cred = self.gw.storage.oauth_credentials()
+        let oauth_cred = self
+            .gw
+            .storage
+            .oauth_credentials()
             .get(&provider.id)
             .await?
             .ok_or_else(|| anyhow::anyhow!("provider oauth credential not found"))?;
@@ -412,7 +413,10 @@ impl AdminService {
         {
             Ok(bundle) => bundle,
             Err(error) => {
-                let _ = self.gw.storage.oauth_credentials()
+                let _ = self
+                    .gw
+                    .storage
+                    .oauth_credentials()
                     .fail_refresh(&provider.id, &error.to_string())
                     .await;
                 return Ok(build_provider_oauth_status(
@@ -420,21 +424,17 @@ impl AdminService {
                     &driver_key,
                     Some(AuthBindingStatus::Error.as_str().to_string()),
                     Some(error.to_string()),
-                ))
+                ));
             }
         };
 
-        let refreshed_credential = stored_credential_from_bundle(
-            &driver_key,
-            driver.metadata().scheme.as_str(),
-            &bundle,
-        );
-        let credential_input = upsert_credential_from_bundle(
-            &driver_key,
-            driver.metadata().scheme.as_str(),
-            &bundle,
-        );
-        self.gw.storage.oauth_credentials()
+        let refreshed_credential =
+            stored_credential_from_bundle(&driver_key, driver.metadata().scheme.as_str(), &bundle);
+        let credential_input =
+            upsert_credential_from_bundle(&driver_key, driver.metadata().scheme.as_str(), &bundle);
+        self.gw
+            .storage
+            .oauth_credentials()
             .upsert(&provider.id, credential_input)
             .await?;
         let refreshed_provider = self
@@ -449,10 +449,7 @@ impl AdminService {
         ))
     }
 
-    pub async fn logout_provider_oauth(
-        &self,
-        id: &str,
-    ) -> anyhow::Result<ProviderOAuthStatusData> {
+    pub async fn logout_provider_oauth(&self, id: &str) -> anyhow::Result<ProviderOAuthStatusData> {
         let provider = self.get_provider(id).await?;
         let driver_key = provider
             .vendor
@@ -464,7 +461,11 @@ impl AdminService {
             return Ok(build_provider_oauth_status(&provider, "", None, None));
         }
 
-        self.gw.storage.oauth_credentials().delete(&provider.id).await?;
+        self.gw
+            .storage
+            .oauth_credentials()
+            .delete(&provider.id)
+            .await?;
 
         let updated = self
             .gw
@@ -494,9 +495,7 @@ impl AdminService {
         session_id: &str,
     ) -> anyhow::Result<Provider> {
         let provider = self.get_provider(provider_id).await?;
-        let session = self
-            .take_ready_auth_session_record(session_id)
-            .await?;
+        let session = self.take_ready_auth_session_record(session_id).await?;
         if is_expired_at(session.expires_at.as_deref()) {
             anyhow::bail!("auth session expired");
         }
@@ -508,23 +507,35 @@ impl AdminService {
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| anyhow::anyhow!("auth session missing access token"))?;
 
-        let credential = stored_credential_from_bundle(&session.driver_key, &session.scheme, &bundle);
-        let credential_input = upsert_credential_from_bundle(
-            &session.driver_key,
-            &session.scheme,
-            &bundle,
-        );
-        match self.gw.storage.oauth_credentials().upsert(&provider.id, credential_input).await {
+        let credential =
+            stored_credential_from_bundle(&session.driver_key, &session.scheme, &bundle);
+        let credential_input =
+            upsert_credential_from_bundle(&session.driver_key, &session.scheme, &bundle);
+        match self
+            .gw
+            .storage
+            .oauth_credentials()
+            .upsert(&provider.id, credential_input)
+            .await
+        {
             Ok(_) => {}
             Err(error) => {
                 self.restore_auth_session_record(session).await?;
                 return Err(error);
             }
         }
-        let provider = match self.sync_provider_runtime_fields(&provider, &credential).await {
+        let provider = match self
+            .sync_provider_runtime_fields(&provider, &credential)
+            .await
+        {
             Ok(provider) => provider,
             Err(error) => {
-                let _ = self.gw.storage.oauth_credentials().delete(&provider.id).await;
+                let _ = self
+                    .gw
+                    .storage
+                    .oauth_credentials()
+                    .delete(&provider.id)
+                    .await;
                 self.restore_auth_session_record(session).await?;
                 return Err(error);
             }
@@ -537,11 +548,9 @@ impl AdminService {
         let name = normalize_name(&input.name, "provider name")?;
         self.ensure_provider_name_unique(None, &name).await?;
         let vendor = normalize_vendor(input.vendor.as_deref());
-        let auth_mode = resolve_preset_channel_auth_mode(
-            input.preset_key.as_deref(),
-            input.channel.as_deref(),
-        )
-        .unwrap_or(input.auth_mode);
+        let auth_mode =
+            resolve_preset_channel_auth_mode(input.preset_key.as_deref(), input.channel.as_deref())
+                .unwrap_or(input.auth_mode);
         let api_key = if auth_mode == "oauth" {
             String::new()
         } else {
@@ -618,7 +627,9 @@ impl AdminService {
                     protocol: Some(protocol),
                     base_url: Some(base_url),
                     default_protocol: normalize_default_protocol_field(input.default_protocol),
-                    protocol_endpoints: normalize_protocol_endpoints_field(input.protocol_endpoints),
+                    protocol_endpoints: normalize_protocol_endpoints_field(
+                        input.protocol_endpoints,
+                    ),
                     preset_key,
                     channel,
                     models_source,
@@ -771,15 +782,17 @@ impl AdminService {
             build_model_headers(&provider.protocol, provider.vendor.as_deref(), &credential)?
         };
         headers.extend(runtime_binding_headers(&runtime.binding)?);
-        let mut request = self.gw.http_client.get(&endpoint).headers(headers).timeout(Duration::from_secs(10));
+        let mut request = self
+            .gw
+            .http_client
+            .get(&endpoint)
+            .headers(headers)
+            .timeout(Duration::from_secs(10));
 
         if provider.protocol == "gemini" && !runtime.binding.disable_default_auth {
             let separator = if endpoint.contains('?') { '&' } else { '?' };
-            let mut headers = build_model_headers(
-                &provider.protocol,
-                provider.vendor.as_deref(),
-                &credential,
-            )?;
+            let mut headers =
+                build_model_headers(&provider.protocol, provider.vendor.as_deref(), &credential)?;
             headers.extend(runtime_binding_headers(&runtime.binding)?);
             request = self
                 .gw
@@ -832,9 +845,10 @@ impl AdminService {
             .or_else(|| resolve_models_endpoint(&provider))
         {
             if let Some(models) = lookup_models_dev_models(&self.gw.config.data_dir, &endpoint)?
-                && !models.is_empty() {
-                    return Ok(models);
-                }
+                && !models.is_empty()
+            {
+                return Ok(models);
+            }
 
             let mut headers = if runtime.binding.disable_default_auth {
                 HeaderMap::new()
@@ -860,17 +874,18 @@ impl AdminService {
             }
 
             if let Ok(resp) = request.send().await
-                && resp.status().is_success() {
-                    let json: Value = resp.json().await.unwrap_or_default();
-                    let models = extract_models_from_response(
-                        &provider.protocol,
-                        provider.vendor.as_deref(),
-                        &json,
-                    );
-                    if !models.is_empty() {
-                        return Ok(models);
-                    }
+                && resp.status().is_success()
+            {
+                let json: Value = resp.json().await.unwrap_or_default();
+                let models = extract_models_from_response(
+                    &provider.protocol,
+                    provider.vendor.as_deref(),
+                    &json,
+                );
+                if !models.is_empty() {
+                    return Ok(models);
                 }
+            }
         }
 
         Ok(parse_static_models(provider.static_models.as_deref()))
@@ -926,8 +941,7 @@ impl AdminService {
             } else {
                 target.model.clone()
             };
-            let extension = match VendorRegistry::global()
-                .resolve(&provider, OPENAI_EMBEDDINGS_V1)
+            let extension = match VendorRegistry::global().resolve(&provider, OPENAI_EMBEDDINGS_V1)
             {
                 Some(ext) => ext.clone(),
                 None => continue,
@@ -972,9 +986,10 @@ impl AdminService {
                 .await;
             if let Ok((payload, status)) = call
                 && status < 400
-                    && let Some(dims) = parse_embedding_dimensions_from_payload(&payload) {
-                        return Ok(dims);
-                    }
+                && let Some(dims) = parse_embedding_dimensions_from_payload(&payload)
+            {
+                return Ok(dims);
+            }
         }
 
         if missing_openai_endpoint {
@@ -1180,20 +1195,21 @@ impl AdminService {
             .ok_or_else(|| anyhow::anyhow!("at least one route target is required"))?;
         let access_control = input.access_control.unwrap_or(current.access_control);
         let is_enabled = input.is_enabled.unwrap_or(current.is_enabled);
-        let (cache_exact_ttl, cache_semantic_ttl, cache_semantic_threshold) = if effective_route_type == "embedding" {
-            if has_route_cache_overrides(input.cache.as_ref()) {
-                anyhow::bail!("embedding routes do not support route cache configuration");
-            }
-            (None, None, None)
-        } else if let Some(cache) = input.cache.as_ref() {
-            flatten_route_cache_columns(Some(cache))
-        } else {
-            (
-                current.cache_exact_ttl,
-                current.cache_semantic_ttl,
-                current.cache_semantic_threshold,
-            )
-        };
+        let (cache_exact_ttl, cache_semantic_ttl, cache_semantic_threshold) =
+            if effective_route_type == "embedding" {
+                if has_route_cache_overrides(input.cache.as_ref()) {
+                    anyhow::bail!("embedding routes do not support route cache configuration");
+                }
+                (None, None, None)
+            } else if let Some(cache) = input.cache.as_ref() {
+                flatten_route_cache_columns(Some(cache))
+            } else {
+                (
+                    current.cache_exact_ttl,
+                    current.cache_semantic_ttl,
+                    current.cache_semantic_threshold,
+                )
+            };
         ensure_virtual_model(&virtual_model)?;
         self.ensure_route_unique(Some(id), &virtual_model).await?;
 
@@ -1505,9 +1521,9 @@ impl AdminService {
                     })
                     .await
                     .is_ok()
-                {
-                    providers_imported += 1;
-                }
+            {
+                providers_imported += 1;
+            }
         }
 
         let fallback_provider_id = self
@@ -1528,26 +1544,26 @@ impl AdminService {
 
             if !exists
                 && let Some(pid) = fallback_provider_id.clone()
-                    && self
-                        .create_route(CreateRoute {
-                            name: r.name.clone(),
-                            virtual_model: r.virtual_model.clone(),
-                            strategy: Some("weighted".to_string()),
-                            target_provider: pid,
-                            target_model: r.target_model.clone(),
-                            targets: vec![],
-                            access_control: Some(r.access_control),
-                            route_type: Some("chat".to_string()),
-                            cache: None,
-                            cache_exact_ttl: None,
-                            cache_semantic_ttl: None,
-                            cache_semantic_threshold: None,
-                        })
-                        .await
-                        .is_ok()
-                    {
-                        routes_imported += 1;
-                    }
+                && self
+                    .create_route(CreateRoute {
+                        name: r.name.clone(),
+                        virtual_model: r.virtual_model.clone(),
+                        strategy: Some("weighted".to_string()),
+                        target_provider: pid,
+                        target_model: r.target_model.clone(),
+                        targets: vec![],
+                        access_control: Some(r.access_control),
+                        route_type: Some("chat".to_string()),
+                        cache: None,
+                        cache_exact_ttl: None,
+                        cache_semantic_ttl: None,
+                        cache_semantic_threshold: None,
+                    })
+                    .await
+                    .is_ok()
+            {
+                routes_imported += 1;
+            }
         }
 
         for (key, value) in &data.settings {
@@ -1781,7 +1797,6 @@ impl AdminService {
         Ok(())
     }
 
-
     pub(crate) async fn resolve_provider_runtime(
         &self,
         provider: &Provider,
@@ -1797,7 +1812,10 @@ impl AdminService {
             });
         }
 
-        let oauth_cred = self.gw.storage.oauth_credentials()
+        let oauth_cred = self
+            .gw
+            .storage
+            .oauth_credentials()
             .get(&provider.id)
             .await?;
 
@@ -1807,7 +1825,11 @@ impl AdminService {
         };
 
         let driver_key = if oauth_cred.driver_key.is_empty() {
-            provider.vendor.as_deref().map(auth::normalize_driver_key).unwrap_or_default()
+            provider
+                .vendor
+                .as_deref()
+                .map(auth::normalize_driver_key)
+                .unwrap_or_default()
         } else {
             oauth_cred.driver_key.clone()
         };
@@ -1853,8 +1875,9 @@ impl AdminService {
             .await?;
         if locked.is_none() {
             // Another caller is already refreshing — re-read and use whatever is there
-            let refreshed = oauth_store.get(&provider.id).await?
-                .ok_or_else(|| anyhow::anyhow!("provider oauth credential disappeared during refresh"))?;
+            let refreshed = oauth_store.get(&provider.id).await?.ok_or_else(|| {
+                anyhow::anyhow!("provider oauth credential disappeared during refresh")
+            })?;
             let refreshed_token = refreshed.access_token.trim().to_string();
             if !refreshed_token.is_empty() {
                 let cred = stored_credential_from_oauth(&refreshed, &driver_key);
@@ -1888,17 +1911,13 @@ impl AdminService {
             }
         };
 
-        let refreshed_credential = stored_credential_from_bundle(
-            &driver_key,
-            driver.metadata().scheme.as_str(),
-            &bundle,
-        );
-        let credential_input = upsert_credential_from_bundle(
-            &driver_key,
-            driver.metadata().scheme.as_str(),
-            &bundle,
-        );
-        self.gw.storage.oauth_credentials()
+        let refreshed_credential =
+            stored_credential_from_bundle(&driver_key, driver.metadata().scheme.as_str(), &bundle);
+        let credential_input =
+            upsert_credential_from_bundle(&driver_key, driver.metadata().scheme.as_str(), &bundle);
+        self.gw
+            .storage
+            .oauth_credentials()
             .complete_refresh(&provider.id, credential_input)
             .await?;
         let refreshed_provider = self
@@ -1909,7 +1928,9 @@ impl AdminService {
             .as_deref()
             .filter(|v| !v.trim().is_empty())
             .map(ToString::to_string)
-            .ok_or_else(|| anyhow::anyhow!("provider credential refresh returned empty access token"))?;
+            .ok_or_else(|| {
+                anyhow::anyhow!("provider credential refresh returned empty access token")
+            })?;
 
         Ok(ResolvedProviderRuntime {
             access_token: new_access_token,
@@ -1981,7 +2002,8 @@ impl AdminService {
 
         let mut refreshed = 0usize;
         for cred in expiring {
-            let has_refresh = cred.refresh_token
+            let has_refresh = cred
+                .refresh_token
                 .as_deref()
                 .map(str::trim)
                 .is_some_and(|value| !value.is_empty());
@@ -2017,7 +2039,11 @@ impl AdminService {
         cred: &OAuthCredential,
     ) -> anyhow::Result<()> {
         let driver_key = if cred.driver_key.is_empty() {
-            provider.vendor.as_deref().map(auth::normalize_driver_key).unwrap_or_default()
+            provider
+                .vendor
+                .as_deref()
+                .map(auth::normalize_driver_key)
+                .unwrap_or_default()
         } else {
             cred.driver_key.clone()
         };
@@ -2059,16 +2085,10 @@ impl AdminService {
             }
         };
 
-        let refreshed_credential = stored_credential_from_bundle(
-            &driver_key,
-            driver.metadata().scheme.as_str(),
-            &bundle,
-        );
-        let credential_input = upsert_credential_from_bundle(
-            &driver_key,
-            driver.metadata().scheme.as_str(),
-            &bundle,
-        );
+        let refreshed_credential =
+            stored_credential_from_bundle(&driver_key, driver.metadata().scheme.as_str(), &bundle);
+        let credential_input =
+            upsert_credential_from_bundle(&driver_key, driver.metadata().scheme.as_str(), &bundle);
         oauth_store
             .complete_refresh(&provider.id, credential_input)
             .await?;
@@ -2183,9 +2203,8 @@ fn build_provider_oauth_status(
     fallback_error: Option<String>,
 ) -> ProviderOAuthStatusData {
     // This version is used when we don't have an OAuthCredential loaded.
-    let status = status_override.unwrap_or_else(|| {
-        AuthBindingStatus::Disconnected.as_str().to_string()
-    });
+    let status =
+        status_override.unwrap_or_else(|| AuthBindingStatus::Disconnected.as_str().to_string());
     ProviderOAuthStatusData {
         provider_id: provider.id.clone(),
         provider_name: provider.name.clone(),
@@ -2326,7 +2345,6 @@ fn normalized_optional(value: Option<&str>) -> Option<String> {
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
 }
-
 
 fn flatten_route_cache_columns(
     cache: Option<&RouteCacheConfig>,
@@ -2586,7 +2604,6 @@ fn resolve_openai_base_url(provider: &Provider) -> Option<String> {
     Some(trimmed.to_string())
 }
 
-
 fn sync_runtime_protocol_endpoints(provider: &Provider, base_url: &str) -> anyhow::Result<String> {
     use crate::protocol::registry::ProtocolRegistry;
     let reg = ProtocolRegistry::global();
@@ -2685,7 +2702,11 @@ fn build_model_headers(
     Ok(headers)
 }
 
-fn extract_models_from_response(_protocol: &str, vendor: Option<&str>, json: &Value) -> Vec<String> {
+fn extract_models_from_response(
+    _protocol: &str,
+    vendor: Option<&str>,
+    json: &Value,
+) -> Vec<String> {
     let is_google_vendor = vendor
         .map(str::trim)
         .is_some_and(|value| value.eq_ignore_ascii_case("google"));
@@ -2876,11 +2897,12 @@ async fn refresh_models_dev_runtime_cache_inner(
     let cache_path = models_dev_runtime_cache_path(data_dir);
     if !force_refresh
         && let Ok(meta) = std::fs::metadata(&cache_path)
-            && let Ok(modified_at) = meta.modified()
-                && let Ok(elapsed) = modified_at.elapsed()
-                    && elapsed < MODELS_DEV_RUNTIME_TTL {
-                        return Ok(());
-                    }
+        && let Ok(modified_at) = meta.modified()
+        && let Ok(elapsed) = modified_at.elapsed()
+        && elapsed < MODELS_DEV_RUNTIME_TTL
+    {
+        return Ok(());
+    }
 
     let resp = http_client
         .get(MODELS_DEV_SOURCE_URL)
@@ -2911,7 +2933,10 @@ fn parse_provider_presets_snapshot() -> anyhow::Result<Vec<Value>> {
     Ok(VendorRegistry::global().list_metadata_legacy_json())
 }
 
-fn resolve_preset_channel_auth_mode(preset_key: Option<&str>, channel_id: Option<&str>) -> Option<String> {
+fn resolve_preset_channel_auth_mode(
+    preset_key: Option<&str>,
+    channel_id: Option<&str>,
+) -> Option<String> {
     crate::db::models::resolve_preset_channel_auth_mode(preset_key, channel_id)
 }
 
@@ -3127,9 +3152,10 @@ fn parse_maybe_price_per_token(value: &Value) -> Option<f64> {
 async fn load_route_targets_for_probe(gw: &Gateway, route: &Route) -> Vec<RouteTarget> {
     if let Some(store) = gw.storage.route_targets()
         && let Ok(targets) = store.list_targets_by_route(&route.id).await
-            && !targets.is_empty() {
-                return targets;
-            }
+        && !targets.is_empty()
+    {
+        return targets;
+    }
     if route.target_provider.trim().is_empty() {
         return vec![];
     }
@@ -3243,15 +3269,24 @@ mod tests {
     const CODEX_RUNTIME_URL: &str = "https://chatgpt.com/backend-api/codex";
 
     #[tokio::test]
-    async fn oauth_session_is_shared_across_admin_instances_and_cancel_deletes_it() -> anyhow::Result<()> {
+    async fn oauth_session_is_shared_across_admin_instances_and_cancel_deletes_it()
+    -> anyhow::Result<()> {
         let gw = build_gateway().await?;
 
         let init = gw.admin().init_oauth_session("codex", false).await?;
-        let status = gw.admin().get_oauth_session_status(&init.session_id).await?;
+        let status = gw
+            .admin()
+            .get_oauth_session_status(&init.session_id)
+            .await?;
         assert!(matches!(status, AuthSessionStatusData::Pending { .. }));
 
         gw.admin().cancel_oauth_session(&init.session_id).await?;
-        assert!(gw.admin().get_auth_session_record(&init.session_id).await?.is_none());
+        assert!(
+            gw.admin()
+                .get_auth_session_record(&init.session_id)
+                .await?
+                .is_none()
+        );
 
         let err = gw
             .admin()
@@ -3287,7 +3322,12 @@ mod tests {
             err.to_string().contains("state"),
             "unexpected complete error: {err:#}"
         );
-        assert!(gw.admin().get_auth_session_record(&init.session_id).await?.is_none());
+        assert!(
+            gw.admin()
+                .get_auth_session_record(&init.session_id)
+                .await?
+                .is_none()
+        );
 
         Ok(())
     }
@@ -3307,12 +3347,20 @@ mod tests {
             )
             .await?;
 
-        let status = gw.admin().get_oauth_session_status(&timed_out.session_id).await?;
+        let status = gw
+            .admin()
+            .get_oauth_session_status(&timed_out.session_id)
+            .await?;
         assert!(matches!(
             status,
             AuthSessionStatusData::Error { ref code, .. } if code == "AUTH_TIMEOUT"
         ));
-        assert!(gw.admin().get_auth_session_record(&timed_out.session_id).await?.is_none());
+        assert!(
+            gw.admin()
+                .get_auth_session_record(&timed_out.session_id)
+                .await?
+                .is_none()
+        );
 
         let stale_ready = gw.admin().init_oauth_session("codex", false).await?;
         seed_ready_session(
@@ -3332,13 +3380,19 @@ mod tests {
 
         let removed = gw.admin().cleanup_auth_sessions().await?;
         assert_eq!(removed, 1);
-        assert!(gw.admin().get_auth_session_record(&stale_ready.session_id).await?.is_none());
+        assert!(
+            gw.admin()
+                .get_auth_session_record(&stale_ready.session_id)
+                .await?
+                .is_none()
+        );
 
         Ok(())
     }
 
     #[tokio::test]
-    async fn logout_provider_oauth_preserves_oauth_mode_and_disconnects_binding() -> anyhow::Result<()> {
+    async fn logout_provider_oauth_preserves_oauth_mode_and_disconnects_binding()
+    -> anyhow::Result<()> {
         let gw = build_gateway().await?;
 
         let init = gw.admin().init_oauth_session("codex", false).await?;
@@ -3370,10 +3424,15 @@ mod tests {
         assert!(updated.api_key.is_empty());
         // After logout, OAuth credential row should be deleted
         let oauth_cred = gw.storage.oauth_credentials().get(&provider.id).await?;
-        assert!(oauth_cred.is_none(), "oauth credential should be deleted after logout");
+        assert!(
+            oauth_cred.is_none(),
+            "oauth credential should be deleted after logout"
+        );
 
         let runtime_err = match gw.admin().resolve_provider_runtime(&updated).await {
-            Ok(_) => anyhow::bail!("logged out oauth provider should not resolve runtime credentials"),
+            Ok(_) => {
+                anyhow::bail!("logged out oauth provider should not resolve runtime credentials")
+            }
             Err(err) => err,
         };
         let runtime_err_message = runtime_err.to_string();
@@ -3388,7 +3447,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn ready_session_is_single_use_and_provider_status_exposes_runtime_url() -> anyhow::Result<()> {
+    async fn ready_session_is_single_use_and_provider_status_exposes_runtime_url()
+    -> anyhow::Result<()> {
         let gw = build_gateway().await?;
 
         let init = gw.admin().init_oauth_session("codex", false).await?;
@@ -3414,7 +3474,12 @@ mod tests {
 
         assert_eq!(provider.effective_auth_mode(), "oauth");
         assert_eq!(provider.base_url, CODEX_RUNTIME_URL);
-        assert!(gw.admin().get_auth_session_record(&init.session_id).await?.is_none());
+        assert!(
+            gw.admin()
+                .get_auth_session_record(&init.session_id)
+                .await?
+                .is_none()
+        );
 
         let err = gw
             .admin()
@@ -3429,7 +3494,6 @@ mod tests {
 
         Ok(())
     }
-
 
     async fn build_gateway() -> anyhow::Result<Gateway> {
         let mut config = GatewayConfig::default();

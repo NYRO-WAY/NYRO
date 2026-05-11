@@ -1,5 +1,5 @@
-use std::sync::Arc;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use tokio::sync::RwLock;
@@ -93,13 +93,13 @@ impl VectorStore for MemoryVectorStore {
                     .as_ref()
                     .map(|hit| similarity > hit.score)
                     .unwrap_or(true)
-                {
-                    best = Some(VectorHit {
-                        key: entry.key.clone(),
-                        data: entry.data.clone(),
-                        score: similarity,
-                    });
-                }
+            {
+                best = Some(VectorHit {
+                    key: entry.key.clone(),
+                    data: entry.data.clone(),
+                    score: similarity,
+                });
+            }
         }
         Ok(best)
     }

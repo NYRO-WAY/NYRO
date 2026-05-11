@@ -11,8 +11,8 @@
 
 use crate::db::models::RouteTarget;
 use crate::error::GatewayError;
-use crate::protocol::ids::ProtocolId;
 use crate::protocol::ProviderProtocols;
+use crate::protocol::ids::ProtocolId;
 use crate::proxy::context::RequestContext;
 
 // ── ProtocolPlan ──────────────────────────────────────────────────────────────
@@ -57,11 +57,7 @@ pub enum ProtocolMode {
 /// P2-H will add `WeightedStrategy` / `LeastLatencyStrategy` etc.
 pub trait RoutingStrategy: Send + Sync {
     fn name(&self) -> &'static str;
-    fn select_ordered(
-        &self,
-        targets: &[RouteTarget],
-        _ctx: &RequestContext,
-    ) -> Vec<RouteTarget>;
+    fn select_ordered(&self, targets: &[RouteTarget], _ctx: &RequestContext) -> Vec<RouteTarget>;
 }
 
 /// Ordered strategy: target order == DB row order. Preserves the pre-PR-04
@@ -85,7 +81,10 @@ pub fn get_routing_strategy(name: &str) -> Box<dyn RoutingStrategy> {
     match name.to_ascii_lowercase().as_str() {
         "ordered" | "" => Box::new(OrderedStrategy),
         other => {
-            tracing::warn!(strategy = other, "unknown routing strategy; falling back to ordered");
+            tracing::warn!(
+                strategy = other,
+                "unknown routing strategy; falling back to ordered"
+            );
             Box::new(OrderedStrategy)
         }
     }
@@ -127,7 +126,11 @@ pub fn negotiate(
     // Tier 1: route-level preference.
     if let Some(pref) = route_pref {
         if let Some(ep) = decl.get(pref) {
-            let mode = if pref == ingress { ProtocolMode::Native } else { ProtocolMode::Transform };
+            let mode = if pref == ingress {
+                ProtocolMode::Native
+            } else {
+                ProtocolMode::Transform
+            };
             ctx.egress_protocol = Some(pref);
             ctx.trace("negotiate", format!("route_pref exact: {pref}"));
             return Ok(ProtocolPlan {
@@ -148,9 +151,7 @@ pub fn negotiate(
     let resolved = decl.resolve_egress(ingress);
 
     // Check lossy-reject policy from the egress endpoint's capability matrix.
-    let egress_caps = resolved.protocol
-        .handler()
-        .capabilities();
+    let egress_caps = resolved.protocol.handler().capabilities();
 
     if resolved.needs_conversion && egress_caps.lossy_default_reject {
         // Lossy transform — rejected by default unless the route explicitly
@@ -176,7 +177,11 @@ pub fn negotiate(
             "resolved: {} → {} ({})",
             ingress,
             resolved.protocol,
-            if resolved.needs_conversion { "transform" } else { "native" }
+            if resolved.needs_conversion {
+                "transform"
+            } else {
+                "native"
+            }
         ),
     );
 
@@ -203,7 +208,14 @@ mod tests {
     fn make_decl(pairs: &[(ProtocolId, &str)]) -> ProviderProtocols {
         let endpoints = pairs
             .iter()
-            .map(|(id, url)| (*id, ProtocolEndpointEntry { base_url: url.to_string() }))
+            .map(|(id, url)| {
+                (
+                    *id,
+                    ProtocolEndpointEntry {
+                        base_url: url.to_string(),
+                    },
+                )
+            })
             .collect();
         ProviderProtocols {
             default: pairs.first().map(|(id, _)| *id).unwrap_or(OPENAI_CHAT_V1),

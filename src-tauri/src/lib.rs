@@ -1,10 +1,10 @@
 mod commands;
 
-use nyro_core::{config::GatewayConfig, logging, Gateway};
+use nyro_core::{Gateway, config::GatewayConfig, logging};
 use tauri::{
+    Manager,
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
-    Manager,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

@@ -1,11 +1,16 @@
 # Rust
 target/
+target-test-*/
 
 # Node / WebUI
 webui/node_modules/
 webui/dist/
 webui/.vite/
 webui/package-lock.json
+**/webui/node_modules/
+**/webui/dist/
+**/webui/.vite/
+**/webui/package-lock.json
 
 # Tauri
 src-tauri/target/
@@ -36,6 +41,15 @@ Thumbs.db
 
 # Logs
 *.log
+*.lines
+
+# Local gateway dev stack
+scripts/dev-stack/data/
+scripts/dev-stack/logs/
+scripts/dev-stack/run/
+
+# Local editor helpers
+.claude/
 
 # pnpm
 .pnpm-store/

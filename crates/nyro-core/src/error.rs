@@ -152,8 +152,9 @@ impl GatewayError {
             }
             GatewayError::UpstreamTimeout { .. } => StatusCode::GATEWAY_TIMEOUT,
             GatewayError::StreamParseError { .. } => StatusCode::BAD_GATEWAY,
-            GatewayError::ClientCancelled => StatusCode::from_u16(499)
-                .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+            GatewayError::ClientCancelled => {
+                StatusCode::from_u16(499).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
+            }
             GatewayError::ProviderUnavailable { .. } => StatusCode::SERVICE_UNAVAILABLE,
             GatewayError::Internal { .. } => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -206,7 +207,11 @@ impl GatewayError {
                     lost.join(", ")
                 )
             }
-            GatewayError::UpstreamStatus { provider, status, body } => {
+            GatewayError::UpstreamStatus {
+                provider,
+                status,
+                body,
+            } => {
                 if let Some(b) = body {
                     format!("upstream {provider} returned {status}: {b}")
                 } else {
@@ -216,7 +221,10 @@ impl GatewayError {
             GatewayError::UpstreamTimeout { phase } => {
                 format!("upstream timeout during {}", phase.as_str())
             }
-            GatewayError::StreamParseError { provider, raw_chunk } => {
+            GatewayError::StreamParseError {
+                provider,
+                raw_chunk,
+            } => {
                 if let Some(chunk) = raw_chunk {
                     format!("stream parse error from {provider}: {chunk}")
                 } else {
@@ -275,14 +283,14 @@ impl GatewayError {
 
     /// Convenience: build a `BadRequest` from a static code + dynamic message.
     pub fn bad_request(code: &'static str, msg: impl Into<String>) -> Self {
-        GatewayError::BadRequest { code, msg: msg.into() }
+        GatewayError::BadRequest {
+            code,
+            msg: msg.into(),
+        }
     }
 
     /// Convenience: build a `ProviderUnavailable` error.
-    pub fn provider_unavailable(
-        provider: impl Into<String>,
-        reason: impl Into<String>,
-    ) -> Self {
+    pub fn provider_unavailable(provider: impl Into<String>, reason: impl Into<String>) -> Self {
         GatewayError::ProviderUnavailable {
             provider: provider.into(),
             reason: reason.into(),
@@ -290,11 +298,7 @@ impl GatewayError {
     }
 
     /// Convenience: build an `UpstreamStatus` error.
-    pub fn upstream_status(
-        provider: impl Into<String>,
-        status: u16,
-        body: Option<String>,
-    ) -> Self {
+    pub fn upstream_status(provider: impl Into<String>, status: u16, body: Option<String>) -> Self {
         GatewayError::UpstreamStatus {
             provider: provider.into(),
             status,
@@ -349,7 +353,9 @@ mod tests {
 
     #[test]
     fn upstream_timeout_is_retryable() {
-        let err = GatewayError::UpstreamTimeout { phase: TimeoutPhase::FirstByte };
+        let err = GatewayError::UpstreamTimeout {
+            phase: TimeoutPhase::FirstByte,
+        };
         assert!(err.retryable());
         assert_eq!(err.http_status(), StatusCode::GATEWAY_TIMEOUT);
     }
@@ -368,7 +374,9 @@ mod tests {
 
     #[test]
     fn render_includes_request_id() {
-        let err = GatewayError::RouteNotFound { model: "gpt-4".into() };
+        let err = GatewayError::RouteNotFound {
+            model: "gpt-4".into(),
+        };
         let resp = err.render(Some("req-abc-123"));
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     }
@@ -382,7 +390,10 @@ mod tests {
     #[test]
     fn stable_codes_are_stable() {
         assert_eq!(
-            GatewayError::Internal { source: anyhow::anyhow!("oops") }.stable_code(),
+            GatewayError::Internal {
+                source: anyhow::anyhow!("oops")
+            }
+            .stable_code(),
             "NYRO_INTERNAL_ERROR"
         );
     }

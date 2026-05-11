@@ -214,16 +214,18 @@ impl YamlConfig {
     pub fn load(path: &str) -> anyhow::Result<Self> {
         let raw = std::fs::read_to_string(path)
             .map_err(|e| anyhow::anyhow!("failed to read config file {path}: {e}"))?;
-        let content = shellexpand::env_with_context_no_errors(&raw, |var: &str| {
-            match std::env::var(var) {
+        let content =
+            shellexpand::env_with_context_no_errors(&raw, |var: &str| match std::env::var(var) {
                 Ok(val) => Some(val),
                 Err(_) => {
-                    tracing::warn!("config: env var '{}' is not set, placeholder left as-is", var);
+                    tracing::warn!(
+                        "config: env var '{}' is not set, placeholder left as-is",
+                        var
+                    );
                     None
                 }
-            }
-        })
-        .into_owned();
+            })
+            .into_owned();
         let config: Self = serde_yaml::from_str(&content)
             .map_err(|e| anyhow::anyhow!("failed to parse YAML config: {e}"))?;
         config.validate()?;
@@ -341,9 +343,7 @@ pub fn build_providers(yaml: &YamlConfig) -> Vec<Provider> {
                 .endpoints
                 .iter()
                 .find(|(proto, _)| {
-                    reg.resolve_alias(proto)
-                        .map(|id| id.to_string())
-                        .as_deref()
+                    reg.resolve_alias(proto).map(|id| id.to_string()).as_deref()
                         == Some(&resolved_protocol)
                 })
                 .map(|(_, ep)| ep);
@@ -356,10 +356,7 @@ pub fn build_providers(yaml: &YamlConfig) -> Vec<Provider> {
                         .resolve_alias(proto)
                         .map(|id| id.to_string())
                         .unwrap_or_else(|| proto.clone());
-                    (
-                        canonical,
-                        serde_json::json!({ "base_url": ep.base_url }),
-                    )
+                    (canonical, serde_json::json!({ "base_url": ep.base_url }))
                 })
                 .collect();
             let now = chrono::Utc::now().to_rfc3339();

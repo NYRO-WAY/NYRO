@@ -355,13 +355,28 @@ mod tests {
                 ProtocolKind::AnthropicMessages,
                 ProtocolKind::GoogleContent,
             ] {
-                let body = s.body_for(p).unwrap_or_else(|| panic!("scenario {} missing body for {p}", s.name));
-                let parsed: serde_json::Value = serde_json::from_str(body)
-                    .unwrap_or_else(|e| panic!("scenario {} body for {p} not valid JSON: {e}", s.name));
-                assert!(parsed.is_object(), "body for {}/{p} must be a JSON object", s.name);
-                assert!(body.contains(MODEL_PLACEHOLDER) || matches!(p, ProtocolKind::GoogleContent),
-                        "scenario {} body for {p} must contain {{{{MODEL}}}} placeholder unless google-content (which uses path)", s.name);
-                assert!(body.contains(s.anchor), "scenario {} body for {p} must mention anchor {}", s.name, s.anchor);
+                let body = s
+                    .body_for(p)
+                    .unwrap_or_else(|| panic!("scenario {} missing body for {p}", s.name));
+                let parsed: serde_json::Value = serde_json::from_str(body).unwrap_or_else(|e| {
+                    panic!("scenario {} body for {p} not valid JSON: {e}", s.name)
+                });
+                assert!(
+                    parsed.is_object(),
+                    "body for {}/{p} must be a JSON object",
+                    s.name
+                );
+                assert!(
+                    body.contains(MODEL_PLACEHOLDER) || matches!(p, ProtocolKind::GoogleContent),
+                    "scenario {} body for {p} must contain {{{{MODEL}}}} placeholder unless google-content (which uses path)",
+                    s.name
+                );
+                assert!(
+                    body.contains(s.anchor),
+                    "scenario {} body for {p} must mention anchor {}",
+                    s.name,
+                    s.anchor
+                );
             }
         }
     }
@@ -369,7 +384,11 @@ mod tests {
     #[test]
     fn scenario_names_have_no_double_dash() {
         for s in SCENARIOS {
-            assert!(!s.name.contains("--"), "scenario name `{}` must not contain `--`", s.name);
+            assert!(
+                !s.name.contains("--"),
+                "scenario name `{}` must not contain `--`",
+                s.name
+            );
         }
     }
 

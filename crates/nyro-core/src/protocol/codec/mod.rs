@@ -2,8 +2,8 @@
 //! family's request/response/stream codecs **and** the thin
 //! `ProtocolHandler` registration shell for that dialect.
 
-pub mod openai;
 pub mod anthropic;
 pub mod google;
+pub mod openai;
 pub mod reasoning;
 pub mod tool_correlation;

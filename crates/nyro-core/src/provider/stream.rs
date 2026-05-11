@@ -26,10 +26,7 @@ pub struct LegacyStreamParserAdapter(pub Box<dyn crate::protocol::StreamParser>)
 
 impl ProviderStreamParser for LegacyStreamParserAdapter {
     fn parse_chunk(&mut self, chunk: &str) -> Result<Option<Vec<StreamDelta>>, GatewayError> {
-        let deltas = self
-            .0
-            .parse_chunk(chunk)
-            .map_err(GatewayError::internal)?;
+        let deltas = self.0.parse_chunk(chunk).map_err(GatewayError::internal)?;
         if deltas.is_empty() {
             Ok(None)
         } else {
@@ -41,4 +38,3 @@ impl ProviderStreamParser for LegacyStreamParserAdapter {
         self.0.finish()
     }
 }
-

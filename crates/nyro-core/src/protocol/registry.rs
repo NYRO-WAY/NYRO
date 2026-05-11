@@ -317,11 +317,13 @@ mod tests {
             Some(OPENAI_CHAT_V1)
         );
         assert_eq!(
-            reg.find_by_ingress_route("POST", "/v1/responses").map(|h| h.id()),
+            reg.find_by_ingress_route("POST", "/v1/responses")
+                .map(|h| h.id()),
             Some(OPENAI_RESPONSES_V1)
         );
         assert_eq!(
-            reg.find_by_ingress_route("POST", "/v1/messages").map(|h| h.id()),
+            reg.find_by_ingress_route("POST", "/v1/messages")
+                .map(|h| h.id()),
             Some(ANTHROPIC_MESSAGES_2023_06_01)
         );
         assert_eq!(
@@ -329,7 +331,10 @@ mod tests {
                 .map(|h| h.id()),
             Some(OPENAI_CHAT_V1)
         );
-        assert!(reg.find_by_ingress_route("GET", "/v1/chat/completions").is_none());
+        assert!(
+            reg.find_by_ingress_route("GET", "/v1/chat/completions")
+                .is_none()
+        );
     }
 
     #[test]

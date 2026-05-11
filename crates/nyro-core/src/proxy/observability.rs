@@ -7,9 +7,9 @@
 //! the old handler-level helper.  In P2-F it will be replaced with proper
 //! OpenTelemetry spans emanating from `RequestContext::trace`.
 
+use crate::Gateway;
 use crate::logging::LogEntry;
 use crate::protocol::types::TokenUsage;
-use crate::Gateway;
 
 // ── Log extras ────────────────────────────────────────────────────────────────
 

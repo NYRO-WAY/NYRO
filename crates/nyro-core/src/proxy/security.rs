@@ -10,11 +10,11 @@ use async_trait::async_trait;
 use axum::http::{HeaderMap, header};
 use chrono::{NaiveDateTime, Utc};
 
+use crate::Gateway;
 use crate::db::models::{Provider, Route};
 use crate::error::{AccessDenial, AuthFailure, GatewayError, QuotaWindow};
 use crate::proxy::context::{AuthSubject, RequestContext};
 use crate::storage::traits::{ApiKeyAccessRecord, UsageWindow};
-use crate::Gateway;
 
 // ── Public result type ────────────────────────────────────────────────────────
 
@@ -41,21 +41,14 @@ impl AuthenticatedKey {
 pub trait ProxyAccessStore: Send + Sync {
     async fn get_active_provider(&self, id: &str) -> anyhow::Result<Option<Provider>>;
     async fn find_api_key(&self, raw_key: &str) -> anyhow::Result<Option<ApiKeyAccessRecord>>;
-    async fn route_binding_exists(
-        &self,
-        api_key_id: &str,
-        route_id: &str,
-    ) -> anyhow::Result<bool>;
+    async fn route_binding_exists(&self, api_key_id: &str, route_id: &str) -> anyhow::Result<bool>;
     async fn request_count_since(
         &self,
         api_key_id: &str,
         window: UsageWindow,
     ) -> anyhow::Result<i64>;
-    async fn token_count_since(
-        &self,
-        api_key_id: &str,
-        window: UsageWindow,
-    ) -> anyhow::Result<i64>;
+    async fn token_count_since(&self, api_key_id: &str, window: UsageWindow)
+    -> anyhow::Result<i64>;
 }
 
 pub struct GatewayProxyAccessStore<'a> {
@@ -82,11 +75,7 @@ impl ProxyAccessStore for GatewayProxyAccessStore<'_> {
         }
     }
 
-    async fn route_binding_exists(
-        &self,
-        api_key_id: &str,
-        route_id: &str,
-    ) -> anyhow::Result<bool> {
+    async fn route_binding_exists(&self, api_key_id: &str, route_id: &str) -> anyhow::Result<bool> {
         match self.gw.storage.auth() {
             Some(store) => store.route_binding_exists(api_key_id, route_id).await,
             None => Ok(false),
@@ -135,16 +124,18 @@ pub async fn check_route_access(
         return Ok(AuthenticatedKey { id: None });
     }
 
-    let raw_key =
-        extract_api_key(headers).ok_or(GatewayError::Unauthorized { reason: AuthFailure::Missing })?;
+    let raw_key = extract_api_key(headers).ok_or(GatewayError::Unauthorized {
+        reason: AuthFailure::Missing,
+    })?;
 
     let key_row = access_store
         .find_api_key(&raw_key)
         .await
         .map_err(GatewayError::internal)?;
 
-    let key_row = key_row
-        .ok_or(GatewayError::Unauthorized { reason: AuthFailure::Invalid })?;
+    let key_row = key_row.ok_or(GatewayError::Unauthorized {
+        reason: AuthFailure::Invalid,
+    })?;
 
     if !key_row.is_enabled {
         return Err(GatewayError::Forbidden {
@@ -153,16 +144,21 @@ pub async fn check_route_access(
     }
 
     if let Some(expires) = key_row.expires_at.as_ref()
-        && is_key_expired(expires) {
-            return Err(GatewayError::Unauthorized { reason: AuthFailure::Expired });
-        }
+        && is_key_expired(expires)
+    {
+        return Err(GatewayError::Unauthorized {
+            reason: AuthFailure::Expired,
+        });
+    }
 
     let allowed = access_store
         .route_binding_exists(&key_row.id, &route.id)
         .await
         .map_err(GatewayError::internal)?;
     if !allowed {
-        return Err(GatewayError::Forbidden { reason: AccessDenial::RouteNotAllowed });
+        return Err(GatewayError::Forbidden {
+            reason: AccessDenial::RouteNotAllowed,
+        });
     }
 
     // ── Quota checks ─────────────────────────────────────────────────────────
@@ -174,7 +170,10 @@ pub async fn check_route_access(
             .map_err(GatewayError::internal)?;
         if count >= i64::from(limit) {
             return Err(GatewayError::QuotaExceeded {
-                window: QuotaWindow { window_type: "rpm".into(), reset_at_secs: None },
+                window: QuotaWindow {
+                    window_type: "rpm".into(),
+                    reset_at_secs: None,
+                },
             });
         }
     }
@@ -186,7 +185,10 @@ pub async fn check_route_access(
             .map_err(GatewayError::internal)?;
         if count >= i64::from(limit) {
             return Err(GatewayError::QuotaExceeded {
-                window: QuotaWindow { window_type: "rpd".into(), reset_at_secs: None },
+                window: QuotaWindow {
+                    window_type: "rpd".into(),
+                    reset_at_secs: None,
+                },
             });
         }
     }
@@ -198,7 +200,10 @@ pub async fn check_route_access(
             .map_err(GatewayError::internal)?;
         if count >= i64::from(limit) {
             return Err(GatewayError::QuotaExceeded {
-                window: QuotaWindow { window_type: "tpm".into(), reset_at_secs: None },
+                window: QuotaWindow {
+                    window_type: "tpm".into(),
+                    reset_at_secs: None,
+                },
             });
         }
     }
@@ -210,12 +215,17 @@ pub async fn check_route_access(
             .map_err(GatewayError::internal)?;
         if count >= i64::from(limit) {
             return Err(GatewayError::QuotaExceeded {
-                window: QuotaWindow { window_type: "tpd".into(), reset_at_secs: None },
+                window: QuotaWindow {
+                    window_type: "tpd".into(),
+                    reset_at_secs: None,
+                },
             });
         }
     }
 
-    let key = AuthenticatedKey { id: Some(key_row.id) };
+    let key = AuthenticatedKey {
+        id: Some(key_row.id),
+    };
     ctx.auth_subject = key.as_auth_subject();
     Ok(key)
 }
@@ -227,12 +237,13 @@ pub fn extract_api_key(headers: &HeaderMap) -> Option<String> {
     if let Some(value) = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
-        && let Some(token) = value.strip_prefix("Bearer ") {
-            let token = token.trim();
-            if !token.is_empty() {
-                return Some(token.to_string());
-            }
+        && let Some(token) = value.strip_prefix("Bearer ")
+    {
+        let token = token.trim();
+        if !token.is_empty() {
+            return Some(token.to_string());
         }
+    }
 
     headers
         .get("x-api-key")

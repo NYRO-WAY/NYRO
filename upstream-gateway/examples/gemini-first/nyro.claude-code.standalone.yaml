@@ -1,0 +1,18 @@
+server:
+  proxy_host: 127.0.0.1
+  proxy_port: 19530
+
+providers:
+  - name: gemini-gateway
+    protocol: gemini
+    endpoints:
+      gemini:
+        base_url: http://127.0.0.1:2080/providers/gemini-prod/google
+    api_key: gateway-hop-placeholder
+
+routes:
+  - name: claude-sonnet-via-gemini
+    vmodel: claude-sonnet-4-20250514
+    targets:
+      - provider: gemini-gateway
+        model: gemini-2.5-pro

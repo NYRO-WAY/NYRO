@@ -87,10 +87,7 @@ pub struct VendorMetadata {
     pub channels: &'static [ChannelDef],
 }
 
-fn serialize_base_urls<S>(
-    base_urls: &&[ProtocolBaseUrl],
-    serializer: S,
-) -> Result<S::Ok, S::Error>
+fn serialize_base_urls<S>(base_urls: &&[ProtocolBaseUrl], serializer: S) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
 {

@@ -88,7 +88,13 @@ impl ProviderStore for MemoryStorage {
     }
 
     async fn get(&self, id: &str) -> anyhow::Result<Option<Provider>> {
-        Ok(self.providers.read().await.iter().find(|p| p.id == id).cloned())
+        Ok(self
+            .providers
+            .read()
+            .await
+            .iter()
+            .find(|p| p.id == id)
+            .cloned())
     }
 
     async fn create(&self, _input: CreateProvider) -> anyhow::Result<Provider> {
@@ -105,9 +111,9 @@ impl ProviderStore for MemoryStorage {
 
     async fn exists_by_name(&self, name: &str, exclude_id: Option<&str>) -> anyhow::Result<bool> {
         let providers = self.providers.read().await;
-        Ok(providers.iter().any(|p| {
-            p.name == name && exclude_id.is_none_or(|eid| p.id != eid)
-        }))
+        Ok(providers
+            .iter()
+            .any(|p| p.name == name && exclude_id.is_none_or(|eid| p.id != eid)))
     }
 
     async fn record_test_result(
@@ -126,7 +132,13 @@ impl RouteStore for MemoryStorage {
     }
 
     async fn get(&self, id: &str) -> anyhow::Result<Option<Route>> {
-        Ok(self.routes.read().await.iter().find(|r| r.id == id).cloned())
+        Ok(self
+            .routes
+            .read()
+            .await
+            .iter()
+            .find(|r| r.id == id)
+            .cloned())
     }
 
     async fn create(&self, _input: CreateRoute) -> anyhow::Result<Route> {
@@ -143,9 +155,9 @@ impl RouteStore for MemoryStorage {
 
     async fn exists_by_name(&self, name: &str, exclude_id: Option<&str>) -> anyhow::Result<bool> {
         let routes = self.routes.read().await;
-        Ok(routes.iter().any(|r| {
-            r.name == name && exclude_id.is_none_or(|eid| r.id != eid)
-        }))
+        Ok(routes
+            .iter()
+            .any(|r| r.name == name && exclude_id.is_none_or(|eid| r.id != eid)))
     }
 
     async fn exists_by_virtual_model(
@@ -154,10 +166,9 @@ impl RouteStore for MemoryStorage {
         exclude_id: Option<&str>,
     ) -> anyhow::Result<bool> {
         let routes = self.routes.read().await;
-        Ok(routes.iter().any(|r| {
-            r.virtual_model == virtual_model
-                && exclude_id.is_none_or(|eid| r.id != eid)
-        }))
+        Ok(routes
+            .iter()
+            .any(|r| r.virtual_model == virtual_model && exclude_id.is_none_or(|eid| r.id != eid)))
     }
 }
 
@@ -173,7 +184,10 @@ impl RouteSnapshotStore for MemoryStorage {
 impl SettingsStore for MemoryStorage {
     async fn get(&self, key: &str) -> anyhow::Result<Option<String>> {
         let settings = self.settings.read().await;
-        Ok(settings.iter().find(|(k, _)| k == key).map(|(_, v)| v.clone()))
+        Ok(settings
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.clone()))
     }
 
     async fn set(&self, key: &str, value: &str) -> anyhow::Result<()> {
@@ -247,7 +261,6 @@ impl StorageBootstrap for MemoryStorage {
             writable: false,
         })
     }
-
 }
 
 fn now_rfc3339() -> String {
@@ -267,7 +280,10 @@ impl OAuthCredentialStore for MemoryOAuthCredentialStore {
     ) -> anyhow::Result<OAuthCredential> {
         let now = now_rfc3339();
         let mut map = self.credentials.write().await;
-        let version = map.get(provider_id).map(|c| c.status_version + 1).unwrap_or(0);
+        let version = map
+            .get(provider_id)
+            .map(|c| c.status_version + 1)
+            .unwrap_or(0);
         let cred = OAuthCredential {
             provider_id: provider_id.to_string(),
             driver_key: input.driver_key,
@@ -283,7 +299,10 @@ impl OAuthCredentialStore for MemoryOAuthCredentialStore {
             status_version: version,
             last_error: None,
             last_refresh_at: map.get(provider_id).and_then(|c| c.last_refresh_at.clone()),
-            created_at: map.get(provider_id).map(|c| c.created_at.clone()).unwrap_or_else(|| now.clone()),
+            created_at: map
+                .get(provider_id)
+                .map(|c| c.created_at.clone())
+                .unwrap_or_else(|| now.clone()),
             updated_at: now,
         };
         map.insert(provider_id.to_string(), cred.clone());
@@ -342,11 +361,7 @@ impl OAuthCredentialStore for MemoryOAuthCredentialStore {
         Ok(cred.clone())
     }
 
-    async fn fail_refresh(
-        &self,
-        provider_id: &str,
-        error_message: &str,
-    ) -> anyhow::Result<()> {
+    async fn fail_refresh(&self, provider_id: &str, error_message: &str) -> anyhow::Result<()> {
         let mut map = self.credentials.write().await;
         if let Some(cred) = map.get_mut(provider_id) {
             cred.status = "error".to_string();
@@ -360,7 +375,11 @@ impl OAuthCredentialStore for MemoryOAuthCredentialStore {
     async fn list_expiring(&self, _before: Duration) -> anyhow::Result<Vec<OAuthCredential>> {
         // Memory store: return all connected credentials (no real time comparison)
         let map = self.credentials.read().await;
-        Ok(map.values().filter(|c| c.status == "connected").cloned().collect())
+        Ok(map
+            .values()
+            .filter(|c| c.status == "connected")
+            .cloned()
+            .collect())
     }
 
     async fn recover_stale_refreshing(&self, _timeout: Duration) -> anyhow::Result<u64> {

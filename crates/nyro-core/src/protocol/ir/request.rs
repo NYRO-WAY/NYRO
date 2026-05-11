@@ -27,19 +27,40 @@ pub enum Role {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ContentBlock {
-    Text { text: String },
-    Image { media_type: String, data: String },
-    Reasoning { text: String, signature: Option<String> },
-    ToolUse { id: String, name: String, input: Value },
-    ToolResult { tool_use_id: String, content: Value },
+    Text {
+        text: String,
+    },
+    Image {
+        media_type: String,
+        data: String,
+    },
+    Reasoning {
+        text: String,
+        signature: Option<String>,
+    },
+    ToolUse {
+        id: String,
+        name: String,
+        input: Value,
+    },
+    ToolResult {
+        tool_use_id: String,
+        content: Value,
+    },
     /// A raw JSON block that the codec does not understand.  Preserved for
     /// pass-through and future extension.
-    Unknown { raw: Value },
+    Unknown {
+        raw: Value,
+    },
 }
 
 impl ContentBlock {
     pub fn as_text(&self) -> Option<&str> {
-        if let Self::Text { text } = self { Some(text) } else { None }
+        if let Self::Text { text } = self {
+            Some(text)
+        } else {
+            None
+        }
     }
 }
 
@@ -113,7 +134,9 @@ pub enum ToolChoice {
     None,
     #[serde(rename = "required")]
     Required,
-    Named { name: String },
+    Named {
+        name: String,
+    },
     Raw(Value),
 }
 

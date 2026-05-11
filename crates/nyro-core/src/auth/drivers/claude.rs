@@ -16,8 +16,8 @@ use crate::auth::types::{
     StoredCredential,
 };
 use crate::db::models::Provider;
-use crate::provider::VendorRegistry;
 use crate::provider::OAuthConfig;
+use crate::provider::VendorRegistry;
 
 const ANTHROPIC_PRESET_ID: &str = "anthropic";
 const CLAUDE_CODE_CHANNEL_ID: &str = "claude-code";
@@ -343,13 +343,7 @@ impl AuthDriver for ClaudeOAuthDriver {
         let static_models_override: Option<Vec<String>> = if config.static_models.is_empty() {
             None
         } else {
-            Some(
-                config
-                    .static_models
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect(),
-            )
+            Some(config.static_models.iter().map(|s| s.to_string()).collect())
         };
         let capabilities_source_override = provider
             .capabilities_source

@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Race Gateway 管理台</title>
+    <link rel="stylesheet" href="/admin/assets/admin.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <p class="brand-kicker">Race Gateway</p>
+          <h1>竞速网关管理台</h1>
+          <p class="brand-desc">按资源管理模型、竞速组和 Key 池，运行时和诊断单独查看。</p>
+        </div>
+
+        <nav class="nav">
+          <button data-tab="overview" class="active">总览</button>
+          <button data-tab="models">模型配置</button>
+          <button data-tab="groups">模型组</button>
+          <button data-tab="key-pools">鉴权 Keys</button>
+          <button data-tab="runtime">运行状态</button>
+          <button data-tab="diagnostics">诊断配置</button>
+          <button data-tab="settings">设置</button>
+        </nav>
+      </aside>
+
+      <main class="content">
+        <div id="flash" class="flash hidden"></div>
+
+        <section data-panel="overview" class="panel active">
+          <div class="hero">
+            <div>
+              <p class="hero-kicker">Dual Plane</p>
+              <h2>代理面和管理面完全分离</h2>
+              <p>代理端口负责竞速转发，管理端口负责配置维护、运行时观测和诊断分析。</p>
+            </div>
+          </div>
+
+          <div class="overview-grid">
+            <article class="metric-card">
+              <span class="metric-label">代理端口</span>
+              <strong id="proxyHealth">加载中...</strong>
+            </article>
+            <article class="metric-card">
+              <span class="metric-label">管理端口</span>
+              <strong id="adminHealth">加载中...</strong>
+            </article>
+            <article class="metric-card">
+              <span class="metric-label">运行中竞速组</span>
+              <strong id="runtimeSummary">加载中...</strong>
+            </article>
+            <article class="metric-card">
+              <span class="metric-label">模型</span>
+              <strong id="overviewModels">-</strong>
+            </article>
+            <article class="metric-card">
+              <span class="metric-label">Key 池</span>
+              <strong id="overviewKeyPools">-</strong>
+            </article>
+            <article class="metric-card">
+              <span class="metric-label">最近异常竞速</span>
+              <strong id="overviewDiagnostics">-</strong>
+            </article>
+          </div>
+
+          <div class="overview-card">
+            <div>
+              <h3>Prometheus 指标</h3>
+              <p class="muted">需要接入监控时，可直接使用管理端口指标出口。</p>
+            </div>
+            <a id="overviewMetrics" href="/admin/metrics" target="_blank" rel="noreferrer">打开 /admin/metrics</a>
+          </div>
+        </section>
+
+        <section data-panel="models" class="panel">
+          <header class="panel-header">
+            <div>
+              <h2>模型配置</h2>
+              <p class="muted">这里主要维护可选模型的显示名、真实上游模型名和默认协议端点。模型组候选优先走这里选模型，不建议重复手敲。</p>
+            </div>
+            <div class="header-actions">
+              <button id="refreshModels" type="button">刷新列表</button>
+              <button id="newModel" type="button">新增模型</button>
+            </div>
+          </header>
+
+          <div class="management-shell">
+            <aside class="resource-list-panel">
+              <div class="list-toolbar">
+                <input id="modelSearch" class="search-input" placeholder="搜索模型 ID / 名称 / 上游模型" />
+              </div>
+              <div id="modelsList" class="resource-list"></div>
+            </aside>
+
+            <section class="editor-panel">
+              <div class="editor-topbar">
+                <div>
+                  <h3>模型详情</h3>
+                  <p class="muted">主表单只保留旧项目常用字段；协议端点和 metadata 收在高级配置里。</p>
+                </div>
+                <div class="header-actions">
+                  <button id="saveModel" type="button" class="primary">保存模型</button>
+                  <button id="validateModel" type="button">校验</button>
+                  <button id="deleteModel" type="button" class="danger">删除</button>
+                </div>
+              </div>
+
+              <form id="modelForm" class="form-stack" onsubmit="return false;">
+                <section class="form-section">
+                  <div class="section-head">
+                    <h4>基本信息</h4>
+                  </div>
+                  <div class="form-grid two-cols">
+                    <label class="field">
+                      <span>模型 ID</span>
+                      <input id="modelId" placeholder="例如：gemini-25-pro" />
+                    </label>
+                    <label class="field">
+                      <span>显示名称</span>
+                      <input id="modelDisplayName" placeholder="例如：Gemini 2.5 Pro" />
+                    </label>
+                  <label class="field">
+                    <span>上游模型名</span>
+                    <input id="modelUpstreamModel" placeholder="例如：gemini-2.5-pro" />
+                    <small class="field-help">竞速最终发给上游的真实模型名。</small>
+                  </label>
+                  <label class="field checkbox-field">
+                    <span>启用状态</span>
+                    <label class="checkbox-inline">
+                      <input id="modelEnabled" type="checkbox" />
+                        <span>已启用</span>
+                      </label>
+                    </label>
+                  </div>
+                  <label class="field">
+                    <span>描述</span>
+                    <textarea id="modelDescription" class="small-textarea" placeholder="这条模型配置的用途说明"></textarea>
+                  </label>
+                </section>
+
+                <details class="advanced-details form-section">
+                  <summary>高级配置</summary>
+                  <div class="advanced-details-body">
+                    <div class="section-head">
+                      <h4>协议端点</h4>
+                      <button id="addModelEndpoint" type="button">新增端点</button>
+                    </div>
+                    <div id="modelEndpoints" class="subitem-list"></div>
+
+                    <div class="section-head section-top-gap">
+                      <h4>扩展字段</h4>
+                      <p class="muted">按键值项维护 metadata，不再整段手写 JSON。</p>
+                    </div>
+                    <div class="field">
+                      <div class="inline-head">
+                        <span>metadata</span>
+                        <button id="addModelMetadataRow" type="button">新增字段</button>
+                      </div>
+                      <div id="modelMetadataPairs" class="kv-editor"></div>
+                    </div>
+                  </div>
+                </details>
+              </form>
+
+              <div id="modelIssues" class="issues"></div>
+            </section>
+          </div>
+        </section>
+
+        <section data-panel="groups" class="panel">
+          <header class="panel-header">
+            <div>
+              <h2>模型组</h2>
+              <p class="muted">这里对齐旧项目的主路径：先配组参数，再给候选选模型或直接填写真实上游模型名。</p>
+            </div>
+            <div class="header-actions">
+              <button id="refreshGroups" type="button">刷新列表</button>
+              <button id="newGroup" type="button">新增模型组</button>
+            </div>
+          </header>
+
+          <div class="management-shell">
+            <aside class="resource-list-panel">
+              <div class="list-toolbar">
+                <input id="groupSearch" class="search-input" placeholder="搜索竞速组 ID / 名称 / 候选名" />
+              </div>
+              <div id="groupsList" class="resource-list"></div>
+            </aside>
+
+            <section class="editor-panel">
+              <div class="editor-topbar">
+                <div>
+                  <h3>竞速组详情</h3>
+                  <p class="muted">候选优先从“模型配置”下拉选择；如需临时覆盖，也可以手填上游模型名。覆盖端点和 metadata 在高级配置里。</p>
+                </div>
+                <div class="header-actions">
+                  <button id="saveGroup" type="button" class="primary">保存竞速组</button>
+                  <button id="validateGroup" type="button">校验</button>
+                  <button id="deleteGroup" type="button" class="danger">删除</button>
+                </div>
+              </div>
+
+              <form id="groupForm" class="form-stack" onsubmit="return false;">
+                <section class="form-section">
+                  <div class="section-head">
+                    <h4>基本信息</h4>
+                  </div>
+                  <div class="form-grid two-cols">
+                    <label class="field">
+                      <span>竞速组 ID</span>
+                      <input id="groupId" placeholder="例如：gemini-race" />
+                    </label>
+                    <label class="field">
+                      <span>显示名称</span>
+                      <input id="groupDisplayName" placeholder="例如：Gemini 主竞速组" />
+                    </label>
+                    <label class="field">
+                      <span>回退比例</span>
+                      <input id="groupFallbackRatio" type="number" step="0.01" />
+                    </label>
+                    <label class="field">
+                      <span>衰减系数</span>
+                      <input id="groupDecayFactor" type="number" step="0.01" />
+                    </label>
+                    <label class="field">
+                      <span>惩罚系数</span>
+                      <input id="groupPenaltyRate" type="number" step="0.01" />
+                    </label>
+                    <label class="field">
+                      <span>恢复系数</span>
+                      <input id="groupRecoveryRate" type="number" step="0.01" />
+                    </label>
+                    <label class="field">
+                      <span>最大等待时间（毫秒）</span>
+                      <input id="groupRaceMaxWaitTimeMs" type="number" min="0" />
+                    </label>
+                    <label class="field checkbox-field">
+                      <span>启用状态</span>
+                      <label class="checkbox-inline">
+                        <input id="groupEnabled" type="checkbox" />
+                        <span>已启用</span>
+                      </label>
+                    </label>
+                  </div>
+                </section>
+
+                <section class="form-section">
+                  <div class="section-head">
+                    <h4>候选列表</h4>
+                    <button id="addGroupCandidate" type="button">新增候选</button>
+                  </div>
+                  <div id="groupCandidates" class="subitem-list"></div>
+                </section>
+              </form>
+
+              <div id="groupIssues" class="issues"></div>
+            </section>
+          </div>
+        </section>
+
+        <section data-panel="key-pools" class="panel">
+          <header class="panel-header">
+            <div>
+              <h2>Key 池管理</h2>
+              <p class="muted">Key 池、认证策略和每个 Key 的启用状态直接表单维护。</p>
+            </div>
+            <div class="header-actions">
+              <button id="refreshKeyPools" type="button">刷新列表</button>
+              <button id="newKeyPool" type="button">新建 Key 池</button>
+            </div>
+          </header>
+
+          <div class="management-shell">
+            <aside class="resource-list-panel">
+              <div class="list-toolbar">
+                <input id="keyPoolSearch" class="search-input" placeholder="搜索 Key 池 ID / 名称" />
+              </div>
+              <div id="keyPoolsList" class="resource-list"></div>
+            </aside>
+
+            <section class="editor-panel">
+              <div class="editor-topbar">
+                <div>
+                  <h3>Key 池详情</h3>
+                  <p class="muted">默认支持 Bearer / Header API Key / Query API Key 三类认证策略。</p>
+                </div>
+                <div class="header-actions">
+                  <button id="saveKeyPool" type="button" class="primary">保存 Key 池</button>
+                  <button id="validateKeyPool" type="button">校验</button>
+                  <button id="deleteKeyPool" type="button" class="danger">删除</button>
+                </div>
+              </div>
+
+              <form id="keyPoolForm" class="form-stack" onsubmit="return false;">
+                <section class="form-section">
+                  <div class="section-head">
+                    <h4>基本信息</h4>
+                  </div>
+                  <div class="form-grid two-cols">
+                    <label class="field">
+                      <span>Key 池 ID</span>
+                      <input id="keyPoolId" placeholder="例如：local-upstream-auth" />
+                    </label>
+                    <label class="field">
+                      <span>显示名称</span>
+                      <input id="keyPoolDisplayName" placeholder="例如：本地上游认证池" />
+                    </label>
+                    <label class="field">
+                      <span>认证策略</span>
+                      <select id="keyPoolAuthKind"></select>
+                    </label>
+                    <label class="field">
+                      <span id="keyPoolAuthExtraLabel">附加参数</span>
+                      <input id="keyPoolAuthExtra" placeholder="例如：x-api-key 或 key" />
+                    </label>
+                    <label class="field">
+                      <span>选 Key 策略</span>
+                      <select id="keyPoolSelectionStrategy">
+                        <option value="random">random</option>
+                      </select>
+                    </label>
+                    <label class="field checkbox-field">
+                      <span>启用状态</span>
+                      <label class="checkbox-inline">
+                        <input id="keyPoolEnabled" type="checkbox" />
+                        <span>已启用</span>
+                      </label>
+                    </label>
+                  </div>
+                </section>
+
+                <section class="form-section">
+                  <div class="section-head">
+                    <h4>Key 列表</h4>
+                    <button id="addKeyPoolKey" type="button">新增 Key</button>
+                  </div>
+                  <div id="keyPoolKeys" class="subitem-list"></div>
+                </section>
+              </form>
+
+              <div id="keyPoolIssues" class="issues"></div>
+            </section>
+          </div>
+        </section>
+
+        <section data-panel="runtime" class="panel">
+          <header class="panel-header">
+            <div>
+              <h2>运行时</h2>
+              <p class="muted">查看候选权重、协议可用性、最近竞速结果和赢家分布。</p>
+            </div>
+            <div class="header-actions">
+              <input id="runtimeSearch" class="search-input narrow" placeholder="搜索竞速组" />
+              <button id="refreshRuntime" type="button">刷新</button>
+            </div>
+          </header>
+          <div class="runtime-top" id="runtimeTopCards"></div>
+          <div id="runtimeCards" class="runtime-stack"></div>
+        </section>
+
+        <section data-panel="diagnostics" class="panel">
+          <header class="panel-header">
+            <div>
+              <h2>诊断</h2>
+              <p class="muted">聚合最近失败记录，可按竞速组和协议过滤。</p>
+            </div>
+            <div class="header-actions header-wrap">
+              <input id="diagnosticSearch" class="search-input narrow" placeholder="搜索诊断记录" />
+              <select id="diagnosticGroupFilter"></select>
+              <select id="diagnosticProtocolFilter"></select>
+              <button id="refreshDiagnostics" type="button">刷新</button>
+            </div>
+          </header>
+          <div id="diagnosticsList" class="runtime-stack"></div>
+        </section>
+
+        <section data-panel="settings" class="panel">
+          <header class="panel-header">
+            <div>
+              <h2>设置</h2>
+              <p class="muted">全局诊断响应头和缓冲控制设置。</p>
+            </div>
+            <div class="header-actions">
+              <button id="refreshSettings" type="button">刷新</button>
+              <button id="saveSettings" type="button" class="primary">保存设置</button>
+            </div>
+          </header>
+
+          <div class="settings-layout">
+            <section class="editor-panel">
+              <div class="form-stack">
+                <section class="form-section">
+                  <div class="section-head">
+                    <h4>全局设置</h4>
+                  </div>
+                  <label class="field checkbox-field">
+                    <span>启用竞速诊断响应头</span>
+                    <label class="checkbox-inline">
+                      <input type="checkbox" id="settingDiagnostics" />
+                      <span>已启用</span>
+                    </label>
+                  </label>
+                  <div class="form-grid two-cols">
+                    <label class="field">
+                      <span>最大缓冲事件数</span>
+                      <input type="number" id="settingMaxBufferEvents" min="1" />
+                    </label>
+                    <label class="field">
+                      <span>缓冲背压超时（毫秒）</span>
+                      <input type="number" id="settingBufferTimeoutMs" min="1" />
+                    </label>
+                  </div>
+                </section>
+              </div>
+            </section>
+
+            <section class="resource-list-panel">
+              <div class="section-head">
+                <h4>当前 JSON 预览</h4>
+              </div>
+              <pre id="settingsPreview" class="preview-box"></pre>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script src="/admin/assets/admin.js"></script>
+  </body>
+</html>

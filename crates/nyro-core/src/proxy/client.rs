@@ -26,7 +26,13 @@ impl ProxyClient {
         headers: HeaderMap,
         body: Value,
     ) -> Result<(Value, u16)> {
-        let resp = self.http.post(url).headers(headers).json(&body).send().await?;
+        let resp = self
+            .http
+            .post(url)
+            .headers(headers)
+            .json(&body)
+            .send()
+            .await?;
         let status = resp.status().as_u16();
         let json: Value = resp.json().await?;
         Ok((json, status))
@@ -38,7 +44,13 @@ impl ProxyClient {
         headers: HeaderMap,
         body: Value,
     ) -> Result<(reqwest::Response, u16)> {
-        let resp = self.http.post(url).headers(headers).json(&body).send().await?;
+        let resp = self
+            .http
+            .post(url)
+            .headers(headers)
+            .json(&body)
+            .send()
+            .await?;
         let status = resp.status().as_u16();
         Ok((resp, status))
     }

@@ -1,0 +1,52 @@
+{
+  "providers": [
+    {
+      "provider": {
+        "id": "gemini-prod",
+        "name": "Gemini Prod",
+        "vendor": "gemini",
+        "base_url": "https://generativelanguage.googleapis.com",
+        "auth_strategy": {
+          "kind": "query_api_key",
+          "parameter_name": "key"
+        },
+        "enabled": true
+      },
+      "keys": [
+        {
+          "id": "gemini-key-a",
+          "provider_id": "gemini-prod",
+          "display_name": "Gemini Key A",
+          "api_key": "__GEMINI_API_KEY__",
+          "enabled": true,
+          "weight": 1
+        }
+      ],
+      "model_rules": [
+        {
+          "provider_id": "gemini-prod",
+          "model": "gemini-2.5-pro",
+          "rpm": 60,
+          "rpd": 5000,
+          "tpm": 120000,
+          "tpm_mode": "input_and_output",
+          "tokenizer_model": "gemini-2.5-pro"
+        },
+        {
+          "provider_id": "gemini-prod",
+          "model": "*",
+          "rpm": 60,
+          "rpd": 5000,
+          "tpm": 120000,
+          "tpm_mode": "input_and_output",
+          "tokenizer_model": "gemini-2.5-pro"
+        }
+      ],
+      "daily_reset": {
+        "timezone": "+08:00",
+        "hour": 4,
+        "minute": 0
+      }
+    }
+  ]
+}

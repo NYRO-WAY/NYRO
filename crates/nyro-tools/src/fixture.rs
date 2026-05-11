@@ -153,10 +153,7 @@ mod tests {
             },
             response: RecordedResponse {
                 status: 200,
-                headers: BTreeMap::from([(
-                    "content-type".into(),
-                    "text/event-stream".into(),
-                )]),
+                headers: BTreeMap::from([("content-type".into(), "text/event-stream".into())]),
                 body_base64: base64::engine::general_purpose::STANDARD
                     .encode(b"data: hello\n\ndata: [DONE]\n\n"),
             },
@@ -172,7 +169,10 @@ mod tests {
         let loaded = Fixture::load(&path).unwrap();
         loaded.validate().unwrap();
         assert_eq!(loaded.replay_model, fx.replay_model);
-        assert_eq!(loaded.response_body().unwrap(), b"data: hello\n\ndata: [DONE]\n\n");
+        assert_eq!(
+            loaded.response_body().unwrap(),
+            b"data: hello\n\ndata: [DONE]\n\n"
+        );
     }
 
     #[test]

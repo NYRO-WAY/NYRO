@@ -34,12 +34,16 @@ pub struct Deadline {
 impl Deadline {
     /// Create a deadline `ttl` from now.
     pub fn from_now(ttl: Duration) -> Self {
-        Self { at: Instant::now() + ttl }
+        Self {
+            at: Instant::now() + ttl,
+        }
     }
 
     /// A deadline that never fires (useful for unit tests / health probes).
     pub fn never() -> Self {
-        Self { at: Instant::now() + Duration::from_secs(86400 * 365 * 100) }
+        Self {
+            at: Instant::now() + Duration::from_secs(86400 * 365 * 100),
+        }
     }
 
     /// Returns `true` if the deadline has already passed.
@@ -107,7 +111,10 @@ pub enum RequestOutcome {
 impl RequestOutcome {
     /// Returns `true` for the two success variants.
     pub fn is_success(&self) -> bool {
-        matches!(self, RequestOutcome::Success | RequestOutcome::PartialSuccess { .. })
+        matches!(
+            self,
+            RequestOutcome::Success | RequestOutcome::PartialSuccess { .. }
+        )
     }
 
     /// Best-effort HTTP status code for quota/health accounting.
@@ -157,7 +164,11 @@ impl TraceSink {
     pub fn push(&self, started_at: Instant, tag: &'static str, detail: impl Into<String>) {
         let elapsed_ms = started_at.elapsed().as_millis() as u64;
         if let Ok(mut guard) = self.0.lock() {
-            guard.push(TraceEvent { elapsed_ms, tag, detail: detail.into() });
+            guard.push(TraceEvent {
+                elapsed_ms,
+                tag,
+                detail: detail.into(),
+            });
         }
     }
 
@@ -265,14 +276,11 @@ use axum::response::Response;
 /// The timeout used is 300 s (matching the existing reqwest client timeout).
 /// P2 can thread per-route timeouts through here once `RequestContext` carries
 /// a configurable timeout.
-pub async fn inject_context(
-    mut request: Request,
-    next: Next,
-) -> Response {
+pub async fn inject_context(mut request: Request, next: Next) -> Response {
     // We don't know the ingress protocol at middleware time; it will be
     // overwritten by the ingress handler via `inject_context_with_protocol`.
     // Use a sentinel until then.
-    use crate::protocol::ids::{OPENAI_CHAT_V1};
+    use crate::protocol::ids::OPENAI_CHAT_V1;
     let ctx = RequestContext::new(OPENAI_CHAT_V1, Duration::from_secs(300));
     request.extensions_mut().insert(ctx);
     next.run(request).await

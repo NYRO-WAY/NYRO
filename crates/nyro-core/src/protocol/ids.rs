@@ -57,12 +57,12 @@ pub struct ProtocolId {
 }
 
 impl ProtocolId {
-    pub const fn new(
-        family: ProtocolFamily,
-        dialect: &'static str,
-        version: &'static str,
-    ) -> Self {
-        Self { family, dialect, version }
+    pub const fn new(family: ProtocolFamily, dialect: &'static str, version: &'static str) -> Self {
+        Self {
+            family,
+            dialect,
+            version,
+        }
     }
 
     /// Look up the registered handler for this id.
@@ -89,8 +89,7 @@ impl fmt::Display for ProtocolId {
 // `registry.rs` is the only place that maps short / legacy names to
 // these canonical ids.
 
-pub const OPENAI_CHAT_V1: ProtocolId =
-    ProtocolId::new(ProtocolFamily::OpenAI, "chat", "v1");
+pub const OPENAI_CHAT_V1: ProtocolId = ProtocolId::new(ProtocolFamily::OpenAI, "chat", "v1");
 
 pub const OPENAI_RESPONSES_V1: ProtocolId =
     ProtocolId::new(ProtocolFamily::OpenAI, "responses", "v1");
@@ -159,7 +158,6 @@ pub struct ProtocolCapabilities {
     pub ingress_routes: &'static [(&'static str, &'static str)],
 
     // ── PR-07 additions ───────────────────────────────────────────────────────
-
     /// Whether multimodal (vision) input is accepted.
     pub multimodal: bool,
     /// Whether the provider accepts structured output / JSON-mode requests.

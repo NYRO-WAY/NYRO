@@ -1,0 +1,98 @@
+{
+  "models": [
+    {
+      "id": "gemini-25-pro",
+      "display_name": "Gemini 2.5 Pro via Upstream Gateway",
+      "upstream_model": "gemini-2.5-pro",
+      "description": "Local development model that forwards Google-native traffic into the local upstream-gateway instance.",
+      "enabled": true,
+      "endpoints": [
+        {
+          "protocol_family": "google",
+          "base_url": "http://127.0.0.1:2080/providers/gemini-prod/google",
+          "auth_strategy": {
+            "kind": "bearer"
+          },
+          "key_pool_id": "local-upstream-auth",
+          "request_timeout_ms": 300000,
+          "extra_headers": {},
+          "extra_query": {},
+          "enabled": true
+        }
+      ],
+      "metadata": {
+        "mode": "local-dev",
+        "target": "upstream-gateway"
+      }
+    }
+  ],
+  "groups": [
+    {
+      "id": "gemini-race",
+      "display_name": "Gemini Race Demo",
+      "fallback_ratio": 0.15,
+      "decay_factor": 0.9,
+      "penalty_rate": 30.0,
+      "recovery_rate": 2.0,
+      "race_max_wait_time_ms": 2000,
+      "enabled": true,
+      "candidates": [
+        {
+          "id": "gemini-race-a",
+          "group_id": "gemini-race",
+          "name": "Gemini Lane A",
+          "model_id": "gemini-25-pro",
+          "upstream_model": "gemini-2.5-pro",
+          "inline_endpoint_overrides": [],
+          "initial_weight": 100.0,
+          "response_protection_timeout_ms": 5000,
+          "enabled": true,
+          "metadata": {
+            "lane": "a"
+          }
+        },
+        {
+          "id": "gemini-race-b",
+          "group_id": "gemini-race",
+          "name": "Gemini Lane B",
+          "model_id": "gemini-25-pro",
+          "upstream_model": "gemini-2.5-pro",
+          "inline_endpoint_overrides": [],
+          "initial_weight": 97.0,
+          "response_protection_timeout_ms": 5000,
+          "enabled": true,
+          "metadata": {
+            "lane": "b"
+          }
+        }
+      ]
+    }
+  ],
+  "key_pools": [
+    {
+      "id": "local-upstream-auth",
+      "display_name": "Local Upstream Auth",
+      "auth_strategy": {
+        "kind": "bearer"
+      },
+      "selection_strategy": "random",
+      "enabled": true,
+      "keys": [
+        {
+          "id": "local-upstream-auth-key",
+          "key_pool_id": "local-upstream-auth",
+          "secret": "dev-local-auth",
+          "enabled": true,
+          "metadata": {
+            "note": "Used only for local race-gateway -> upstream-gateway forwarding."
+          }
+        }
+      ]
+    }
+  ],
+  "settings": {
+    "enable_race_diagnostics_header": true,
+    "max_buffer_events": 128,
+    "buffer_backpressure_timeout_ms": 5000
+  }
+}

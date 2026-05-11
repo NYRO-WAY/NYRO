@@ -176,10 +176,15 @@ fn encoder_round_trips_body_for_every_handler() {
             .make_encoder()
             .encode_request(&internal)
             .unwrap_or_else(|e| panic!("encoder failed for {id}: {e}"));
-        assert!(out_body.is_object(), "encoded body must be an object for {id}");
+        assert!(
+            out_body.is_object(),
+            "encoded body must be an object for {id}"
+        );
         let _ = headers;
 
-        let _path = h.make_encoder().egress_path(&internal.model, internal.stream);
+        let _path = h
+            .make_encoder()
+            .egress_path(&internal.model, internal.stream);
     }
 }
 

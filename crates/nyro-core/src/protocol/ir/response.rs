@@ -3,8 +3,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::protocol::types::TokenUsage;
 use crate::protocol::ir::vendor_ext::VendorExtensions;
+use crate::protocol::types::TokenUsage;
 
 // ── ResponseItem ──────────────────────────────────────────────────────────────
 
@@ -25,7 +25,11 @@ pub enum ResponseItem {
     /// A tool result provided by the client (in multi-turn Responses API).
     FunctionCallOutput { call_id: String, output: String },
     /// A web-search result block (OpenAI built-in tool).
-    WebSearchResult { url: String, title: Option<String>, snippet: Option<String> },
+    WebSearchResult {
+        url: String,
+        title: Option<String>,
+        snippet: Option<String>,
+    },
     /// Unknown item type — preserved verbatim.
     Unknown { raw: Value },
 }

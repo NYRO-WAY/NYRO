@@ -2,8 +2,8 @@ use anyhow::Result;
 use reqwest::header::HeaderMap;
 use serde_json::Value;
 
-use crate::protocol::types::*;
 use crate::protocol::EgressEncoder;
+use crate::protocol::types::*;
 
 pub struct GoogleEncoder;
 
@@ -46,13 +46,12 @@ impl EgressEncoder for GoogleEncoder {
         // ── generationConfig ──────────────────────────────────────────────────
         // Start from extra (full preserved config) and layer InternalRequest
         // overrides on top so model-override and routing changes still apply.
-        let mut gen_config: serde_json::Map<String, Value> = if let Some(Value::Object(m)) =
-            req.extra.get("__google_generation_config")
-        {
-            m.clone()
-        } else {
-            serde_json::Map::new()
-        };
+        let mut gen_config: serde_json::Map<String, Value> =
+            if let Some(Value::Object(m)) = req.extra.get("__google_generation_config") {
+                m.clone()
+            } else {
+                serde_json::Map::new()
+            };
 
         if let Some(t) = req.temperature {
             gen_config.insert("temperature".into(), t.into());
@@ -142,12 +141,7 @@ fn sanitize_gemini_schema(value: &Value) -> Value {
             for (k, v) in map {
                 if matches!(
                     k.as_str(),
-                    "$schema"
-                        | "additionalProperties"
-                        | "$ref"
-                        | "ref"
-                        | "definitions"
-                        | "$defs"
+                    "$schema" | "additionalProperties" | "$ref" | "ref" | "definitions" | "$defs"
                 ) {
                     continue;
                 }
@@ -186,9 +180,8 @@ fn encode_content(msg: &InternalMessage) -> Result<Value> {
                 for tc in tcs {
                     let args: Value = serde_json::from_str(&tc.arguments)
                         .unwrap_or(Value::Object(Default::default()));
-                    parts.push(
-                        serde_json::json!({"functionCall": {"name": tc.name, "args": args}}),
-                    );
+                    parts
+                        .push(serde_json::json!({"functionCall": {"name": tc.name, "args": args}}));
                 }
                 parts
             } else {
@@ -210,7 +203,10 @@ fn encode_content(msg: &InternalMessage) -> Result<Value> {
                 ContentBlock::ToolUse { id: _, name, input } => {
                     serde_json::json!({"functionCall": {"name": name, "args": input}})
                 }
-                ContentBlock::ToolResult { tool_use_id, content } => {
+                ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                } => {
                     serde_json::json!({
                         "functionResponse": {"name": tool_use_id, "response": content}
                     })

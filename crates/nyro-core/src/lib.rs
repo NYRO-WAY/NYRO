@@ -1,5 +1,5 @@
-pub mod auth;
 pub mod admin;
+pub mod auth;
 pub mod cache;
 pub mod config;
 pub mod crypto;
@@ -31,8 +31,8 @@ use crate::cache::{
 use crate::router::health::HealthRegistry;
 use config::{GatewayConfig, SqlStorageConfig, StorageBackendKind};
 use logging::LogEntry;
-use storage::sql::config::SqlBackendConfig;
 use storage::postgres::recreate_pg_vector_table;
+use storage::sql::config::SqlBackendConfig;
 use storage::{DynStorage, PostgresStorage, SqliteStorage};
 
 #[derive(Clone, Debug)]
@@ -404,9 +404,10 @@ impl Gateway {
 
         let cache_key = format!("{proxy_url}|{force_http1}");
         if let Some(cached) = self.proxy_client_cache.read().await.clone()
-            && cached.cache_key == cache_key {
-                return Ok(cached.client);
-            }
+            && cached.cache_key == cache_key
+        {
+            return Ok(cached.client);
+        }
 
         let mut builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(300));
         if force_http1 {

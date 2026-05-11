@@ -1,0 +1,286 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont,
+    "Helvetica Neue", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei",
+    sans-serif;
+
+  --color-background: #f4f4f6;
+  --color-foreground: #111827;
+  --color-card: rgba(255, 255, 255, 0.75);
+  --color-card-foreground: #111827;
+  --color-muted: #ececef;
+  --color-muted-foreground: #64748b;
+  --color-border: rgba(255, 255, 255, 0.65);
+
+  --color-primary: #111827;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #f3f4f6;
+  --color-secondary-foreground: #1e293b;
+  --color-destructive: #ef4444;
+}
+
+:root {
+  --chrome-h: 46px;
+  --frame-pad: 12px;
+  --nyro-field-border: rgba(71, 85, 105, 0.34);
+  --nyro-field-bg: rgba(255, 255, 255, 0.9);
+  --nyro-field-focus-border: rgba(15, 23, 42, 0.92);
+  --nyro-field-label: #64748b;
+  --nyro-field-label-active: #0f172a;
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --color-background: #0e0f13;
+  --color-foreground: #f5f5f7;
+  --color-primary: #dbeafe;
+  --color-primary-foreground: #0f172a;
+  --color-secondary: rgba(30, 41, 59, 0.72);
+  --color-secondary-foreground: #f8fafc;
+  --nyro-field-border: rgba(148, 163, 184, 0.24);
+  --nyro-field-bg: rgba(19, 22, 31, 0.84);
+  --nyro-field-focus-border: rgba(255, 255, 255, 0.88);
+  --nyro-field-label: #a8b2c8;
+  --nyro-field-label-active: #d9e1f5;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+html {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+body {
+  margin: 0;
+  color: var(--color-foreground);
+  background:
+    radial-gradient(50rem 28rem at 12% 0%, rgba(255, 255, 255, 0.72), transparent 70%),
+    radial-gradient(44rem 28rem at 88% 0%, rgba(255, 255, 255, 0.48), transparent 70%),
+    linear-gradient(180deg, #f8f8fa 0%, #f1f1f3 100%);
+}
+
+html[data-theme="dark"] body {
+  background:
+    radial-gradient(58rem 32rem at 8% -12%, rgba(105, 130, 255, 0.1), transparent 72%),
+    radial-gradient(44rem 26rem at 92% -8%, rgba(56, 189, 248, 0.08), transparent 70%),
+    linear-gradient(180deg, #11131a 0%, #0c0d12 100%);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+.app-shell {
+  position: relative;
+  overflow: hidden;
+}
+
+.app-shell::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -1;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0));
+}
+
+html[data-theme="dark"] .app-shell::before {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0));
+}
+
+.content-surface :is(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select, textarea) {
+  border-color: rgba(148, 163, 184, 0.32);
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.94),
+    rgba(255, 255, 255, 0.86)
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    0 1px 2px rgba(15, 23, 42, 0.05);
+}
+
+.content-surface :is(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select, textarea):focus-visible {
+  outline: none;
+  border-color: rgba(71, 85, 105, 0.68);
+  box-shadow:
+    0 0 0 3px rgba(148, 163, 184, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95);
+}
+
+html[data-theme="dark"] .content-surface :is(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select, textarea) {
+  color: #e4e8f1;
+  border-color: rgba(255, 255, 255, 0.14);
+  background: linear-gradient(
+    180deg,
+    rgba(33, 36, 49, 0.88),
+    rgba(24, 26, 37, 0.82)
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.32);
+}
+
+.nyro-field {
+  position: relative;
+  display: inline-flex;
+  align-items: stretch;
+  min-height: 44px;
+  border-radius: 11px;
+  background: var(--nyro-field-bg);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+}
+
+.nyro-field-full {
+  width: 100%;
+}
+
+.nyro-field-outline {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  border: 1px solid var(--nyro-field-border);
+  border-radius: inherit;
+  pointer-events: none;
+  padding: 0 10px;
+}
+
+.nyro-field-focused .nyro-field-outline {
+  border-color: var(--nyro-field-focus-border);
+}
+
+.nyro-field-legend {
+  display: block;
+  max-width: 0.01px;
+  height: 11px;
+  font-size: 11px;
+  white-space: nowrap;
+  visibility: hidden;
+  padding: 0;
+  transition:
+    max-width 0.2s ease,
+    padding 0.2s ease;
+}
+
+.nyro-field-legend span {
+  display: inline-block;
+  opacity: 0;
+  padding: 0 2px;
+}
+
+.nyro-field-has-value .nyro-field-legend,
+.nyro-field-focused .nyro-field-legend {
+  max-width: 100%;
+  padding: 0 4px;
+}
+
+.nyro-field-label {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  z-index: 2;
+  padding: 0 6px;
+  font-size: 13px;
+  line-height: 1.15;
+  color: var(--nyro-field-label);
+  pointer-events: none;
+  transform: translateY(-50%);
+  transition:
+    top 0.18s ease,
+    transform 0.18s ease,
+    color 0.18s ease,
+    font-size 0.18s ease;
+}
+
+.nyro-field-has-value .nyro-field-label,
+.nyro-field-focused .nyro-field-label {
+  top: 4px;
+  font-size: 11px;
+  color: var(--nyro-field-label-active);
+  transform: translateY(-50%) scale(0.96);
+}
+
+.nyro-field-input {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  border-radius: 11px;
+  background: transparent;
+  color: var(--color-foreground);
+  font-size: 0.875rem;
+  line-height: 1.35;
+  padding: 12px 14px;
+}
+
+.nyro-field-has-value .nyro-field-input,
+.nyro-field-focused .nyro-field-input {
+  padding: 14px 14px 8px;
+}
+
+.nyro-field-textarea-input {
+  min-height: 132px;
+  resize: vertical;
+  line-height: 1.5;
+  padding-top: 22px;
+}
+
+.content-surface .nyro-field-input,
+.content-surface .nyro-field-input:hover,
+.content-surface .nyro-field-input:focus-visible {
+  border: 0 !important;
+  box-shadow: none !important;
+  background: transparent !important;
+}
+
+.nyro-field-disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+@utility glass {
+  background: linear-gradient(
+    170deg,
+    rgba(255, 255, 255, 0.72),
+    rgba(255, 255, 255, 0.5)
+  );
+  border: 1px solid rgba(255, 255, 255, 0.74);
+  box-shadow:
+    0 10px 24px rgba(15, 23, 42, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  backdrop-filter: blur(18px) saturate(116%);
+  -webkit-backdrop-filter: blur(18px) saturate(116%);
+}
+
+html[data-theme="dark"] .glass {
+  background: linear-gradient(
+    180deg,
+    rgba(23, 25, 34, 0.86),
+    rgba(17, 18, 26, 0.8)
+  );
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow:
+    0 16px 30px rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.35);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

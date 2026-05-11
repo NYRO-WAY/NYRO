@@ -63,9 +63,10 @@ impl CacheBackend for InMemoryCacheBackend {
     async fn get(&self, key: &str) -> anyhow::Result<Option<Vec<u8>>> {
         let mut entries = self.entries.write().await;
         if let Some(entry) = entries.get(key)
-            && entry.expires_at > Instant::now() {
-                return Ok(Some(entry.data.clone()));
-            }
+            && entry.expires_at > Instant::now()
+        {
+            return Ok(Some(entry.data.clone()));
+        }
         entries.remove(key);
         Ok(None)
     }

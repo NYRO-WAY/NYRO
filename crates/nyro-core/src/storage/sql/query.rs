@@ -15,7 +15,11 @@ impl Default for Pagination {
     }
 }
 
-pub fn pagination_clause(dialect: SqlDialect, _pagination: &Pagination, next_bind_index: usize) -> String {
+pub fn pagination_clause(
+    dialect: SqlDialect,
+    _pagination: &Pagination,
+    next_bind_index: usize,
+) -> String {
     match dialect {
         SqlDialect::Postgres => {
             format!(

@@ -71,15 +71,16 @@ impl IngressDecoder for ResponsesDecoder {
         let tool_choice = obj.get("tool_choice").cloned();
 
         if let Some(inst) = obj.get("instructions").and_then(|v| v.as_str())
-            && !inst.is_empty() {
-                messages.push(InternalMessage {
-                    role: Role::System,
-                    content: MessageContent::Text(inst.to_string()),
-                    tool_calls: None,
-                    tool_call_id: None,
-                    extra: HashMap::new(),
-                });
-            }
+            && !inst.is_empty()
+        {
+            messages.push(InternalMessage {
+                role: Role::System,
+                content: MessageContent::Text(inst.to_string()),
+                tool_calls: None,
+                tool_call_id: None,
+                extra: HashMap::new(),
+            });
+        }
 
         let input = obj
             .get("input")
@@ -281,7 +282,11 @@ fn decode_input_item(item: &Value) -> Result<Option<InternalMessage>> {
             Ok(Some(InternalMessage {
                 role: Role::Assistant,
                 content: MessageContent::Text(String::new()),
-                tool_calls: Some(vec![ToolCall { id: call_id, name, arguments }]),
+                tool_calls: Some(vec![ToolCall {
+                    id: call_id,
+                    name,
+                    arguments,
+                }]),
                 tool_call_id: None,
                 extra: HashMap::new(),
             }))
@@ -353,7 +358,10 @@ fn parse_tools(raw_tools: Option<&Value>) -> Result<Option<Vec<ToolDef>>> {
 
     let mut tools = Vec::new();
     for item in items {
-        let tool_type = item.get("type").and_then(|v| v.as_str()).unwrap_or("function");
+        let tool_type = item
+            .get("type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("function");
 
         match tool_type {
             "function" => {
@@ -370,7 +378,11 @@ fn parse_tools(raw_tools: Option<&Value>) -> Result<Option<Vec<ToolDef>>> {
                     .get("parameters")
                     .cloned()
                     .unwrap_or(Value::Object(Default::default()));
-                tools.push(ToolDef { name, description, parameters });
+                tools.push(ToolDef {
+                    name,
+                    description,
+                    parameters,
+                });
             }
             // PR-09: built-in tools preserved as sentinel ToolDef entries
             // so the encoder can reconstruct them on the egress side.
@@ -387,5 +399,9 @@ fn parse_tools(raw_tools: Option<&Value>) -> Result<Option<Vec<ToolDef>>> {
         }
     }
 
-    if tools.is_empty() { Ok(None) } else { Ok(Some(tools)) }
+    if tools.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(tools))
+    }
 }

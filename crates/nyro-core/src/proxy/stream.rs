@@ -193,7 +193,10 @@ impl<'a> StreamBridge<'a> {
     pub fn finish(&mut self) {
         if !self.state.is_terminal() {
             self.state = StreamState::Finishing;
-            self.ctx.trace("stream", format!("finishing; {} chunks sent", self.chunks_sent));
+            self.ctx.trace(
+                "stream",
+                format!("finishing; {} chunks sent", self.chunks_sent),
+            );
             self.complete();
         }
     }
@@ -224,17 +227,26 @@ impl<'a> StreamBridge<'a> {
         if self.state.is_terminal() {
             return;
         }
-        self.ctx.trace("stream", format!("failed: {:?}", failure.to_outcome_code()));
+        self.ctx
+            .trace("stream", format!("failed: {:?}", failure.to_outcome_code()));
         self.ctx.set_outcome(if self.chunks_sent > 0 {
-            RequestOutcome::PartialSuccess { chunks_sent: self.chunks_sent }
+            RequestOutcome::PartialSuccess {
+                chunks_sent: self.chunks_sent,
+            }
         } else {
-            RequestOutcome::Failed { stable_code: failure.to_outcome_code() }
+            RequestOutcome::Failed {
+                stable_code: failure.to_outcome_code(),
+            }
         });
         self.state = StreamState::Failed(failure);
     }
 
     fn failure(&self) -> Option<&StreamFailure> {
-        if let StreamState::Failed(f) = &self.state { Some(f) } else { None }
+        if let StreamState::Failed(f) = &self.state {
+            Some(f)
+        } else {
+            None
+        }
     }
 }
 
@@ -250,7 +262,9 @@ impl Drop for StreamBridge<'_> {
         // on an implicit success.
         if self.ctx.get_outcome().is_none() {
             self.ctx.set_outcome(if self.chunks_sent > 0 {
-                RequestOutcome::PartialSuccess { chunks_sent: self.chunks_sent }
+                RequestOutcome::PartialSuccess {
+                    chunks_sent: self.chunks_sent,
+                }
             } else {
                 RequestOutcome::ClientCancelled
             });
@@ -286,9 +300,15 @@ mod tests {
         b.push_chunk(Ok(())).unwrap(); // first chunk OK
         b.push_chunk(Ok(())).unwrap();
         b.on_read_error("connection reset"); // simulated read break
-        assert!(matches!(b.state(), StreamState::Failed(StreamFailure::Upstream { .. })));
+        assert!(matches!(
+            b.state(),
+            StreamState::Failed(StreamFailure::Upstream { .. })
+        ));
         let outcome = c.get_outcome().unwrap().clone();
-        assert!(matches!(outcome, RequestOutcome::PartialSuccess { chunks_sent: 2 }));
+        assert!(matches!(
+            outcome,
+            RequestOutcome::PartialSuccess { chunks_sent: 2 }
+        ));
     }
 
     // ── Fault 2: parser error ─────────────────────────────────────────────────
@@ -300,7 +320,10 @@ mod tests {
         b.on_connected();
         let err = b.push_chunk(Err(StreamFailure::parse(Some("bad chunk".into()))));
         assert!(err.is_err());
-        assert!(matches!(b.state(), StreamState::Failed(StreamFailure::Parse { .. })));
+        assert!(matches!(
+            b.state(),
+            StreamState::Failed(StreamFailure::Parse { .. })
+        ));
         assert!(matches!(
             c.get_outcome().unwrap(),
             RequestOutcome::Failed { .. }
@@ -319,7 +342,10 @@ mod tests {
         b.cancellation.cancel();
         let result = b.push_chunk(Ok(()));
         assert!(result.is_err());
-        assert!(matches!(b.state(), StreamState::Failed(StreamFailure::ClientCancelled)));
+        assert!(matches!(
+            b.state(),
+            StreamState::Failed(StreamFailure::ClientCancelled)
+        ));
     }
 
     // ── Fault 4: timeout ──────────────────────────────────────────────────────
@@ -332,7 +358,10 @@ mod tests {
         b.on_connected();
         let result = b.push_chunk(Ok(()));
         assert!(result.is_err());
-        assert!(matches!(b.state(), StreamState::Failed(StreamFailure::Timeout)));
+        assert!(matches!(
+            b.state(),
+            StreamState::Failed(StreamFailure::Timeout)
+        ));
     }
 
     // ── Fault 5: 5xx from upstream after SSE started ──────────────────────────
@@ -344,8 +373,14 @@ mod tests {
         b.on_connected();
         b.push_chunk(Ok(())).unwrap();
         b.on_read_error("upstream 503");
-        assert!(matches!(b.state(), StreamState::Failed(StreamFailure::Upstream { .. })));
-        assert!(matches!(c.get_outcome().unwrap(), RequestOutcome::PartialSuccess { .. }));
+        assert!(matches!(
+            b.state(),
+            StreamState::Failed(StreamFailure::Upstream { .. })
+        ));
+        assert!(matches!(
+            c.get_outcome().unwrap(),
+            RequestOutcome::PartialSuccess { .. }
+        ));
     }
 
     // ── Fault 6: stream ends without DONE event ───────────────────────────────
@@ -394,7 +429,9 @@ mod tests {
         let c = ctx();
         {
             let mut b = StreamBridge::new(&c);
-            b.add_cleanup(move || { ran_clone.store(true, Ordering::SeqCst); });
+            b.add_cleanup(move || {
+                ran_clone.store(true, Ordering::SeqCst);
+            });
         }
         assert!(ran.load(Ordering::SeqCst));
     }

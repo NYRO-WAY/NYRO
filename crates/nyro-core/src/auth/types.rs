@@ -304,7 +304,10 @@ pub trait AuthDriver: Send + Sync {
         _input: AuthExchangeInput,
         _ctx: ExchangeAuthContext,
     ) -> anyhow::Result<CredentialBundle> {
-        bail!("{} exchange flow is not implemented yet", self.metadata().key)
+        bail!(
+            "{} exchange flow is not implemented yet",
+            self.metadata().key
+        )
     }
 
     async fn refresh(
@@ -312,7 +315,10 @@ pub trait AuthDriver: Send + Sync {
         _credential: &StoredCredential,
         _ctx: RefreshAuthContext,
     ) -> anyhow::Result<CredentialBundle> {
-        bail!("{} refresh flow is not implemented yet", self.metadata().key)
+        bail!(
+            "{} refresh flow is not implemented yet",
+            self.metadata().key
+        )
     }
 
     fn bind_runtime(
