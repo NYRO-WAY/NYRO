@@ -502,6 +502,7 @@ fn extract_usage(v: &Value) -> TokenUsage {
     TokenUsage {
         input_tokens: input as u32,
         output_tokens: output as u32,
+        ..TokenUsage::default()
     }
 }
 
@@ -716,7 +717,7 @@ mod tests {
             tool_calls: vec![],
             response_items: None,
             stop_reason: Some("stop".to_string()),
-            usage: TokenUsage { input_tokens: 10, output_tokens: 5 },
+            usage: TokenUsage { input_tokens: 10, output_tokens: 5, ..TokenUsage::default() },
         };
         let formatted = OpenAIResponseFormatter.format_response(&internal);
         let msg = &formatted["choices"][0]["message"];

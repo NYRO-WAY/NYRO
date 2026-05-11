@@ -102,9 +102,21 @@ pub struct ImageSource {
 // ── Egress: internal → upstream response ──
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ServerToolUsage {
+    pub web_search_requests: u32,
+    pub web_fetch_requests: u32,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TokenUsage {
     pub input_tokens: u32,
     pub output_tokens: u32,
+    /// Number of tokens read from the prompt cache (Anthropic / compatible providers).
+    pub cache_read_input_tokens: Option<u32>,
+    /// Number of tokens written to the prompt cache.
+    pub cache_creation_input_tokens: Option<u32>,
+    /// Server-side tool call counts (web search / web fetch).
+    pub server_tool_use: Option<ServerToolUsage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

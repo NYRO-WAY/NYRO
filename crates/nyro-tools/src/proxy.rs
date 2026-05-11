@@ -502,7 +502,11 @@ fn assemble_sse(path: &str, buf: &[u8]) -> serde_json::Value {
 /// Anthropic Messages SSE → assembled message object.
 ///
 /// Accumulates `text_delta` content, captures `message_start` metadata and
-/// `message_delta` stop reason + output token count.
+/// `message_delta` stop reason + usage counts.
+///
+/// Token priority: if `message_delta.usage.input_tokens` is non-zero it wins
+/// over `message_start.usage.input_tokens` — ZhipuAI / MiniMax publish the
+/// real value there instead of in `message_start`.
 fn assemble_anthropic(chunks: &[serde_json::Value]) -> serde_json::Value {
     let mut id = String::new();
     let mut model = String::new();
@@ -510,6 +514,31 @@ fn assemble_anthropic(chunks: &[serde_json::Value]) -> serde_json::Value {
     let mut stop_reason = serde_json::Value::Null;
     let mut input_tokens: u64 = 0;
     let mut output_tokens: u64 = 0;
+    let mut cache_read: Option<u64> = None;
+    let mut cache_creation: Option<u64> = None;
+    let mut web_search_requests: Option<u64> = None;
+    let mut web_fetch_requests: Option<u64> = None;
+
+    let read_cache_fields = |usage: &serde_json::Value,
+                              cache_read: &mut Option<u64>,
+                              cache_creation: &mut Option<u64>,
+                              web_search: &mut Option<u64>,
+                              web_fetch: &mut Option<u64>| {
+        if let Some(v) = usage.get("cache_read_input_tokens").and_then(|v| v.as_u64()) {
+            *cache_read = Some(v);
+        }
+        if let Some(v) = usage.get("cache_creation_input_tokens").and_then(|v| v.as_u64()) {
+            *cache_creation = Some(v);
+        }
+        if let Some(stu) = usage.get("server_tool_use") {
+            if let Some(v) = stu.get("web_search_requests").and_then(|v| v.as_u64()) {
+                *web_search = Some(v);
+            }
+            if let Some(v) = stu.get("web_fetch_requests").and_then(|v| v.as_u64()) {
+                *web_fetch = Some(v);
+            }
+        }
+    };
 
     for chunk in chunks {
         match chunk.get("type").and_then(|t| t.as_str()) {
@@ -517,10 +546,17 @@ fn assemble_anthropic(chunks: &[serde_json::Value]) -> serde_json::Value {
                 if let Some(msg) = chunk.get("message") {
                     id = msg.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
                     model = msg.get("model").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    input_tokens = msg
-                        .pointer("/usage/input_tokens")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0);
+                    if let Some(usage) = msg.get("usage") {
+                        input_tokens =
+                            usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                        read_cache_fields(
+                            usage,
+                            &mut cache_read,
+                            &mut cache_creation,
+                            &mut web_search_requests,
+                            &mut web_fetch_requests,
+                        );
+                    }
                 }
             }
             Some("content_block_delta") => {
@@ -531,9 +567,6 @@ fn assemble_anthropic(chunks: &[serde_json::Value]) -> serde_json::Value {
                                 text.push_str(t);
                             }
                         }
-                        Some("thinking_delta") => {
-                            // ignore for log assembly
-                        }
                         _ => {}
                     }
                 }
@@ -543,13 +576,44 @@ fn assemble_anthropic(chunks: &[serde_json::Value]) -> serde_json::Value {
                     .pointer("/delta/stop_reason")
                     .cloned()
                     .unwrap_or(serde_json::Value::Null);
-                output_tokens = chunk
-                    .pointer("/usage/output_tokens")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0);
+                if let Some(usage) = chunk.get("usage") {
+                    // Override input_tokens when message_delta carries the real value
+                    // (ZhipuAI / MiniMax pattern).
+                    let delta_input =
+                        usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                    if delta_input > 0 {
+                        input_tokens = delta_input;
+                    }
+                    output_tokens =
+                        usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                    read_cache_fields(
+                        usage,
+                        &mut cache_read,
+                        &mut cache_creation,
+                        &mut web_search_requests,
+                        &mut web_fetch_requests,
+                    );
+                }
             }
             _ => {}
         }
+    }
+
+    let mut usage_obj = serde_json::json!({
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+    });
+    if let Some(v) = cache_read {
+        usage_obj["cache_read_input_tokens"] = v.into();
+    }
+    if let Some(v) = cache_creation {
+        usage_obj["cache_creation_input_tokens"] = v.into();
+    }
+    if web_search_requests.is_some() || web_fetch_requests.is_some() {
+        usage_obj["server_tool_use"] = serde_json::json!({
+            "web_search_requests": web_search_requests.unwrap_or(0),
+            "web_fetch_requests": web_fetch_requests.unwrap_or(0),
+        });
     }
 
     serde_json::json!({
@@ -559,7 +623,7 @@ fn assemble_anthropic(chunks: &[serde_json::Value]) -> serde_json::Value {
         "model": model,
         "content": [{"type": "text", "text": text}],
         "stop_reason": stop_reason,
-        "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens}
+        "usage": usage_obj
     })
 }
 
@@ -863,5 +927,82 @@ mod tests {
     #[test]
     fn body_empty_is_null() {
         assert!(body_to_json(b"").is_null());
+    }
+
+    // ── assemble_anthropic tests (Task 3) ──
+
+    fn start_chunk(input_tokens: u64) -> serde_json::Value {
+        serde_json::json!({
+            "type": "message_start",
+            "message": {
+                "id": "msg_t",
+                "model": "test-model",
+                "usage": {"input_tokens": input_tokens, "output_tokens": 0}
+            }
+        })
+    }
+
+    fn delta_chunk(input_tokens: u64, output_tokens: u64) -> serde_json::Value {
+        serde_json::json!({
+            "type": "message_delta",
+            "delta": {"stop_reason": "end_turn"},
+            "usage": {"input_tokens": input_tokens, "output_tokens": output_tokens}
+        })
+    }
+
+    #[test]
+    fn assemble_anthropic_delta_overrides_start_input_tokens() {
+        // ZhipuAI pattern: message_start.input_tokens=0, real value in message_delta.
+        let chunks = vec![start_chunk(0), delta_chunk(60, 43)];
+        let result = assemble_anthropic(&chunks);
+        let u = &result["usage"];
+        assert_eq!(u["input_tokens"].as_u64(), Some(60), "message_delta wins when > 0");
+        assert_eq!(u["output_tokens"].as_u64(), Some(43));
+    }
+
+    #[test]
+    fn assemble_anthropic_keeps_start_input_when_delta_is_zero() {
+        // Standard pattern: input_tokens in message_start, delta has no input field.
+        let chunks = vec![
+            start_chunk(100),
+            serde_json::json!({
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn"},
+                "usage": {"output_tokens": 50}
+            }),
+        ];
+        let result = assemble_anthropic(&chunks);
+        let u = &result["usage"];
+        assert_eq!(u["input_tokens"].as_u64(), Some(100), "start value kept");
+        assert_eq!(u["output_tokens"].as_u64(), Some(50));
+    }
+
+    #[test]
+    fn assemble_anthropic_cache_and_tool_fields() {
+        let chunks = vec![
+            start_chunk(10),
+            serde_json::json!({
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn"},
+                "usage": {
+                    "output_tokens": 5,
+                    "cache_read_input_tokens": 3,
+                    "server_tool_use": {
+                        "web_search_requests": 2,
+                        "web_fetch_requests": 1
+                    }
+                }
+            }),
+        ];
+        let result = assemble_anthropic(&chunks);
+        let u = &result["usage"];
+        assert_eq!(u["cache_read_input_tokens"].as_u64(), Some(3));
+        // cache_creation_input_tokens was not present → must be absent from output
+        assert!(
+            u.get("cache_creation_input_tokens").is_none(),
+            "absent field must not appear in assembled output",
+        );
+        assert_eq!(u["server_tool_use"]["web_search_requests"].as_u64(), Some(2));
+        assert_eq!(u["server_tool_use"]["web_fetch_requests"].as_u64(), Some(1));
     }
 }

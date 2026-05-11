@@ -394,6 +394,7 @@ fn extract_gemini_usage(v: &Value) -> TokenUsage {
     TokenUsage {
         input_tokens: input as u32,
         output_tokens: output as u32,
+        ..TokenUsage::default()
     }
 }
 

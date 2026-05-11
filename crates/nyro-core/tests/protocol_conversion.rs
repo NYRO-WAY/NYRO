@@ -39,6 +39,7 @@ fn openai_to_anthropic_thinking_blocks() {
         usage: TokenUsage {
             input_tokens: 10,
             output_tokens: 20,
+            ..TokenUsage::default()
         },
     };
 
@@ -124,6 +125,7 @@ fn openai_formatter_sets_tool_calls_finish_reason_when_tool_calls_present() {
         usage: TokenUsage {
             input_tokens: 44,
             output_tokens: 13,
+            ..TokenUsage::default()
         },
     };
 

@@ -148,6 +148,12 @@ impl ResponseFormatter for AnthropicResponseFormatter {
             other => other,
         });
 
+        let mut usage = serde_json::json!({
+            "input_tokens": resp.usage.input_tokens,
+            "output_tokens": resp.usage.output_tokens,
+        });
+        extend_usage_json(&mut usage, &resp.usage);
+
         serde_json::json!({
             "id": resp.id,
             "type": "message",
@@ -155,10 +161,7 @@ impl ResponseFormatter for AnthropicResponseFormatter {
             "content": content,
             "model": resp.model,
             "stop_reason": stop_reason,
-            "usage": {
-                "input_tokens": resp.usage.input_tokens,
-                "output_tokens": resp.usage.output_tokens,
-            }
+            "usage": usage
         })
     }
 }
@@ -235,12 +238,17 @@ fn parse_anthropic_event(event_type: Option<&str>, data: &Value, deltas: &mut Ve
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
                     .to_string();
-                deltas.push(StreamDelta::MessageStart { id, model });
-
+                // Usage BEFORE MessageStart so the formatter has the correct
+                // input_tokens available when it emits the message_start SSE event.
                 let u = extract_anthropic_usage(msg);
-                if u.input_tokens > 0 {
+                if u.input_tokens > 0
+                    || u.cache_read_input_tokens.is_some()
+                    || u.cache_creation_input_tokens.is_some()
+                    || u.server_tool_use.is_some()
+                {
                     deltas.push(StreamDelta::Usage(u));
                 }
+                deltas.push(StreamDelta::MessageStart { id, model });
             }
         }
         Some("content_block_start") => {
@@ -328,28 +336,28 @@ fn parse_anthropic_event(event_type: Option<&str>, data: &Value, deltas: &mut Ve
             }
         }
         Some("message_delta") => {
+            // Usage BEFORE Done: the formatter emits message_delta SSE on Done,
+            // so self.usage must already reflect the final counts.
+            // Also read input_tokens here — ZhipuAI and others publish the real
+            // value in message_delta.usage rather than message_start.usage.
+            let u = extract_anthropic_usage(data);
+            if u.input_tokens > 0
+                || u.output_tokens > 0
+                || u.cache_read_input_tokens.is_some()
+                || u.cache_creation_input_tokens.is_some()
+                || u.server_tool_use.is_some()
+            {
+                deltas.push(StreamDelta::Usage(u));
+            }
             if let Some(delta) = data.get("delta")
-                && let Some(reason) = delta.get("stop_reason").and_then(|v| v.as_str()) {
-                    let normalized = match reason {
-                        "end_turn" => "stop",
-                        "tool_use" => "tool_calls",
-                        other => other,
-                    };
-                    deltas.push(StreamDelta::Done {
-                        stop_reason: normalized.to_string(),
-                    });
-                }
-            if let Some(u) = data.get("usage") {
-                let output = u
-                    .get("output_tokens")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0) as u32;
-                if output > 0 {
-                    deltas.push(StreamDelta::Usage(TokenUsage {
-                        input_tokens: 0,
-                        output_tokens: output,
-                    }));
-                }
+                && let Some(reason) = delta.get("stop_reason").and_then(|v| v.as_str())
+            {
+                let normalized = match reason {
+                    "end_turn" => "stop",
+                    "tool_use" => "tool_calls",
+                    other => other,
+                };
+                deltas.push(StreamDelta::Done { stop_reason: normalized.to_string() });
             }
         }
         Some("ping") | Some("content_block_stop") | Some("message_stop") => {}
@@ -402,6 +410,11 @@ impl AnthropicStreamFormatter {
             return;
         }
         self.message_started = true;
+        let mut usage = serde_json::json!({
+            "input_tokens": self.usage.input_tokens,
+            "output_tokens": 0
+        });
+        extend_usage_json(&mut usage, &self.usage);
         let msg_start = serde_json::json!({
             "type": "message_start",
             "message": {
@@ -411,7 +424,7 @@ impl AnthropicStreamFormatter {
                 "content": [],
                 "model": self.model,
                 "stop_reason": null,
-                "usage": {"input_tokens": self.usage.input_tokens, "output_tokens": 0}
+                "usage": usage
             }
         });
         events.push(SseEvent::new(Some("message_start"), msg_start.to_string()));
@@ -548,6 +561,15 @@ impl StreamFormatter for AnthropicStreamFormatter {
                     if u.output_tokens > 0 {
                         self.usage.output_tokens = u.output_tokens;
                     }
+                    if u.cache_read_input_tokens.is_some() {
+                        self.usage.cache_read_input_tokens = u.cache_read_input_tokens;
+                    }
+                    if u.cache_creation_input_tokens.is_some() {
+                        self.usage.cache_creation_input_tokens = u.cache_creation_input_tokens;
+                    }
+                    if u.server_tool_use.is_some() {
+                        self.usage.server_tool_use = u.server_tool_use.clone();
+                    }
                 }
                 StreamDelta::Done { stop_reason } => {
                     self.ensure_message_start(&mut events);
@@ -559,10 +581,14 @@ impl StreamFormatter for AnthropicStreamFormatter {
                         "tool_calls" => "tool_use",
                         other => other,
                     };
+                    let mut usage = serde_json::json!({
+                        "output_tokens": self.usage.output_tokens
+                    });
+                    extend_usage_json(&mut usage, &self.usage);
                     let msg_delta = serde_json::json!({
                         "type": "message_delta",
                         "delta": {"stop_reason": anthropic_reason},
-                        "usage": {"output_tokens": self.usage.output_tokens}
+                        "usage": usage
                     });
                     events.push(SseEvent::new(Some("message_delta"), msg_delta.to_string()));
                     events.push(SseEvent::new(
@@ -635,19 +661,44 @@ impl AnthropicStreamFormatter {
 }
 
 fn extract_anthropic_usage(v: &Value) -> TokenUsage {
-    if let Some(u) = v.get("usage") {
-        TokenUsage {
-            input_tokens: u
-                .get("input_tokens")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u32,
-            output_tokens: u
-                .get("output_tokens")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0) as u32,
-        }
-    } else {
-        TokenUsage::default()
+    let Some(u) = v.get("usage") else {
+        return TokenUsage::default();
+    };
+    let get_u32 = |key: &str| u.get(key).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+    let get_opt_u32 = |key: &str| u.get(key).and_then(|v| v.as_u64()).map(|n| n as u32);
+    let server_tool_use = u.get("server_tool_use").map(|stu| ServerToolUsage {
+        web_search_requests: stu
+            .get("web_search_requests")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32,
+        web_fetch_requests: stu
+            .get("web_fetch_requests")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0) as u32,
+    });
+    TokenUsage {
+        input_tokens: get_u32("input_tokens"),
+        output_tokens: get_u32("output_tokens"),
+        cache_read_input_tokens: get_opt_u32("cache_read_input_tokens"),
+        cache_creation_input_tokens: get_opt_u32("cache_creation_input_tokens"),
+        server_tool_use,
+    }
+}
+
+/// Append optional Anthropic-specific usage fields to an existing JSON usage object.
+/// Omits keys whose values are `None`.
+fn extend_usage_json(obj: &mut Value, u: &TokenUsage) {
+    if let Some(v) = u.cache_read_input_tokens {
+        obj["cache_read_input_tokens"] = v.into();
+    }
+    if let Some(v) = u.cache_creation_input_tokens {
+        obj["cache_creation_input_tokens"] = v.into();
+    }
+    if let Some(ref stu) = u.server_tool_use {
+        obj["server_tool_use"] = serde_json::json!({
+            "web_search_requests": stu.web_search_requests,
+            "web_fetch_requests": stu.web_fetch_requests,
+        });
     }
 }
 
@@ -1039,5 +1090,247 @@ mod tests {
 
         let raw = deltas.iter().find(|d| matches!(d, StreamDelta::RawEvent { event_type, .. } if event_type == "content_block_delta"));
         assert!(raw.is_some(), "expected RawEvent for citations_delta, got: {deltas:?}");
+    }
+
+    // ── Bug-fix ordering tests (Task 0) ──
+
+    #[test]
+    fn test_usage_delta_before_message_start() {
+        // Bug 0a: Usage must appear BEFORE MessageStart in the delta list so the
+        // formatter has the correct input_tokens when it emits message_start SSE.
+        let sse = make_sse_block(
+            "message_start",
+            r#"{"type":"message_start","message":{"id":"msg_1","model":"glm","usage":{"input_tokens":10,"output_tokens":0}}}"#,
+        );
+        let mut parser = AnthropicStreamParser::new();
+        let deltas = parser.parse_chunk(&sse).unwrap();
+
+        let usage_pos = deltas.iter().position(|d| matches!(d, StreamDelta::Usage(_)));
+        let start_pos = deltas.iter().position(|d| matches!(d, StreamDelta::MessageStart { .. }));
+        assert!(
+            usage_pos.is_some() && start_pos.is_some(),
+            "both deltas must be present; got: {deltas:?}",
+        );
+        assert!(
+            usage_pos.unwrap() < start_pos.unwrap(),
+            "Usage must precede MessageStart; got: {deltas:?}",
+        );
+    }
+
+    #[test]
+    fn test_usage_delta_before_done() {
+        // Bug 0b: Usage must appear BEFORE Done in the delta list so the formatter
+        // has the correct output_tokens when it emits message_delta SSE.
+        let sse = make_sse_block(
+            "message_delta",
+            r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":43}}"#,
+        );
+        let mut parser = AnthropicStreamParser::new();
+        let deltas = parser.parse_chunk(&sse).unwrap();
+
+        let usage_pos = deltas.iter().position(|d| matches!(d, StreamDelta::Usage(_)));
+        let done_pos = deltas.iter().position(|d| matches!(d, StreamDelta::Done { .. }));
+        assert!(
+            usage_pos.is_some() && done_pos.is_some(),
+            "both deltas must be present; got: {deltas:?}",
+        );
+        assert!(
+            usage_pos.unwrap() < done_pos.unwrap(),
+            "Usage must precede Done; got: {deltas:?}",
+        );
+    }
+
+    #[test]
+    fn test_message_delta_input_tokens_read() {
+        // Bug 0c: input_tokens from message_delta.usage must be captured.
+        // ZhipuAI / MiniMax publish the real input count here instead of message_start.
+        let sse = make_sse_block(
+            "message_delta",
+            r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":60,"output_tokens":43}}"#,
+        );
+        let mut parser = AnthropicStreamParser::new();
+        let deltas = parser.parse_chunk(&sse).unwrap();
+
+        let usage = deltas
+            .iter()
+            .find_map(|d| if let StreamDelta::Usage(u) = d { Some(u) } else { None })
+            .expect("Usage delta must be present");
+        assert_eq!(usage.input_tokens, 60, "input_tokens must be 60");
+        assert_eq!(usage.output_tokens, 43, "output_tokens must be 43");
+    }
+
+    // ── New usage-field extraction tests (Task 2 – parser) ──
+
+    #[test]
+    fn test_cache_fields_extracted_from_message_start() {
+        let sse = make_sse_block(
+            "message_start",
+            r#"{"type":"message_start","message":{"id":"m","model":"c","usage":{"input_tokens":100,"output_tokens":0,"cache_read_input_tokens":50,"cache_creation_input_tokens":200}}}"#,
+        );
+        let mut parser = AnthropicStreamParser::new();
+        let deltas = parser.parse_chunk(&sse).unwrap();
+
+        let usage = deltas
+            .iter()
+            .find_map(|d| if let StreamDelta::Usage(u) = d { Some(u) } else { None })
+            .expect("Usage delta must be present");
+        assert_eq!(usage.cache_read_input_tokens, Some(50));
+        assert_eq!(usage.cache_creation_input_tokens, Some(200));
+    }
+
+    #[test]
+    fn test_server_tool_use_extracted_from_message_delta() {
+        let sse = make_sse_block(
+            "message_delta",
+            r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":10,"server_tool_use":{"web_search_requests":3,"web_fetch_requests":1}}}"#,
+        );
+        let mut parser = AnthropicStreamParser::new();
+        let deltas = parser.parse_chunk(&sse).unwrap();
+
+        let usage = deltas
+            .iter()
+            .find_map(|d| if let StreamDelta::Usage(u) = d { Some(u) } else { None })
+            .expect("Usage delta must be present");
+        let stu = usage.server_tool_use.as_ref().expect("server_tool_use must be Some");
+        assert_eq!(stu.web_search_requests, 3);
+        assert_eq!(stu.web_fetch_requests, 1);
+    }
+
+    // ── New usage-field emission tests (Task 2 – formatter) ──
+
+    #[test]
+    fn test_formatter_message_start_includes_cache_fields() {
+        // Usage delta carrying cache fields must appear in the message_start SSE output.
+        let usage = TokenUsage {
+            input_tokens: 100,
+            output_tokens: 0,
+            cache_read_input_tokens: Some(50),
+            cache_creation_input_tokens: Some(200),
+            server_tool_use: None,
+        };
+        let mut formatter = AnthropicStreamFormatter::new();
+        let events = formatter.format_deltas(&[
+            StreamDelta::Usage(usage),
+            StreamDelta::MessageStart { id: "m1".into(), model: "c".into() },
+        ]);
+
+        let start_ev = events
+            .iter()
+            .find(|e| e.event.as_deref() == Some("message_start"))
+            .expect("message_start event must be emitted");
+        let json: serde_json::Value = serde_json::from_str(&start_ev.data).unwrap();
+        let u = json.pointer("/message/usage").expect("/message/usage must exist");
+        assert_eq!(u["input_tokens"].as_u64(), Some(100));
+        assert_eq!(u["cache_read_input_tokens"].as_u64(), Some(50));
+        assert_eq!(u["cache_creation_input_tokens"].as_u64(), Some(200));
+        assert!(u.get("server_tool_use").is_none(), "server_tool_use must be absent when None");
+    }
+
+    #[test]
+    fn test_formatter_message_delta_includes_new_fields() {
+        // message_delta SSE must carry cache and server_tool_use when present.
+        let usage = TokenUsage {
+            input_tokens: 60,
+            output_tokens: 43,
+            cache_read_input_tokens: Some(10),
+            cache_creation_input_tokens: None,
+            server_tool_use: Some(ServerToolUsage { web_search_requests: 2, web_fetch_requests: 0 }),
+        };
+        let mut formatter = AnthropicStreamFormatter::new();
+        let events = formatter.format_deltas(&[
+            StreamDelta::Usage(usage),
+            StreamDelta::MessageStart { id: "m2".into(), model: "c".into() },
+            StreamDelta::Done { stop_reason: "stop".into() },
+        ]);
+
+        let delta_ev = events
+            .iter()
+            .find(|e| e.event.as_deref() == Some("message_delta"))
+            .expect("message_delta event must be emitted");
+        let json: serde_json::Value = serde_json::from_str(&delta_ev.data).unwrap();
+        let u = &json["usage"];
+        assert_eq!(u["output_tokens"].as_u64(), Some(43));
+        assert_eq!(u["cache_read_input_tokens"].as_u64(), Some(10));
+        assert!(u.get("cache_creation_input_tokens").is_none(), "None field must be absent");
+        assert_eq!(u["server_tool_use"]["web_search_requests"].as_u64(), Some(2));
+    }
+
+    #[test]
+    fn test_format_response_includes_cache_fields() {
+        let resp = InternalResponse {
+            id: "m3".into(),
+            model: "claude".into(),
+            content: "hi".into(),
+            reasoning_content: None,
+            reasoning_signature: None,
+            tool_calls: vec![],
+            response_items: None,
+            stop_reason: Some("stop".into()),
+            usage: TokenUsage {
+                input_tokens: 10,
+                output_tokens: 5,
+                cache_read_input_tokens: Some(3),
+                cache_creation_input_tokens: Some(7),
+                server_tool_use: Some(ServerToolUsage {
+                    web_search_requests: 1,
+                    web_fetch_requests: 0,
+                }),
+            },
+        };
+        let json = AnthropicResponseFormatter.format_response(&resp);
+        let u = &json["usage"];
+        assert_eq!(u["input_tokens"].as_u64(), Some(10));
+        assert_eq!(u["output_tokens"].as_u64(), Some(5));
+        assert_eq!(u["cache_read_input_tokens"].as_u64(), Some(3));
+        assert_eq!(u["cache_creation_input_tokens"].as_u64(), Some(7));
+        assert_eq!(u["server_tool_use"]["web_search_requests"].as_u64(), Some(1));
+    }
+
+    // ── End-to-end round-trip: ZhipuAI pattern (Task 0 + Task 2) ──
+
+    #[test]
+    fn test_roundtrip_zhipuai_input_tokens_from_message_delta() {
+        // ZhipuAI sends input_tokens=0 in message_start but the real value in message_delta.
+        // After Bug 0b+0c fixes, output_tokens in the SSE must be correct and
+        // formatter.usage() must capture input_tokens=60 from message_delta.
+        let sse_start = make_sse_block(
+            "message_start",
+            r#"{"type":"message_start","message":{"id":"msg_z","model":"glm-5","usage":{"input_tokens":0,"output_tokens":0}}}"#,
+        );
+        let sse_text = make_sse_block(
+            "content_block_delta",
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hi"}}"#,
+        );
+        let sse_delta = make_sse_block(
+            "message_delta",
+            r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":60,"output_tokens":43}}"#,
+        );
+
+        let mut parser = AnthropicStreamParser::new();
+        let mut all_deltas = vec![];
+        for chunk in &[sse_start, sse_text, sse_delta] {
+            all_deltas.extend(parser.parse_chunk(chunk).unwrap());
+        }
+
+        let mut formatter = AnthropicStreamFormatter::new();
+        let events = formatter.format_deltas(&all_deltas);
+
+        let delta_ev = events
+            .iter()
+            .find(|e| e.event.as_deref() == Some("message_delta"))
+            .expect("message_delta event must be emitted");
+        let delta_json: serde_json::Value = serde_json::from_str(&delta_ev.data).unwrap();
+        assert_eq!(
+            delta_json["usage"]["output_tokens"].as_u64(),
+            Some(43),
+            "output_tokens must be 43 (Bug 0b: Usage before Done)",
+        );
+
+        // formatter.usage() must reflect input_tokens from message_delta (Bug 0c)
+        assert_eq!(
+            formatter.usage().input_tokens,
+            60,
+            "input_tokens=60 from message_delta must be captured in formatter state",
+        );
     }
 }

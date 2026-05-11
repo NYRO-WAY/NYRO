@@ -280,5 +280,6 @@ pub fn parse_usage(payload: &Value) -> TokenUsage {
     TokenUsage {
         input_tokens: prompt.max(0) as u32,
         output_tokens: 0,
+        ..TokenUsage::default()
     }
 }

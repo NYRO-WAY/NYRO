@@ -83,6 +83,7 @@ impl ResponseParser for ResponsesResponseParser {
                 .and_then(|v| v.get("output_tokens"))
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as u32,
+            ..TokenUsage::default()
         };
 
         Ok(InternalResponse {
@@ -250,6 +251,7 @@ impl ResponsesStreamParser {
                         .and_then(|v| v.get("output_tokens"))
                         .and_then(|v| v.as_u64())
                         .unwrap_or(0) as u32,
+                    ..TokenUsage::default()
                 };
                 if usage.input_tokens > 0 || usage.output_tokens > 0 {
                     deltas.push(StreamDelta::Usage(usage));

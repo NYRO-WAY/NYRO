@@ -66,8 +66,8 @@ impl Vendor for MinimaxVendor {
     fn build_url(&self, _ctx: &VendorCtx<'_>, base_url: &str, path: &str) -> String { openai_build_url(base_url, path) }
     fn vendor_id(&self) -> &'static str { "minimax" }
     fn supported_protocols(&self) -> &'static [ProtocolId] {
-        use crate::protocol::ids::OPENAI_CHAT_V1;
-        &[OPENAI_CHAT_V1]
+        use crate::protocol::ids::{ANTHROPIC_MESSAGES_2023_06_01, OPENAI_CHAT_V1};
+        &[ANTHROPIC_MESSAGES_2023_06_01, OPENAI_CHAT_V1]
     }
     fn declared_request_mutations(&self) -> bool { false }
     fn declared_response_mutations(&self) -> bool { false }
