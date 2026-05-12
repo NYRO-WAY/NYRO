@@ -31,10 +31,7 @@ pub struct IntakeResult {
 /// ingress body.
 ///
 /// Returns `Err(GatewayError)` if the body is missing the `model` field.
-pub fn intake_body(
-    headers: &HeaderMap,
-    body: Value,
-) -> Result<IntakeResult, GatewayError> {
+pub fn intake_body(headers: &HeaderMap, body: Value) -> Result<IntakeResult, GatewayError> {
     let request_headers_str = headers_to_json(headers);
     let request_body_str = serde_json::to_string(&body).ok();
 
@@ -68,13 +65,8 @@ pub fn extract_model(body: &Value) -> Result<String, GatewayError> {
 }
 
 /// Stamp the request_id header on an outbound response for client correlation.
-pub fn stamp_request_id(
-    response: &mut axum::response::Response,
-    ctx: &RequestContext,
-) {
+pub fn stamp_request_id(response: &mut axum::response::Response, ctx: &RequestContext) {
     if let Ok(value) = axum::http::HeaderValue::from_str(&ctx.request_id) {
-        response
-            .headers_mut()
-            .insert("x-request-id", value);
+        response.headers_mut().insert("x-request-id", value);
     }
 }

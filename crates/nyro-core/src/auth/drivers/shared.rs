@@ -65,7 +65,12 @@ pub fn parse_session_state<T: DeserializeOwned>(session: &AuthSession) -> Result
 pub fn parse_oauth_callback(input: &AuthExchangeInput) -> Result<OAuthCallbackPayload> {
     let mut payload = OAuthCallbackPayload::default();
 
-    if let Some(raw_callback) = input.callback_url.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+    if let Some(raw_callback) = input
+        .callback_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
         let parsed = parse_callback_like_value(raw_callback);
         if payload.code.is_none() {
             payload.code = parsed.code;
@@ -75,7 +80,12 @@ pub fn parse_oauth_callback(input: &AuthExchangeInput) -> Result<OAuthCallbackPa
         }
     }
 
-    if let Some(raw_code) = input.code.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
+    if let Some(raw_code) = input
+        .code
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+    {
         let parsed = parse_callback_like_value(raw_code);
         if payload.code.is_none() {
             payload.code = parsed.code.or_else(|| {
@@ -103,14 +113,24 @@ pub fn parse_oauth_callback(input: &AuthExchangeInput) -> Result<OAuthCallbackPa
         }
     }
 
-    if payload.code.as_deref().map(str::trim).filter(|v| !v.is_empty()).is_none() {
+    if payload
+        .code
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .is_none()
+    {
         bail!("missing authorization code");
     }
 
     Ok(payload)
 }
 
-pub fn validate_callback_state(expected_state: &str, actual_state: Option<&str>, provider: &str) -> Result<()> {
+pub fn validate_callback_state(
+    expected_state: &str,
+    actual_state: Option<&str>,
+    provider: &str,
+) -> Result<()> {
     if expected_state.trim().is_empty() {
         return Ok(());
     }
@@ -124,7 +144,8 @@ pub fn validate_callback_state(expected_state: &str, actual_state: Option<&str>,
 }
 
 pub fn build_authorize_url(base_url: &str, params: &[(&str, &str)]) -> Result<String> {
-    let mut url = Url::parse(base_url).with_context(|| format!("parse authorize url: {base_url}"))?;
+    let mut url =
+        Url::parse(base_url).with_context(|| format!("parse authorize url: {base_url}"))?;
     {
         let mut pairs = url.query_pairs_mut();
         for (key, value) in params {
@@ -150,7 +171,9 @@ fn parse_callback_like_value(raw: &str) -> OAuthCallbackPayload {
                 for (key, value) in fragment_parsed.query_pairs() {
                     match key.as_ref() {
                         "code" if payload.code.is_none() => payload.code = Some(value.to_string()),
-                        "state" if payload.state.is_none() => payload.state = Some(value.to_string()),
+                        "state" if payload.state.is_none() => {
+                            payload.state = Some(value.to_string())
+                        }
                         _ => {}
                     }
                 }
@@ -238,10 +261,9 @@ mod tests {
 
     #[test]
     fn parse_callback_url_form_still_works() {
-        let payload = parse_oauth_callback(&callback_input(
-            "https://example.com/cb?code=abc&state=xyz",
-        ))
-        .unwrap();
+        let payload =
+            parse_oauth_callback(&callback_input("https://example.com/cb?code=abc&state=xyz"))
+                .unwrap();
         assert_eq!(payload.code.as_deref(), Some("abc"));
         assert_eq!(payload.state.as_deref(), Some("xyz"));
     }

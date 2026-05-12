@@ -1,17 +1,17 @@
 //! Thin ingress shell: POST /v1beta/models/:model_action
 
+use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::response::Response;
-use axum::Json;
 use serde_json::Value;
 
+use crate::Gateway;
 use crate::protocol::codec::google_generative::decoder::GoogleDecoder;
 use crate::protocol::ids::GOOGLE_GENERATE_V1BETA;
 use crate::protocol::ir::{AiRequest, RawEnvelope};
 use crate::proxy::context::RequestContext;
 use crate::proxy::dispatcher::{dispatch_pipeline, error_response};
-use crate::Gateway;
 
 pub async fn google_generate(
     State(gw): State<Gateway>,
@@ -29,7 +29,11 @@ pub async fn google_generate(
     let path = format!("/v1beta/models/{model_action}");
     let flat_headers: std::collections::HashMap<String, String> = headers
         .iter()
-        .filter_map(|(k, v)| v.to_str().ok().map(|vs| (k.as_str().to_lowercase(), vs.to_string())))
+        .filter_map(|(k, v)| {
+            v.to_str()
+                .ok()
+                .map(|vs| (k.as_str().to_lowercase(), vs.to_string()))
+        })
         .collect();
     let envelope = RawEnvelope::new(Some(body.clone()), flat_headers, "POST", &path);
     let internal = match GoogleDecoder.decode_with_model(body, &model, is_stream) {

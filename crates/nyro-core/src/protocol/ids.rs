@@ -33,18 +33,18 @@ pub enum Protocol {
 impl Protocol {
     pub const fn as_str(&self) -> &'static str {
         match self {
-            Self::OpenAICompatible   => "openai-compat",
-            Self::OpenAIResponses    => "openai-resps",
-            Self::AnthropicMessages  => "anthropic-msgs",
+            Self::OpenAICompatible => "openai-compat",
+            Self::OpenAIResponses => "openai-resps",
+            Self::AnthropicMessages => "anthropic-msgs",
             Self::GoogleGenerativeAI => "google-genai",
         }
     }
 
     pub const fn display_name(&self) -> &'static str {
         match self {
-            Self::OpenAICompatible   => "OpenAI Compatible",
-            Self::OpenAIResponses    => "OpenAI Responses",
-            Self::AnthropicMessages  => "Anthropic Messages",
+            Self::OpenAICompatible => "OpenAI Compatible",
+            Self::OpenAIResponses => "OpenAI Responses",
+            Self::AnthropicMessages => "Anthropic Messages",
             Self::GoogleGenerativeAI => "Google Generative AI",
         }
     }
@@ -62,9 +62,13 @@ impl FromStr for Protocol {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "openai-compat" | "openai-compatible" | "openai" => Ok(Self::OpenAICompatible),
-            "openai-resps"  | "openai-responses"             => Ok(Self::OpenAIResponses),
-            "anthropic-msgs"| "anthropic-messages" | "anthropic" | "claude" => Ok(Self::AnthropicMessages),
-            "google-genai"  | "google-generative-ai" | "gemini" | "google" => Ok(Self::GoogleGenerativeAI),
+            "openai-resps" | "openai-responses" => Ok(Self::OpenAIResponses),
+            "anthropic-msgs" | "anthropic-messages" | "anthropic" | "claude" => {
+                Ok(Self::AnthropicMessages)
+            }
+            "google-genai" | "google-generative-ai" | "gemini" | "google" => {
+                Ok(Self::GoogleGenerativeAI)
+            }
             other => anyhow::bail!("unknown protocol: {other}"),
         }
     }
@@ -83,12 +87,12 @@ pub struct ProtocolEndpoint {
 }
 
 impl ProtocolEndpoint {
-    pub const fn new(
-        protocol: Protocol,
-        name: &'static str,
-        version: &'static str,
-    ) -> Self {
-        Self { protocol, name, version }
+    pub const fn new(protocol: Protocol, name: &'static str, version: &'static str) -> Self {
+        Self {
+            protocol,
+            name,
+            version,
+        }
     }
 
     /// Look up the registered handler for this endpoint.
@@ -192,7 +196,6 @@ pub struct EndpointCapabilities {
     pub ingress_routes: &'static [(&'static str, &'static str)],
 
     // ── PR-07 additions ───────────────────────────────────────────────────────
-
     /// Whether multimodal (vision) input is accepted.
     pub multimodal: bool,
     /// Whether the provider accepts structured output / JSON-mode requests.
@@ -274,10 +277,7 @@ mod tests {
             OPENAI_CHAT_COMPLETIONS_V1.to_string(),
             "openai-compat/chat-completions/v1"
         );
-        assert_eq!(
-            OPENAI_RESPONSES_V1.to_string(),
-            "openai-resps/responses/v1"
-        );
+        assert_eq!(OPENAI_RESPONSES_V1.to_string(), "openai-resps/responses/v1");
         assert_eq!(
             ANTHROPIC_MESSAGES_2023_06_01.to_string(),
             "anthropic-msgs/messages/2023-06-01"

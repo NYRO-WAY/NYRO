@@ -4,9 +4,9 @@ use axum::middleware::{self, Next};
 use axum::response::IntoResponse;
 use axum::routing::{delete, get, post, put};
 use axum::{Extension, Json, Router};
-use nyro_core::db::models::*;
 use nyro_core::Gateway;
 use nyro_core::auth::AuthExchangeInput;
+use nyro_core::db::models::*;
 use serde::Deserialize;
 
 #[derive(Clone)]
@@ -27,9 +27,7 @@ async fn admin_auth(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
-    let token = auth_header
-        .strip_prefix("Bearer ")
-        .unwrap_or(auth_header);
+    let token = auth_header.strip_prefix("Bearer ").unwrap_or(auth_header);
 
     if token == admin_token.0 {
         next.run(req).await
@@ -54,24 +52,60 @@ pub fn create_router(gateway: Gateway, admin_token: Option<String>) -> Router {
 
     let mut api = Router::new()
         .route("/providers/presets", get(list_provider_presets))
-        .route("/providers", get(list_providers).post(create_provider_handler))
+        .route(
+            "/providers",
+            get(list_providers).post(create_provider_handler),
+        )
         .route("/providers/:id", providers_item)
         .route("/providers/:id/test", get(test_provider_handler))
-        .route("/providers/:id/test-models", get(test_provider_models_handler))
+        .route(
+            "/providers/:id/test-models",
+            get(test_provider_models_handler),
+        )
         .route("/providers/:id/models", get(provider_models_handler))
-        .route("/providers/:id/model-capabilities", get(provider_model_capabilities_handler))
-        .route("/providers/:id/oauth/status", get(get_provider_oauth_status_handler))
-        .route("/providers/:id/oauth/reconnect", post(reconnect_provider_oauth_handler))
-        .route("/providers/:id/oauth/logout", post(logout_provider_oauth_handler))
-        .route("/providers/:id/oauth/bind", post(bind_provider_oauth_handler))
+        .route(
+            "/providers/:id/model-capabilities",
+            get(provider_model_capabilities_handler),
+        )
+        .route(
+            "/providers/:id/oauth/status",
+            get(get_provider_oauth_status_handler),
+        )
+        .route(
+            "/providers/:id/oauth/reconnect",
+            post(reconnect_provider_oauth_handler),
+        )
+        .route(
+            "/providers/:id/oauth/logout",
+            post(logout_provider_oauth_handler),
+        )
+        .route(
+            "/providers/:id/oauth/bind",
+            post(bind_provider_oauth_handler),
+        )
         .route("/providers/oauth", post(create_oauth_provider_handler))
         .route("/oauth/sessions/init", post(init_oauth_session_handler))
-        .route("/oauth/sessions/:id/status", get(get_oauth_session_status_handler))
-        .route("/oauth/sessions/:id/cancel", post(cancel_oauth_session_handler))
-        .route("/oauth/sessions/:id/complete", post(complete_oauth_session_handler))
-        .route("/routes", get(list_routes_handler).post(create_route_handler))
+        .route(
+            "/oauth/sessions/:id/status",
+            get(get_oauth_session_status_handler),
+        )
+        .route(
+            "/oauth/sessions/:id/cancel",
+            post(cancel_oauth_session_handler),
+        )
+        .route(
+            "/oauth/sessions/:id/complete",
+            post(complete_oauth_session_handler),
+        )
+        .route(
+            "/routes",
+            get(list_routes_handler).post(create_route_handler),
+        )
         .route("/routes/:id", routes_item)
-        .route("/api-keys", get(list_api_keys_handler).post(create_api_key_handler))
+        .route(
+            "/api-keys",
+            get(list_api_keys_handler).post(create_api_key_handler),
+        )
         .route("/api-keys/:id", api_keys_item)
         .route("/logs", get(query_logs_handler))
         .route("/logs/:id", get(get_log_handler))
@@ -80,8 +114,14 @@ pub fn create_router(gateway: Gateway, admin_token: Option<String>) -> Router {
         .route("/stats/models", get(stats_by_model))
         .route("/stats/providers", get(stats_by_provider))
         .route("/settings/:key", get(get_setting).put(set_setting))
-        .route("/cache/settings", get(get_cache_settings).put(update_cache_settings))
-        .route("/cache/embedding-dimensions", get(detect_embedding_dimensions))
+        .route(
+            "/cache/settings",
+            get(get_cache_settings).put(update_cache_settings),
+        )
+        .route(
+            "/cache/embedding-dimensions",
+            get(detect_embedding_dimensions),
+        )
         .route("/cache/flush", post(flush_cache))
         .route("/cache/:key", delete(delete_cache_key))
         .route("/cache/stats", get(get_cache_stats))
@@ -221,7 +261,11 @@ async fn init_oauth_session_handler(
     State(gw): State<Gateway>,
     Json(input): Json<InitOAuthSessionRequest>,
 ) -> impl IntoResponse {
-    match gw.admin().init_oauth_session(&input.vendor, input.use_proxy).await {
+    match gw
+        .admin()
+        .init_oauth_session(&input.vendor, input.use_proxy)
+        .await
+    {
         Ok(v) => Json(serde_json::json!({ "data": v })).into_response(),
         Err(e) => err(e),
     }
@@ -262,7 +306,11 @@ async fn create_oauth_provider_handler(
     State(gw): State<Gateway>,
     Json(input): Json<CreateOAuthProviderRequest>,
 ) -> impl IntoResponse {
-    match gw.admin().create_provider_with_oauth_session(&input.session_id, input.input).await {
+    match gw
+        .admin()
+        .create_provider_with_oauth_session(&input.session_id, input.input)
+        .await
+    {
         Ok(v) => Json(serde_json::json!({ "data": v })).into_response(),
         Err(e) => err(e),
     }
@@ -308,7 +356,11 @@ async fn bind_provider_oauth_handler(
     Path(id): Path<String>,
     Json(input): Json<BindProviderOAuthRequest>,
 ) -> impl IntoResponse {
-    match gw.admin().bind_provider_with_oauth_session(&id, &input.session_id).await {
+    match gw
+        .admin()
+        .bind_provider_with_oauth_session(&id, &input.session_id)
+        .await
+    {
         Ok(v) => Json(serde_json::json!({ "data": v })).into_response(),
         Err(e) => err(e),
     }
@@ -422,7 +474,11 @@ async fn get_log_handler(
 ) -> impl IntoResponse {
     match gw.admin().get_log(&id).await {
         Ok(Some(v)) => Json(serde_json::json!({ "data": v })).into_response(),
-        Ok(None) => (axum::http::StatusCode::NOT_FOUND, Json(serde_json::json!({ "error": "not found" }))).into_response(),
+        Ok(None) => (
+            axum::http::StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "not found" })),
+        )
+            .into_response(),
         Err(e) => err(e),
     }
 }
@@ -504,10 +560,7 @@ async fn stats_by_provider(
 
 // ── Settings ──
 
-async fn get_setting(
-    State(gw): State<Gateway>,
-    Path(key): Path<String>,
-) -> impl IntoResponse {
+async fn get_setting(State(gw): State<Gateway>, Path(key): Path<String>) -> impl IntoResponse {
     match gw.admin().get_setting(&key).await {
         Ok(v) => Json(serde_json::json!({ "data": v })).into_response(),
         Err(e) => err(e),
@@ -573,10 +626,7 @@ async fn flush_cache(State(gw): State<Gateway>) -> impl IntoResponse {
     }
 }
 
-async fn delete_cache_key(
-    State(gw): State<Gateway>,
-    Path(key): Path<String>,
-) -> impl IntoResponse {
+async fn delete_cache_key(State(gw): State<Gateway>, Path(key): Path<String>) -> impl IntoResponse {
     match gw.admin().delete_cache_key(&key).await {
         Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
         Err(e) => err(e),

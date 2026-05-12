@@ -7,10 +7,12 @@ use tokio::time::Duration;
 
 use reqwest::header::{HeaderMap as ReqwestHeaderMap, HeaderValue as ReqwestHeaderValue};
 
-use crate::cache::entry::CacheEntry;
-use crate::db::models::{Route, RouteCacheConfig, RouteExactCacheConfig, RouteSemanticCacheConfig, RouteTarget};
-use crate::protocol::types::{ContentBlock, InternalRequest, MessageContent, Role};
 use crate::Gateway;
+use crate::cache::entry::CacheEntry;
+use crate::db::models::{
+    Route, RouteCacheConfig, RouteExactCacheConfig, RouteSemanticCacheConfig, RouteTarget,
+};
+use crate::protocol::types::{ContentBlock, InternalRequest, MessageContent, Role};
 
 // ── Semantic write context ─────────────────────────────────────────────────────
 
@@ -76,29 +78,37 @@ pub(super) fn resolve_route_cache(route: &Route) -> RouteCacheConfig {
     let exact = route.cache_exact_ttl.map(|ttl| RouteExactCacheConfig {
         ttl: if ttl > 0 { Some(ttl) } else { None },
     });
-    let semantic = route.cache_semantic_ttl.map(|ttl| RouteSemanticCacheConfig {
-        ttl: if ttl > 0 { Some(ttl) } else { None },
-        threshold: route.cache_semantic_threshold,
-    });
+    let semantic = route
+        .cache_semantic_ttl
+        .map(|ttl| RouteSemanticCacheConfig {
+            ttl: if ttl > 0 { Some(ttl) } else { None },
+            threshold: route.cache_semantic_threshold,
+        });
     RouteCacheConfig { exact, semantic }
 }
 
 pub(super) fn route_exact_ttl(cache: &RouteCacheConfig, default_ttl: Duration) -> Duration {
-    cache.exact.as_ref()
+    cache
+        .exact
+        .as_ref()
         .and_then(|e| e.ttl)
         .and_then(|ttl| (ttl > 0).then_some(Duration::from_secs(ttl as u64)))
         .unwrap_or(default_ttl)
 }
 
 pub(super) fn route_semantic_ttl(cache: &RouteCacheConfig, default_ttl: Duration) -> Duration {
-    cache.semantic.as_ref()
+    cache
+        .semantic
+        .as_ref()
         .and_then(|s| s.ttl)
         .and_then(|ttl| (ttl > 0).then_some(Duration::from_secs(ttl as u64)))
         .unwrap_or(default_ttl)
 }
 
 pub(super) fn route_semantic_threshold(cache: &RouteCacheConfig, default_threshold: f64) -> f64 {
-    cache.semantic.as_ref()
+    cache
+        .semantic
+        .as_ref()
         .and_then(|s| s.threshold)
         .filter(|t| *t > 0.0)
         .unwrap_or(default_threshold)
@@ -115,16 +125,22 @@ pub(super) fn is_semantic_entry_expired(entry: &CacheEntry, ttl: Duration) -> bo
 pub(super) fn request_has_image_input(request: &InternalRequest) -> bool {
     for message in &request.messages {
         if let MessageContent::Blocks(blocks) = &message.content
-            && blocks.iter().any(|b| matches!(b, ContentBlock::Image { .. })) {
-                return true;
-            }
+            && blocks
+                .iter()
+                .any(|b| matches!(b, ContentBlock::Image { .. }))
+        {
+            return true;
+        }
     }
     false
 }
 
-pub(super) fn extract_semantic_embedding_input(request: &InternalRequest) -> Option<(String, String)> {
+pub(super) fn extract_semantic_embedding_input(
+    request: &InternalRequest,
+) -> Option<(String, String)> {
     let system_prompt = request
-        .messages.iter()
+        .messages
+        .iter()
         .filter(|m| matches!(m.role, Role::System))
         .map(|m| m.content.as_text())
         .filter(|t| !t.trim().is_empty())
@@ -132,7 +148,9 @@ pub(super) fn extract_semantic_embedding_input(request: &InternalRequest) -> Opt
         .join("\n");
 
     let last_user = request
-        .messages.iter().rev()
+        .messages
+        .iter()
+        .rev()
         .find(|m| matches!(m.role, Role::User))
         .map(|m| m.content.as_text())
         .filter(|t| !t.trim().is_empty())?;

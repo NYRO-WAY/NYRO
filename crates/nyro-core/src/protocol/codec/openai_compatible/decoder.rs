@@ -58,64 +58,82 @@ impl IngressDecoder for OpenAIDecoder {
 
         // Carry PR-08 fields as first-class extras for downstream encoding.
         if let Some(v) = req.stream_options {
-            extra.entry("stream_options".to_string())
+            extra
+                .entry("stream_options".to_string())
                 .or_insert_with(|| serde_json::to_value(v).unwrap_or(Value::Null));
         }
         if let Some(v) = req.parallel_tool_calls {
-            extra.entry("parallel_tool_calls".to_string())
+            extra
+                .entry("parallel_tool_calls".to_string())
                 .or_insert_with(|| Value::Bool(v));
         }
         if let Some(v) = req.prediction {
-            extra.entry("prediction".to_string())
+            extra
+                .entry("prediction".to_string())
                 .or_insert_with(|| serde_json::to_value(v).unwrap_or(Value::Null));
         }
         if let Some(v) = req.modalities {
-            extra.entry("modalities".to_string())
+            extra
+                .entry("modalities".to_string())
                 .or_insert_with(|| Value::Array(v.into_iter().map(Value::String).collect()));
         }
         if let Some(v) = req.audio {
-            extra.entry("audio".to_string())
+            extra
+                .entry("audio".to_string())
                 .or_insert_with(|| serde_json::to_value(v).unwrap_or(Value::Null));
         }
         if let Some(v) = req.response_format {
-            extra.entry("response_format".to_string())
+            extra
+                .entry("response_format".to_string())
                 .or_insert_with(|| serde_json::to_value(v).unwrap_or(Value::Null));
         }
         if let Some(v) = req.seed {
-            extra.entry("seed".to_string()).or_insert_with(|| Value::from(v));
+            extra
+                .entry("seed".to_string())
+                .or_insert_with(|| Value::from(v));
         }
         if let Some(v) = req.stop {
-            extra.entry("stop".to_string())
-                .or_insert_with(|| match v {
-                    StopToken::Single(s) => Value::String(s),
-                    StopToken::Multiple(vs) => {
-                        Value::Array(vs.into_iter().map(Value::String).collect())
-                    }
-                });
+            extra.entry("stop".to_string()).or_insert_with(|| match v {
+                StopToken::Single(s) => Value::String(s),
+                StopToken::Multiple(vs) => {
+                    Value::Array(vs.into_iter().map(Value::String).collect())
+                }
+            });
         }
         if let Some(v) = req.logit_bias {
-            extra.entry("logit_bias".to_string())
-                .or_insert_with(|| {
-                    Value::Object(v.into_iter().map(|(k, f)| (k, Value::from(f))).collect())
-                });
+            extra.entry("logit_bias".to_string()).or_insert_with(|| {
+                Value::Object(v.into_iter().map(|(k, f)| (k, Value::from(f))).collect())
+            });
         }
         if let Some(v) = req.service_tier {
-            extra.entry("service_tier".to_string()).or_insert_with(|| Value::String(v));
+            extra
+                .entry("service_tier".to_string())
+                .or_insert_with(|| Value::String(v));
         }
         if let Some(v) = req.reasoning_effort {
-            extra.entry("reasoning_effort".to_string()).or_insert_with(|| Value::String(v));
+            extra
+                .entry("reasoning_effort".to_string())
+                .or_insert_with(|| Value::String(v));
         }
         if let Some(v) = req.frequency_penalty {
-            extra.entry("frequency_penalty".to_string()).or_insert_with(|| Value::from(v));
+            extra
+                .entry("frequency_penalty".to_string())
+                .or_insert_with(|| Value::from(v));
         }
         if let Some(v) = req.presence_penalty {
-            extra.entry("presence_penalty".to_string()).or_insert_with(|| Value::from(v));
+            extra
+                .entry("presence_penalty".to_string())
+                .or_insert_with(|| Value::from(v));
         }
         if let Some(v) = req.n {
-            extra.entry("n".to_string()).or_insert_with(|| Value::from(v));
+            extra
+                .entry("n".to_string())
+                .or_insert_with(|| Value::from(v));
         }
         if let Some(v) = req.user {
-            extra.entry("user".to_string()).or_insert_with(|| Value::String(v));
+            extra
+                .entry("user".to_string())
+                .or_insert_with(|| Value::String(v));
         }
 
         Ok(InternalRequest {
@@ -157,7 +175,11 @@ fn decode_message(msg: OpenAIMessage) -> Result<InternalMessage> {
                     },
                     // InputAudio: pass as text; will be handled by audio-aware encoders.
                     OpenAIContentPart::InputAudio { input_audio } => ContentBlock::Text {
-                        text: format!("[audio:{}:{}]", input_audio.format, &input_audio.data[..input_audio.data.len().min(16)]),
+                        text: format!(
+                            "[audio:{}:{}]",
+                            input_audio.format,
+                            &input_audio.data[..input_audio.data.len().min(16)]
+                        ),
                     },
                 })
                 .collect();

@@ -49,6 +49,9 @@ jobs:
           pnpm -C webui install --frozen-lockfile
           pnpm -C webui build
 
+      - name: Rust fmt check
+        run: cargo fmt --all -- --check
+
       - name: Cargo check
         run: cargo check --workspace --exclude nyro-desktop
 

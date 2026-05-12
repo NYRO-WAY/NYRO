@@ -35,10 +35,10 @@ impl ResponseParser for ResponsesResponseParser {
                                 if matches!(
                                     block.get("type").and_then(|v| v.as_str()),
                                     Some("output_text" | "text")
-                                )
-                                    && let Some(text) = block.get("text").and_then(|v| v.as_str()) {
-                                        content.push_str(text);
-                                    }
+                                ) && let Some(text) = block.get("text").and_then(|v| v.as_str())
+                                {
+                                    content.push_str(text);
+                                }
                             }
                         }
                     }
@@ -189,18 +189,20 @@ impl ResponsesStreamParser {
             }
             "response.output_text.delta" => {
                 if let Some(text) = payload.get("delta").and_then(|v| v.as_str())
-                    && !text.is_empty() {
-                        deltas.push(StreamDelta::TextDelta(text.to_string()));
-                    }
+                    && !text.is_empty()
+                {
+                    deltas.push(StreamDelta::TextDelta(text.to_string()));
+                }
             }
             "response.reasoning_summary_text.delta" => {
                 // Emitted by Ollama's Responses API when the model includes reasoning.
                 // Must be handled independently from response.output_text.delta —
                 // they carry semantically different content (reasoning vs answer text).
                 if let Some(text) = payload.get("delta").and_then(|v| v.as_str())
-                    && !text.is_empty() {
-                        deltas.push(StreamDelta::ReasoningDelta(text.to_string()));
-                    }
+                    && !text.is_empty()
+                {
+                    deltas.push(StreamDelta::ReasoningDelta(text.to_string()));
+                }
             }
             "response.function_call_arguments.delta" => {
                 let index = payload
@@ -208,12 +210,13 @@ impl ResponsesStreamParser {
                     .and_then(|v| v.as_u64())
                     .unwrap_or(0) as usize;
                 if let Some(arguments) = payload.get("delta").and_then(|v| v.as_str())
-                    && !arguments.is_empty() {
-                        deltas.push(StreamDelta::ToolCallDelta {
-                            index,
-                            arguments: arguments.to_string(),
-                        });
-                    }
+                    && !arguments.is_empty()
+                {
+                    deltas.push(StreamDelta::ToolCallDelta {
+                        index,
+                        arguments: arguments.to_string(),
+                    });
+                }
             }
             "response.output_item.added" | "response.output_item.done" => {
                 let index = payload
@@ -334,7 +337,10 @@ mod tests {
             "usage": {"input_tokens": 10, "output_tokens": 20}
         });
         let result = ResponsesResponseParser.parse_response(resp);
-        assert!(result.is_ok(), "parser must not fail on plaintext encrypted_content");
+        assert!(
+            result.is_ok(),
+            "parser must not fail on plaintext encrypted_content"
+        );
         let r = result.unwrap();
         assert_eq!(r.content, "answer");
     }
@@ -385,7 +391,9 @@ mod tests {
         let mut parser = ResponsesStreamParser::new();
         let deltas = parser.parse_chunk(&sse).unwrap();
 
-        let has_text = deltas.iter().any(|d| matches!(d, StreamDelta::TextDelta(t) if t == "hello"));
+        let has_text = deltas
+            .iter()
+            .any(|d| matches!(d, StreamDelta::TextDelta(t) if t == "hello"));
         let has_done = deltas.iter().any(|d| matches!(d, StreamDelta::Done { .. }));
         assert!(has_text, "expected TextDelta('hello'), got: {deltas:?}");
         assert!(has_done, "expected Done, got: {deltas:?}");
@@ -420,7 +428,13 @@ mod tests {
 
         let reasoning: Vec<_> = deltas
             .iter()
-            .filter_map(|d| if let StreamDelta::ReasoningDelta(t) = d { Some(t.as_str()) } else { None })
+            .filter_map(|d| {
+                if let StreamDelta::ReasoningDelta(t) = d {
+                    Some(t.as_str())
+                } else {
+                    None
+                }
+            })
             .collect();
         assert!(
             reasoning.contains(&"thinking step"),
@@ -429,7 +443,13 @@ mod tests {
 
         let text: Vec<_> = deltas
             .iter()
-            .filter_map(|d| if let StreamDelta::TextDelta(t) = d { Some(t.as_str()) } else { None })
+            .filter_map(|d| {
+                if let StreamDelta::TextDelta(t) = d {
+                    Some(t.as_str())
+                } else {
+                    None
+                }
+            })
             .collect();
         assert!(
             text.contains(&"answer text"),
@@ -443,6 +463,9 @@ mod tests {
         let mut parser = ResponsesStreamParser::new();
         let deltas = parser.parse_chunk(&sse).unwrap();
         let has_done = deltas.iter().any(|d| matches!(d, StreamDelta::Done { .. }));
-        assert!(has_done, "expected Done on [DONE] sentinel, got: {deltas:?}");
+        assert!(
+            has_done,
+            "expected Done on [DONE] sentinel, got: {deltas:?}"
+        );
     }
 }

@@ -15,7 +15,9 @@
 
 use std::collections::VecDeque;
 
-use crate::protocol::ir::request::{AiRequest, ContentBlock, Message, MessageContent, Role, ToolCall};
+use crate::protocol::ir::request::{
+    AiRequest, ContentBlock, Message, MessageContent, Role, ToolCall,
+};
 
 // ── fill_tool_call_ids ────────────────────────────────────────────────────────
 
@@ -59,38 +61,43 @@ pub fn fill_tool_call_ids(req: &mut AiRequest) {
 
         // Try exact ID match.
         if let Some(id) = existing_id.as_ref()
-            && let Some(pos) = pending_calls.iter().position(|(pid, _)| pid == id) {
-                pending_calls.remove(pos);
-                resolved_id = Some(id.clone());
-                has_linked = true;
-            }
+            && let Some(pos) = pending_calls.iter().position(|(pid, _)| pid == id)
+        {
+            pending_calls.remove(pos);
+            resolved_id = Some(id.clone());
+            has_linked = true;
+        }
 
         // Try hint from content blocks.
         let hint = extract_tool_result_hint(&msg.content);
 
         if resolved_id.is_none()
             && let Some(h) = hint.as_ref()
-                && let Some(pos) = pending_calls.iter().position(|(pid, _)| pid == h)
-                    && let Some((cid, _)) = pending_calls.remove(pos) {
-                        resolved_id = Some(cid);
-                        has_linked = true;
-                    }
+            && let Some(pos) = pending_calls.iter().position(|(pid, _)| pid == h)
+            && let Some((cid, _)) = pending_calls.remove(pos)
+        {
+            resolved_id = Some(cid);
+            has_linked = true;
+        }
 
         if resolved_id.is_none()
             && let Some(h) = hint.as_ref()
-                && let Some(pos) =
-                    pending_calls.iter().position(|(_, pname)| pname.eq_ignore_ascii_case(h))
-                    && let Some((cid, _)) = pending_calls.remove(pos) {
-                        resolved_id = Some(cid);
-                        has_linked = true;
-                    }
+            && let Some(pos) = pending_calls
+                .iter()
+                .position(|(_, pname)| pname.eq_ignore_ascii_case(h))
+            && let Some((cid, _)) = pending_calls.remove(pos)
+        {
+            resolved_id = Some(cid);
+            has_linked = true;
+        }
 
         // FIFO fallback.
         if resolved_id.is_none()
-            && let Some((cid, _)) = pending_calls.pop_front() {
-                resolved_id = Some(cid);
-                has_linked = true;
-            }
+            && let Some((cid, _)) = pending_calls.pop_front()
+        {
+            resolved_id = Some(cid);
+            has_linked = true;
+        }
 
         if resolved_id.is_none() {
             resolved_id = existing_id;
@@ -153,9 +160,10 @@ fn extract_tool_result_hint(content: &MessageContent) -> Option<String> {
     };
     for block in blocks {
         if let ContentBlock::ToolResult { tool_use_id, .. } = block
-            && !tool_use_id.trim().is_empty() {
-                return Some(tool_use_id.clone());
-            }
+            && !tool_use_id.trim().is_empty()
+        {
+            return Some(tool_use_id.clone());
+        }
     }
     None
 }
@@ -208,7 +216,10 @@ mod tests {
 
     #[test]
     fn fifo_fallback_when_no_id() {
-        let mut req = ai_req(vec![asst_with_tool("call_abc", "search"), tool_result(None)]);
+        let mut req = ai_req(vec![
+            asst_with_tool("call_abc", "search"),
+            tool_result(None),
+        ]);
         fill_tool_call_ids(&mut req);
         let tool_msg = req.messages.iter().find(|m| m.role == Role::Tool).unwrap();
         assert_eq!(tool_msg.tool_call_id.as_deref(), Some("call_abc"));

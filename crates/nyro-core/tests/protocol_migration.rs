@@ -38,10 +38,11 @@ async fn migration_normalizes_legacy_protocol_keys_then_idempotent() {
     // Second migration → must rewrite the legacy row.
     migrate(&pool, 8).await.unwrap();
 
-    let row = sqlx::query("SELECT default_protocol, protocol_endpoints FROM providers WHERE id = 'p1'")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let row =
+        sqlx::query("SELECT default_protocol, protocol_endpoints FROM providers WHERE id = 'p1'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     let default_protocol: String = row.try_get("default_protocol").unwrap();
     let endpoints_raw: String = row.try_get("protocol_endpoints").unwrap();
     let endpoints: serde_json::Value = serde_json::from_str(&endpoints_raw).unwrap();
@@ -49,10 +50,16 @@ async fn migration_normalizes_legacy_protocol_keys_then_idempotent() {
 
     assert_eq!(default_protocol, OPENAI_CHAT_V1.to_string());
     // After normalization keys are protocol short names, not endpoint canonical strings.
-    assert!(obj.contains_key("openai-compat"),    "missing openai-compat key");
-    assert!(obj.contains_key("openai-resps"),     "missing openai-resps key");
-    assert!(obj.contains_key("anthropic-msgs"),   "missing anthropic-msgs key");
-    assert!(obj.contains_key("google-genai"),     "missing google-genai key");
+    assert!(
+        obj.contains_key("openai-compat"),
+        "missing openai-compat key"
+    );
+    assert!(obj.contains_key("openai-resps"), "missing openai-resps key");
+    assert!(
+        obj.contains_key("anthropic-msgs"),
+        "missing anthropic-msgs key"
+    );
+    assert!(obj.contains_key("google-genai"), "missing google-genai key");
     // Legacy keys must be gone.
     assert!(!obj.contains_key("openai"));
     assert!(!obj.contains_key("openai_responses"));
@@ -61,35 +68,37 @@ async fn migration_normalizes_legacy_protocol_keys_then_idempotent() {
 
     // Snapshot the current state, then run migrate() again and verify
     // nothing changes — the migration must be idempotent.
-    let snapshot_before = sqlx::query("SELECT id, default_protocol, protocol_endpoints FROM providers ORDER BY id")
-        .fetch_all(&pool)
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|r| {
-            (
-                r.get::<String, _>("id"),
-                r.get::<String, _>("default_protocol"),
-                r.get::<String, _>("protocol_endpoints"),
-            )
-        })
-        .collect::<Vec<_>>();
+    let snapshot_before =
+        sqlx::query("SELECT id, default_protocol, protocol_endpoints FROM providers ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|r| {
+                (
+                    r.get::<String, _>("id"),
+                    r.get::<String, _>("default_protocol"),
+                    r.get::<String, _>("protocol_endpoints"),
+                )
+            })
+            .collect::<Vec<_>>();
 
     migrate(&pool, 8).await.unwrap();
 
-    let snapshot_after = sqlx::query("SELECT id, default_protocol, protocol_endpoints FROM providers ORDER BY id")
-        .fetch_all(&pool)
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|r| {
-            (
-                r.get::<String, _>("id"),
-                r.get::<String, _>("default_protocol"),
-                r.get::<String, _>("protocol_endpoints"),
-            )
-        })
-        .collect::<Vec<_>>();
+    let snapshot_after =
+        sqlx::query("SELECT id, default_protocol, protocol_endpoints FROM providers ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|r| {
+                (
+                    r.get::<String, _>("id"),
+                    r.get::<String, _>("default_protocol"),
+                    r.get::<String, _>("protocol_endpoints"),
+                )
+            })
+            .collect::<Vec<_>>();
 
     assert_eq!(
         snapshot_before, snapshot_after,
@@ -113,12 +122,16 @@ async fn migration_preserves_unknown_keys() {
     .unwrap();
     migrate(&pool, 8).await.unwrap();
 
-    let raw: String = sqlx::query_scalar("SELECT protocol_endpoints FROM providers WHERE id = 'p2'")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let raw: String =
+        sqlx::query_scalar("SELECT protocol_endpoints FROM providers WHERE id = 'p2'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
-    assert!(v.get("openai-compat").is_some(), "missing openai-compat key after normalization");
+    assert!(
+        v.get("openai-compat").is_some(),
+        "missing openai-compat key after normalization"
+    );
     assert!(
         v.get("unknown/dialect/v9").is_some(),
         "unknown keys must round-trip unchanged so foreign data isn't dropped"

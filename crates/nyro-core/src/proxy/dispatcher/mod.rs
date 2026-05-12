@@ -31,10 +31,10 @@ use std::time::Instant;
 use bytes::Bytes;
 
 use async_trait::async_trait;
+use axum::Json;
 use axum::body::Body;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use dashmap::mapref::entry::Entry as DashEntry;
 use futures::StreamExt;
 use reqwest::header::HeaderMap as ReqwestHeaderMap;
@@ -43,25 +43,25 @@ use tokio::sync::broadcast;
 use tokio::time::{Duration, timeout};
 use tokio_stream::wrappers::ReceiverStream;
 
+use crate::Gateway;
 use crate::cache::entry::CacheEntry;
 use crate::cache::key::{build_cache_key, build_semantic_partition};
 use crate::db::models::{Provider, Route};
 use crate::error::{AuthFailure, GatewayError};
+use crate::protocol::ProviderProtocols;
 use crate::protocol::ids::{OPENAI_CHAT_V1, OPENAI_EMBEDDINGS_V1, ProtocolId};
 use crate::protocol::ir::{AiRequest, RawEnvelope};
 use crate::protocol::types::{InternalRequest, InternalResponse, StreamDelta, TokenUsage};
-use crate::protocol::ProviderProtocols;
-use crate::provider::{VendorCtx, VendorRegistry};
-use crate::provider::vendor::ProviderCtx;
 use crate::provider::inbound::InboundResponse;
+use crate::provider::vendor::ProviderCtx;
+use crate::provider::{VendorCtx, VendorRegistry};
 use crate::proxy::client::ProxyClient;
 use crate::proxy::context::RequestContext;
-use crate::proxy::planner::{ProtocolMode, negotiate};
 use crate::proxy::observability::{LogExtras, emit_log, headers_to_json};
+use crate::proxy::planner::{ProtocolMode, negotiate};
 use crate::proxy::security::{extract_api_key, is_key_expired};
 use crate::router::TargetSelector;
 use crate::storage::traits::{ApiKeyAccessRecord, UsageWindow};
-use crate::Gateway;
 
 // ── Public entry points ───────────────────────────────────────────────────────
 
@@ -87,7 +87,10 @@ pub async fn dispatch_pipeline(
     // Derive logging strings from envelope; convert new IR → old IR for backward-compat.
     let method_owned = envelope.method.clone();
     let path_owned = envelope.path.clone();
-    let request_body_str = envelope.body.as_ref().and_then(|b| serde_json::to_string(b).ok());
+    let request_body_str = envelope
+        .body
+        .as_ref()
+        .and_then(|b| serde_json::to_string(b).ok());
     let request_headers_str = serde_json::to_string(&envelope.headers).ok();
     let internal: InternalRequest = request.into();
     let start = Instant::now();
@@ -107,13 +110,30 @@ pub async fn dispatch_pipeline(
         None => {
             let msg = format!("no route for model: {request_model}");
             emit_log(
-                &gw, &ingress_str, &ingress_str, &request_model, "",
-                None, "", 404, start.elapsed().as_millis() as f64,
-                TokenUsage::default(), is_stream, false, Some(msg.clone()), None,
-                LogExtras { method: Some(method_owned.clone()), path: Some(path_owned.clone()),
-                    request_headers: request_headers_str.clone(), request_body: request_body_str.clone(),
+                &gw,
+                &ingress_str,
+                &ingress_str,
+                &request_model,
+                "",
+                None,
+                "",
+                404,
+                start.elapsed().as_millis() as f64,
+                TokenUsage::default(),
+                is_stream,
+                false,
+                Some(msg.clone()),
+                None,
+                LogExtras {
+                    method: Some(method_owned.clone()),
+                    path: Some(path_owned.clone()),
+                    request_headers: request_headers_str.clone(),
+                    request_body: request_body_str.clone(),
                     response_headers: None,
-                    response_body: Some(serde_json::json!({ "error": { "message": msg.clone() } }).to_string()) },
+                    response_body: Some(
+                        serde_json::json!({ "error": { "message": msg.clone() } }).to_string(),
+                    ),
+                },
             );
             return error_response(404, &msg);
         }
@@ -128,13 +148,30 @@ pub async fn dispatch_pipeline(
             route.normalized_route_type()
         );
         emit_log(
-            &gw, &ingress_str, &ingress_str, &request_model, "",
-            None, "", 400, start.elapsed().as_millis() as f64,
-            TokenUsage::default(), false, false, Some(msg.clone()), None,
-            LogExtras { method: Some(method_owned.clone()), path: Some(path_owned.clone()),
-                request_headers: request_headers_str.clone(), request_body: request_body_str.clone(),
+            &gw,
+            &ingress_str,
+            &ingress_str,
+            &request_model,
+            "",
+            None,
+            "",
+            400,
+            start.elapsed().as_millis() as f64,
+            TokenUsage::default(),
+            false,
+            false,
+            Some(msg.clone()),
+            None,
+            LogExtras {
+                method: Some(method_owned.clone()),
+                path: Some(path_owned.clone()),
+                request_headers: request_headers_str.clone(),
+                request_body: request_body_str.clone(),
                 response_headers: None,
-                response_body: Some(serde_json::json!({ "error": { "message": msg.clone() } }).to_string()) },
+                response_body: Some(
+                    serde_json::json!({ "error": { "message": msg.clone() } }).to_string(),
+                ),
+            },
         );
         return error_response(400, &msg);
     }
@@ -144,13 +181,30 @@ pub async fn dispatch_pipeline(
             route.virtual_model
         );
         emit_log(
-            &gw, &ingress_str, &ingress_str, &request_model, "",
-            None, "", 400, start.elapsed().as_millis() as f64,
-            TokenUsage::default(), is_stream, false, Some(msg.clone()), None,
-            LogExtras { method: Some(method_owned.clone()), path: Some(path_owned.clone()),
-                request_headers: request_headers_str.clone(), request_body: request_body_str.clone(),
+            &gw,
+            &ingress_str,
+            &ingress_str,
+            &request_model,
+            "",
+            None,
+            "",
+            400,
+            start.elapsed().as_millis() as f64,
+            TokenUsage::default(),
+            is_stream,
+            false,
+            Some(msg.clone()),
+            None,
+            LogExtras {
+                method: Some(method_owned.clone()),
+                path: Some(path_owned.clone()),
+                request_headers: request_headers_str.clone(),
+                request_body: request_body_str.clone(),
                 response_headers: None,
-                response_body: Some(serde_json::json!({ "error": { "message": msg.clone() } }).to_string()) },
+                response_body: Some(
+                    serde_json::json!({ "error": { "message": msg.clone() } }).to_string(),
+                ),
+            },
         );
         return error_response(400, &msg);
     }
@@ -163,13 +217,28 @@ pub async fn dispatch_pipeline(
         Err(resp) => {
             let status = resp.status().as_u16() as i32;
             emit_log(
-                &gw, &ingress_str, &ingress_str, &request_model, "",
-                None, "", status, start.elapsed().as_millis() as f64,
-                TokenUsage::default(), is_stream, false,
-                Some(format!("authorization failed: {status}")), None,
-                LogExtras { method: Some(method_owned.clone()), path: Some(path_owned.clone()),
-                    request_headers: request_headers_str.clone(), request_body: request_body_str.clone(),
-                    response_headers: None, response_body: None },
+                &gw,
+                &ingress_str,
+                &ingress_str,
+                &request_model,
+                "",
+                None,
+                "",
+                status,
+                start.elapsed().as_millis() as f64,
+                TokenUsage::default(),
+                is_stream,
+                false,
+                Some(format!("authorization failed: {status}")),
+                None,
+                LogExtras {
+                    method: Some(method_owned.clone()),
+                    path: Some(path_owned.clone()),
+                    request_headers: request_headers_str.clone(),
+                    request_body: request_body_str.clone(),
+                    response_headers: None,
+                    response_body: None,
+                },
             );
             return resp;
         }
@@ -213,65 +282,110 @@ pub async fn dispatch_pipeline(
 
     if let (Some(cache_backend), Some(key)) = (cache_backend.as_ref(), request_cache_key.as_deref())
         && exact_enabled_for_route
-            && let Ok(Some(bytes)) = cache_backend.get(key).await
-                && let Ok(cached_entry) = serde_json::from_slice::<CacheEntry>(&bytes) {
-                    let response = cached_entry_to_response(
-                        ingress, &cached_entry, is_stream, Some(key), "EXACT", None,
-                        cache_config.exact.stream_replay_tps, cache_config.exact.expose_headers,
-                    );
-                    let cached_usage = cached_entry.usage.clone();
-                    emit_log(
-                        &gw, &ingress_str, &ingress_str, &request_model,
-                        cached_entry.actual_model.as_deref().unwrap_or(&request_model),
-                        auth_key.id.as_deref(), &cached_entry.provider_name,
-                        cached_entry.status_code as i32, start.elapsed().as_millis() as f64,
-                        cached_usage, is_stream, false, None, None,
-                        LogExtras { method: Some(method_owned.clone()), path: Some(path_owned.clone()),
-                            request_headers: request_headers_str.clone(), request_body: request_body_str.clone(),
-                            response_headers: None,
-                            response_body: serde_json::to_string(&cached_entry.payload).ok() },
-                    );
-                    return response;
-                }
+        && let Ok(Some(bytes)) = cache_backend.get(key).await
+        && let Ok(cached_entry) = serde_json::from_slice::<CacheEntry>(&bytes)
+    {
+        let response = cached_entry_to_response(
+            ingress,
+            &cached_entry,
+            is_stream,
+            Some(key),
+            "EXACT",
+            None,
+            cache_config.exact.stream_replay_tps,
+            cache_config.exact.expose_headers,
+        );
+        let cached_usage = cached_entry.usage.clone();
+        emit_log(
+            &gw,
+            &ingress_str,
+            &ingress_str,
+            &request_model,
+            cached_entry
+                .actual_model
+                .as_deref()
+                .unwrap_or(&request_model),
+            auth_key.id.as_deref(),
+            &cached_entry.provider_name,
+            cached_entry.status_code as i32,
+            start.elapsed().as_millis() as f64,
+            cached_usage,
+            is_stream,
+            false,
+            None,
+            None,
+            LogExtras {
+                method: Some(method_owned.clone()),
+                path: Some(path_owned.clone()),
+                request_headers: request_headers_str.clone(),
+                request_body: request_body_str.clone(),
+                response_headers: None,
+                response_body: serde_json::to_string(&cached_entry.payload).ok(),
+            },
+        );
+        return response;
+    }
 
     // ── Singleflight ─────────────────────────────────────────────────────────
 
     let mut singleflight_leader: Option<(String, broadcast::Sender<Vec<u8>>)> = None;
-    if exact_enabled_for_route
-        && let Some(key) = request_cache_key.as_ref() {
-            match gw.cache_in_flight.entry(key.clone()) {
-                DashEntry::Occupied(entry) => {
-                    let mut rx = entry.get().subscribe();
-                    drop(entry);
-                    if let Ok(Ok(bytes)) = timeout(Duration::from_secs(120), rx.recv()).await
-                        && !bytes.is_empty()
-                            && let Ok(cached_entry) = serde_json::from_slice::<CacheEntry>(&bytes) {
-                                let response = cached_entry_to_response(
-                                    ingress, &cached_entry, is_stream, Some(key), "EXACT", None,
-                                    cache_config.exact.stream_replay_tps, cache_config.exact.expose_headers,
-                                );
-                                let cached_usage = cached_entry.usage.clone();
-                                emit_log(
-                                    &gw, &ingress_str, &ingress_str, &request_model,
-                                    cached_entry.actual_model.as_deref().unwrap_or(&request_model),
-                                    auth_key.id.as_deref(), &cached_entry.provider_name,
-                                    cached_entry.status_code as i32, start.elapsed().as_millis() as f64,
-                                    cached_usage, is_stream, false, None, None,
-                                    LogExtras { method: Some(method_owned.clone()), path: Some(path_owned.clone()),
-                                        request_headers: request_headers_str.clone(), request_body: request_body_str.clone(),
-                                        response_headers: None,
-                                        response_body: serde_json::to_string(&cached_entry.payload).ok() },
-                                );
-                                return response;
-                            }
-                }
-                DashEntry::Vacant(entry) => {
-                    let (tx, _) = broadcast::channel(16);
-                    entry.insert(tx.clone());
-                    singleflight_leader = Some((key.clone(), tx));
+    if exact_enabled_for_route && let Some(key) = request_cache_key.as_ref() {
+        match gw.cache_in_flight.entry(key.clone()) {
+            DashEntry::Occupied(entry) => {
+                let mut rx = entry.get().subscribe();
+                drop(entry);
+                if let Ok(Ok(bytes)) = timeout(Duration::from_secs(120), rx.recv()).await
+                    && !bytes.is_empty()
+                    && let Ok(cached_entry) = serde_json::from_slice::<CacheEntry>(&bytes)
+                {
+                    let response = cached_entry_to_response(
+                        ingress,
+                        &cached_entry,
+                        is_stream,
+                        Some(key),
+                        "EXACT",
+                        None,
+                        cache_config.exact.stream_replay_tps,
+                        cache_config.exact.expose_headers,
+                    );
+                    let cached_usage = cached_entry.usage.clone();
+                    emit_log(
+                        &gw,
+                        &ingress_str,
+                        &ingress_str,
+                        &request_model,
+                        cached_entry
+                            .actual_model
+                            .as_deref()
+                            .unwrap_or(&request_model),
+                        auth_key.id.as_deref(),
+                        &cached_entry.provider_name,
+                        cached_entry.status_code as i32,
+                        start.elapsed().as_millis() as f64,
+                        cached_usage,
+                        is_stream,
+                        false,
+                        None,
+                        None,
+                        LogExtras {
+                            method: Some(method_owned.clone()),
+                            path: Some(path_owned.clone()),
+                            request_headers: request_headers_str.clone(),
+                            request_body: request_body_str.clone(),
+                            response_headers: None,
+                            response_body: serde_json::to_string(&cached_entry.payload).ok(),
+                        },
+                    );
+                    return response;
                 }
             }
+            DashEntry::Vacant(entry) => {
+                let (tx, _) = broadcast::channel(16);
+                entry.insert(tx.clone());
+                singleflight_leader = Some((key.clone(), tx));
+            }
         }
+    }
 
     // ── Semantic cache read ───────────────────────────────────────────────────
 
@@ -282,37 +396,62 @@ pub async fn dispatch_pipeline(
             semantic_partition.as_deref(),
             semantic_embedding.as_ref(),
         )
-            && let Ok(vector) = compute_embedding(&gw, semantic_text).await {
-                semantic_query_vector = Some(vector.clone());
-                if let Ok(Some(hit)) = vector_store.search(partition, &vector, semantic_threshold).await
-                    && let Ok(cached_entry) = serde_json::from_slice::<CacheEntry>(&hit.data)
-                        && !is_semantic_entry_expired(&cached_entry, semantic_ttl) {
-                            if exact_enabled_for_route
-                                && let (Some(cache_backend), Some(key)) =
-                                    (cache_backend.as_ref(), request_cache_key.as_deref())
-                                {
-                                    let _ = cache_backend.set(key, &hit.data, Some(exact_ttl)).await;
-                                }
-                            let response = cached_entry_to_response(
-                                ingress, &cached_entry, is_stream, Some(&hit.key), "SEMANTIC",
-                                Some(hit.score), cache_config.semantic.stream_replay_tps,
-                                cache_config.semantic.expose_headers,
-                            );
-                            let cached_usage = cached_entry.usage.clone();
-                            emit_log(
-                                &gw, &ingress_str, &ingress_str, &request_model,
-                                cached_entry.actual_model.as_deref().unwrap_or(&request_model),
-                                auth_key.id.as_deref(), &cached_entry.provider_name,
-                                cached_entry.status_code as i32, start.elapsed().as_millis() as f64,
-                                cached_usage, is_stream, false, None, None,
-                                LogExtras { method: Some(method_owned.clone()), path: Some(path_owned.clone()),
-                                    request_headers: request_headers_str.clone(), request_body: request_body_str.clone(),
-                                    response_headers: None,
-                                    response_body: serde_json::to_string(&cached_entry.payload).ok() },
-                            );
-                            return response;
-                        }
+        && let Ok(vector) = compute_embedding(&gw, semantic_text).await
+    {
+        semantic_query_vector = Some(vector.clone());
+        if let Ok(Some(hit)) = vector_store
+            .search(partition, &vector, semantic_threshold)
+            .await
+            && let Ok(cached_entry) = serde_json::from_slice::<CacheEntry>(&hit.data)
+            && !is_semantic_entry_expired(&cached_entry, semantic_ttl)
+        {
+            if exact_enabled_for_route
+                && let (Some(cache_backend), Some(key)) =
+                    (cache_backend.as_ref(), request_cache_key.as_deref())
+            {
+                let _ = cache_backend.set(key, &hit.data, Some(exact_ttl)).await;
             }
+            let response = cached_entry_to_response(
+                ingress,
+                &cached_entry,
+                is_stream,
+                Some(&hit.key),
+                "SEMANTIC",
+                Some(hit.score),
+                cache_config.semantic.stream_replay_tps,
+                cache_config.semantic.expose_headers,
+            );
+            let cached_usage = cached_entry.usage.clone();
+            emit_log(
+                &gw,
+                &ingress_str,
+                &ingress_str,
+                &request_model,
+                cached_entry
+                    .actual_model
+                    .as_deref()
+                    .unwrap_or(&request_model),
+                auth_key.id.as_deref(),
+                &cached_entry.provider_name,
+                cached_entry.status_code as i32,
+                start.elapsed().as_millis() as f64,
+                cached_usage,
+                is_stream,
+                false,
+                None,
+                None,
+                LogExtras {
+                    method: Some(method_owned.clone()),
+                    path: Some(path_owned.clone()),
+                    request_headers: request_headers_str.clone(),
+                    request_body: request_body_str.clone(),
+                    response_headers: None,
+                    response_body: serde_json::to_string(&cached_entry.payload).ok(),
+                },
+            );
+            return response;
+        }
+    }
 
     let semantic_write_ctx = if semantic_enabled_for_route && semantic_write_temp_allowed {
         if let (Some(partition), Some((_, semantic_text))) =
@@ -336,26 +475,56 @@ pub async fn dispatch_pipeline(
     let targets = load_route_targets(&gw, &route).await;
     if targets.is_empty() {
         emit_log(
-            &gw, &ingress_str, &ingress_str, &request_model, "",
-            auth_key.id.as_deref(), "", 503, start.elapsed().as_millis() as f64,
-            TokenUsage::default(), is_stream, false,
-            Some("no route targets configured".to_string()), None,
-            LogExtras { method: Some(method_owned.clone()), path: Some(path_owned.clone()),
-                request_headers: request_headers_str.clone(), request_body: request_body_str.clone(),
-                response_headers: None, response_body: None },
+            &gw,
+            &ingress_str,
+            &ingress_str,
+            &request_model,
+            "",
+            auth_key.id.as_deref(),
+            "",
+            503,
+            start.elapsed().as_millis() as f64,
+            TokenUsage::default(),
+            is_stream,
+            false,
+            Some("no route targets configured".to_string()),
+            None,
+            LogExtras {
+                method: Some(method_owned.clone()),
+                path: Some(path_owned.clone()),
+                request_headers: request_headers_str.clone(),
+                request_body: request_body_str.clone(),
+                response_headers: None,
+                response_body: None,
+            },
         );
         return error_response(503, "no route targets configured");
     }
     let ordered_targets = TargetSelector::select_ordered(&route.strategy, &targets);
     if ordered_targets.is_empty() {
         emit_log(
-            &gw, &ingress_str, &ingress_str, &request_model, "",
-            auth_key.id.as_deref(), "", 503, start.elapsed().as_millis() as f64,
-            TokenUsage::default(), is_stream, false,
-            Some("no route targets configured".to_string()), None,
-            LogExtras { method: Some(method_owned.clone()), path: Some(path_owned.clone()),
-                request_headers: request_headers_str.clone(), request_body: request_body_str.clone(),
-                response_headers: None, response_body: None },
+            &gw,
+            &ingress_str,
+            &ingress_str,
+            &request_model,
+            "",
+            auth_key.id.as_deref(),
+            "",
+            503,
+            start.elapsed().as_millis() as f64,
+            TokenUsage::default(),
+            is_stream,
+            false,
+            Some("no route targets configured".to_string()),
+            None,
+            LogExtras {
+                method: Some(method_owned.clone()),
+                path: Some(path_owned.clone()),
+                request_headers: request_headers_str.clone(),
+                request_body: request_body_str.clone(),
+                response_headers: None,
+                response_body: None,
+            },
         );
         return error_response(503, "no route targets configured");
     }
@@ -384,7 +553,10 @@ pub async fn dispatch_pipeline(
         let provider_runtime = match gw.admin().resolve_provider_runtime(&provider).await {
             Ok(runtime) => runtime,
             Err(e) => {
-                last_response = Some(error_response(502, &format!("provider credential error: {e}")));
+                last_response = Some(error_response(
+                    502,
+                    &format!("provider credential error: {e}"),
+                ));
                 continue;
             }
         };
@@ -414,7 +586,12 @@ pub async fn dispatch_pipeline(
         };
 
         // Look up Vendor for this vendor_id.
-        let vendor_id = provider.vendor.as_deref().map(str::trim).filter(|v| !v.is_empty()).unwrap_or("custom");
+        let vendor_id = provider
+            .vendor
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .unwrap_or("custom");
         let adapter = match VendorRegistry::global().get_vendor(vendor_id) {
             Some(a) => a.clone(),
             None => {
@@ -439,10 +616,10 @@ pub async fn dispatch_pipeline(
         };
 
         // Build outbound request — PassThrough (Native + no mutations) or full 7-step pipeline.
-        let passthrough_req = plan.mode == ProtocolMode::Native
-            && !adapter.declared_request_mutations();
-        let passthrough_resp = plan.mode == ProtocolMode::Native
-            && !adapter.declared_response_mutations();
+        let passthrough_req =
+            plan.mode == ProtocolMode::Native && !adapter.declared_request_mutations();
+        let passthrough_resp =
+            plan.mode == ProtocolMode::Native && !adapter.declared_response_mutations();
         let mut outbound = if passthrough_req {
             let raw = envelope.body.clone().unwrap_or_default();
             match crate::provider::common::pipeline::passthrough_run(adapter.as_ref(), raw, &ctx)
@@ -472,7 +649,10 @@ pub async fn dispatch_pipeline(
                 outbound.headers = merged;
             }
             Err(e) => {
-                last_response = Some(error_response(502, &format!("provider runtime binding error: {e}")));
+                last_response = Some(error_response(
+                    502,
+                    &format!("provider runtime binding error: {e}"),
+                ));
                 continue;
             }
         }
@@ -595,13 +775,28 @@ pub async fn dispatch_pipeline(
     finalize_singleflight(&gw, singleflight_leader.as_ref(), false).await;
     last_response.unwrap_or_else(|| {
         emit_log(
-            &gw, &ingress_str, &ingress_str, &request_model, "",
-            auth_key.id.as_deref(), "", 502, start.elapsed().as_millis() as f64,
-            TokenUsage::default(), is_stream, false,
-            Some("all route targets failed".to_string()), None,
-            LogExtras { method: Some(method_owned.clone()), path: Some(path_owned.clone()),
-                request_headers: request_headers_str.clone(), request_body: request_body_str.clone(),
-                response_headers: None, response_body: None },
+            &gw,
+            &ingress_str,
+            &ingress_str,
+            &request_model,
+            "",
+            auth_key.id.as_deref(),
+            "",
+            502,
+            start.elapsed().as_millis() as f64,
+            TokenUsage::default(),
+            is_stream,
+            false,
+            Some("all route targets failed".to_string()),
+            None,
+            LogExtras {
+                method: Some(method_owned.clone()),
+                path: Some(path_owned.clone()),
+                request_headers: request_headers_str.clone(),
+                request_body: request_body_str.clone(),
+                response_headers: None,
+                response_body: None,
+            },
         );
         error_response(502, "all route targets failed")
     })
@@ -623,7 +818,11 @@ pub async fn dispatch(
 
     let flat_headers: std::collections::HashMap<String, String> = headers
         .iter()
-        .filter_map(|(k, v)| v.to_str().ok().map(|vs| (k.as_str().to_lowercase(), vs.to_string())))
+        .filter_map(|(k, v)| {
+            v.to_str()
+                .ok()
+                .map(|vs| (k.as_str().to_lowercase(), vs.to_string()))
+        })
         .collect();
     let envelope = RawEnvelope::new(Some(body.clone()), flat_headers, method, path);
 
@@ -634,12 +833,30 @@ pub async fn dispatch(
             let ingress_str = ingress.to_string();
             let msg = format!("invalid request: {e}");
             emit_log(
-                &gw, &ingress_str, &ingress_str, "", "", None, "",
-                400, 0.0, TokenUsage::default(), false, false, Some(msg.clone()), None,
-                LogExtras { method: Some(method.into()), path: Some(path.into()),
-                    request_headers: request_headers_str.clone(), request_body: request_body_str.clone(),
+                &gw,
+                &ingress_str,
+                &ingress_str,
+                "",
+                "",
+                None,
+                "",
+                400,
+                0.0,
+                TokenUsage::default(),
+                false,
+                false,
+                Some(msg.clone()),
+                None,
+                LogExtras {
+                    method: Some(method.into()),
+                    path: Some(path.into()),
+                    request_headers: request_headers_str.clone(),
+                    request_body: request_body_str.clone(),
                     response_headers: None,
-                    response_body: Some(serde_json::json!({ "error": { "message": msg.clone() } }).to_string()) },
+                    response_body: Some(
+                        serde_json::json!({ "error": { "message": msg.clone() } }).to_string(),
+                    ),
+                },
             );
             return error_response(400, &msg);
         }
@@ -712,9 +929,20 @@ async fn handle_non_stream(
         let body_str = serde_json::to_string(&resp).ok();
         let preview = body_str.as_ref().map(|s| s.chars().take(500).collect());
         emit_log(
-            &gw, ingress_str, egress_str, request_model, actual_model,
-            api_key_id, &provider.name, status as i32, start.elapsed().as_millis() as f64,
-            TokenUsage::default(), false, false, preview, None,
+            &gw,
+            ingress_str,
+            egress_str,
+            request_model,
+            actual_model,
+            api_key_id,
+            &provider.name,
+            status as i32,
+            start.elapsed().as_millis() as f64,
+            TokenUsage::default(),
+            false,
+            false,
+            preview,
+            None,
             make_extras(body_str, upstream_hdrs_str.clone()),
         );
         return (
@@ -730,27 +958,61 @@ async fn handle_non_stream(
         let resp_str = serde_json::to_string(&resp).ok();
         let preview = resp_str.as_ref().map(|s| s.chars().take(500).collect());
         emit_log(
-            &gw, ingress_str, egress_str, request_model, actual_model,
-            api_key_id, &provider.name, status as i32, start.elapsed().as_millis() as f64,
-            usage, false, false, None, preview,
+            &gw,
+            ingress_str,
+            egress_str,
+            request_model,
+            actual_model,
+            api_key_id,
+            &provider.name,
+            status as i32,
+            start.elapsed().as_millis() as f64,
+            usage,
+            false,
+            false,
+            None,
+            preview,
             make_extras(resp_str, upstream_hdrs_str.clone()),
         );
-        return (StatusCode::from_u16(status).unwrap_or(StatusCode::OK), Json(resp)).into_response();
+        return (
+            StatusCode::from_u16(status).unwrap_or(StatusCode::OK),
+            Json(resp),
+        )
+            .into_response();
     }
 
     // PassThrough: Native protocol + no response mutations → forward upstream JSON verbatim,
     // skipping the IR round-trip (parse_response → InternalResponse → format_response).
     if passthrough_resp {
-        tracing::debug!(mode = "passthrough", egress = egress_str, "bypassing IR round-trip");
+        tracing::debug!(
+            mode = "passthrough",
+            egress = egress_str,
+            "bypassing IR round-trip"
+        );
         let resp_str = serde_json::to_string(&resp).ok();
         let preview = resp_str.as_ref().map(|s| s.chars().take(500).collect());
         emit_log(
-            &gw, ingress_str, egress_str, request_model, actual_model,
-            api_key_id, &provider.name, status as i32, start.elapsed().as_millis() as f64,
-            TokenUsage::default(), false, false, None, preview,
+            &gw,
+            ingress_str,
+            egress_str,
+            request_model,
+            actual_model,
+            api_key_id,
+            &provider.name,
+            status as i32,
+            start.elapsed().as_millis() as f64,
+            TokenUsage::default(),
+            false,
+            false,
+            None,
+            preview,
             make_extras(resp_str, upstream_hdrs_str.clone()),
         );
-        return (StatusCode::from_u16(status).unwrap_or(StatusCode::OK), Json(resp)).into_response();
+        return (
+            StatusCode::from_u16(status).unwrap_or(StatusCode::OK),
+            Json(resp),
+        )
+            .into_response();
     }
 
     // Parse response via ProviderAdapter.
@@ -759,13 +1021,27 @@ async fn handle_non_stream(
         Ok(r) => r,
         Err(e) => {
             emit_log(
-                &gw, ingress_str, egress_str, request_model, actual_model,
-                api_key_id, &provider.name, 500, start.elapsed().as_millis() as f64,
-                TokenUsage::default(), false, false,
-                Some(format!("parse error: {e}")), None,
-                make_extras(Some(
-                    serde_json::json!({ "error": { "message": format!("parse error: {e}") } }).to_string(),
-                ), upstream_hdrs_str.clone()),
+                &gw,
+                ingress_str,
+                egress_str,
+                request_model,
+                actual_model,
+                api_key_id,
+                &provider.name,
+                500,
+                start.elapsed().as_millis() as f64,
+                TokenUsage::default(),
+                false,
+                false,
+                Some(format!("parse error: {e}")),
+                None,
+                make_extras(
+                    Some(
+                        serde_json::json!({ "error": { "message": format!("parse error: {e}") } })
+                            .to_string(),
+                    ),
+                    upstream_hdrs_str.clone(),
+                ),
             );
             return error_response(500, &format!("parse error: {e}"));
         }
@@ -782,11 +1058,24 @@ async fn handle_non_stream(
     let output = formatter.format_response(&internal_resp);
 
     let response_body_full = serde_json::to_string(&output).ok();
-    let response_preview = response_body_full.as_ref().map(|s| s.chars().take(500).collect());
+    let response_preview = response_body_full
+        .as_ref()
+        .map(|s| s.chars().take(500).collect());
     emit_log(
-        &gw, ingress_str, egress_str, request_model, actual_model,
-        api_key_id, &provider.name, status as i32, start.elapsed().as_millis() as f64,
-        usage.clone(), false, is_tool, None, response_preview,
+        &gw,
+        ingress_str,
+        egress_str,
+        request_model,
+        actual_model,
+        api_key_id,
+        &provider.name,
+        status as i32,
+        start.elapsed().as_millis() as f64,
+        usage.clone(),
+        false,
+        is_tool,
+        None,
+        response_preview,
         make_extras(response_body_full, upstream_hdrs_str),
     );
 
@@ -815,7 +1104,9 @@ async fn handle_non_stream(
                 }
             }
             let vector_store = (**gw.vector_store.load()).clone();
-            if let (Some(vector_store), Some(ctx)) = (vector_store.as_ref(), semantic_write_ctx.as_ref()) {
+            if let (Some(vector_store), Some(ctx)) =
+                (vector_store.as_ref(), semantic_write_ctx.as_ref())
+            {
                 let vector = if let Some(existing) = ctx.query_vector.clone() {
                     Some(existing)
                 } else {
@@ -863,9 +1154,20 @@ async fn handle_non_stream_via_upstream_stream(
         Ok(r) => r,
         Err(e) => {
             emit_log(
-                &gw, ingress_str, egress_str, request_model, actual_model,
-                api_key_id, &provider.name, 502, start.elapsed().as_millis() as f64,
-                TokenUsage::default(), false, false, Some(e.to_string()), None,
+                &gw,
+                ingress_str,
+                egress_str,
+                request_model,
+                actual_model,
+                api_key_id,
+                &provider.name,
+                502,
+                start.elapsed().as_millis() as f64,
+                TokenUsage::default(),
+                false,
+                false,
+                Some(e.to_string()),
+                None,
                 LogExtras::default(),
             );
             return error_response(502, &format!("upstream error: {e}"));
@@ -881,16 +1183,31 @@ async fn handle_non_stream_via_upstream_stream(
             .await
             .unwrap_or_else(|_| serde_json::json!({"error": {"message": "upstream error"}}));
         emit_log(
-            &gw, ingress_str, egress_str, request_model, actual_model,
-            api_key_id, &provider.name, status as i32, start.elapsed().as_millis() as f64,
-            TokenUsage::default(), false, false, Some(err_body.to_string()), None,
+            &gw,
+            ingress_str,
+            egress_str,
+            request_model,
+            actual_model,
+            api_key_id,
+            &provider.name,
+            status as i32,
+            start.elapsed().as_millis() as f64,
+            TokenUsage::default(),
+            false,
+            false,
+            Some(err_body.to_string()),
+            None,
             LogExtras {
                 response_headers: upstream_hdrs_str,
                 response_body: serde_json::to_string(&err_body).ok(),
                 ..LogExtras::default()
             },
         );
-        return (StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY), Json(err_body)).into_response();
+        return (
+            StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
+            Json(err_body),
+        )
+            .into_response();
     }
 
     let mut stream_parser = egress.handler().make_stream_parser();
@@ -902,10 +1219,20 @@ async fn handle_non_stream_via_upstream_stream(
             Ok(b) => b,
             Err(e) => {
                 emit_log(
-                    &gw, ingress_str, egress_str, request_model, actual_model,
-                    api_key_id, &provider.name, 502, start.elapsed().as_millis() as f64,
-                    TokenUsage::default(), false, false,
-                    Some(format!("stream read error: {e}")), None,
+                    &gw,
+                    ingress_str,
+                    egress_str,
+                    request_model,
+                    actual_model,
+                    api_key_id,
+                    &provider.name,
+                    502,
+                    start.elapsed().as_millis() as f64,
+                    TokenUsage::default(),
+                    false,
+                    false,
+                    Some(format!("stream read error: {e}")),
+                    None,
                     LogExtras::default(),
                 );
                 return error_response(502, &format!("upstream stream error: {e}"));
@@ -942,9 +1269,20 @@ async fn handle_non_stream_via_upstream_stream(
         .ok()
         .map(|s| s.chars().take(500).collect());
     emit_log(
-        &gw, ingress_str, egress_str, request_model, actual_model,
-        api_key_id, &provider.name, status as i32, start.elapsed().as_millis() as f64,
-        usage.clone(), false, is_tool, None, response_preview,
+        &gw,
+        ingress_str,
+        egress_str,
+        request_model,
+        actual_model,
+        api_key_id,
+        &provider.name,
+        status as i32,
+        start.elapsed().as_millis() as f64,
+        usage.clone(),
+        false,
+        is_tool,
+        None,
+        response_preview,
         LogExtras {
             response_headers: upstream_hdrs_str,
             response_body: serde_json::to_string(&output).ok(),
@@ -1066,9 +1404,20 @@ async fn handle_stream(
             .unwrap_or_else(|_| serde_json::json!({"error": {"message": "upstream error"}}));
         let err_body_str = serde_json::to_string(&err_body).ok();
         emit_log(
-            &gw, ingress_str, egress_str, request_model, actual_model,
-            api_key_id, &provider.name, status as i32, start.elapsed().as_millis() as f64,
-            TokenUsage::default(), true, false, Some(err_body.to_string()), None,
+            &gw,
+            ingress_str,
+            egress_str,
+            request_model,
+            actual_model,
+            api_key_id,
+            &provider.name,
+            status as i32,
+            start.elapsed().as_millis() as f64,
+            TokenUsage::default(),
+            true,
+            false,
+            Some(err_body.to_string()),
+            None,
             make_extras_owned(err_body_str, upstream_hdrs_str.clone()),
         );
         return (
@@ -1152,11 +1501,20 @@ async fn handle_stream(
             let aggregated_body_str = serde_json::to_string(&aggregated_output).ok();
 
             emit_log(
-                &gw_pt, &ingress_s_pt, &egress_s_pt, &req_model_pt, &act_model_pt,
-                key_id_pt.as_deref(), &provider_name_pt, 200,
+                &gw_pt,
+                &ingress_s_pt,
+                &egress_s_pt,
+                &req_model_pt,
+                &act_model_pt,
+                key_id_pt.as_deref(),
+                &provider_name_pt,
+                200,
                 start.elapsed().as_millis() as f64,
-                internal.usage.clone(), true, !internal.tool_calls.is_empty(),
-                stream_error, None,
+                internal.usage.clone(),
+                true,
+                !internal.tool_calls.is_empty(),
+                stream_error,
+                None,
                 LogExtras {
                     method: Some(ingress_method_pt.clone()),
                     path: Some(ingress_path_pt.clone()),
@@ -1219,7 +1577,9 @@ async fn handle_stream(
                     // P1: emit an explicit terminal event instead of silently breaking,
                     // so the client receives a defined stop_reason and does not hang.
                     tracing::warn!(error = %e, "upstream stream error; emitting terminal event");
-                    let error_deltas = [StreamDelta::Done { stop_reason: "error".to_string() }];
+                    let error_deltas = [StreamDelta::Done {
+                        stop_reason: "error".to_string(),
+                    }];
                     let events = stream_formatter.format_deltas(&error_deltas);
                     for ev in events {
                         let _ = tx.send(Ok(ev.to_sse_string())).await;
@@ -1271,9 +1631,20 @@ async fn handle_stream(
         let aggregated_output = aggregated_formatter.format_response(&internal);
         let aggregated_body_str = serde_json::to_string(&aggregated_output).ok();
         emit_log(
-            &gw_log, &ingress_s, &egress_s, &req_model, &act_model,
-            key_id.as_deref(), &provider_name, 200, start.elapsed().as_millis() as f64,
-            internal.usage.clone(), true, !internal.tool_calls.is_empty(), None, None,
+            &gw_log,
+            &ingress_s,
+            &egress_s,
+            &req_model,
+            &act_model,
+            key_id.as_deref(),
+            &provider_name,
+            200,
+            start.elapsed().as_millis() as f64,
+            internal.usage.clone(),
+            true,
+            !internal.tool_calls.is_empty(),
+            None,
+            None,
             LogExtras {
                 method: Some(ingress_method_owned.clone()),
                 path: Some(ingress_path_owned.clone()),
@@ -1302,7 +1673,9 @@ async fn handle_stream(
                     internal_response: Some(internal.clone()),
                 };
                 if let Ok(bytes) = serde_json::to_vec(&entry) {
-                    let _ = cache_backend.set(cache_key, &bytes, exact_cache_ttl_owned).await;
+                    let _ = cache_backend
+                        .set(cache_key, &bytes, exact_cache_ttl_owned)
+                        .await;
                     singleflight_payload = Some(bytes.clone());
                     let vector_store = (**gw_log.vector_store.load()).clone();
                     if let (Some(vector_store), Some(ctx)) =
@@ -1383,8 +1756,13 @@ trait ProxyAccessStore {
     async fn get_active_provider(&self, id: &str) -> anyhow::Result<Option<Provider>>;
     async fn find_api_key(&self, raw_key: &str) -> anyhow::Result<Option<ApiKeyAccessRecord>>;
     async fn route_binding_exists(&self, api_key_id: &str, route_id: &str) -> anyhow::Result<bool>;
-    async fn request_count_since(&self, api_key_id: &str, window: UsageWindow) -> anyhow::Result<i64>;
-    async fn token_count_since(&self, api_key_id: &str, window: UsageWindow) -> anyhow::Result<i64>;
+    async fn request_count_since(
+        &self,
+        api_key_id: &str,
+        window: UsageWindow,
+    ) -> anyhow::Result<i64>;
+    async fn token_count_since(&self, api_key_id: &str, window: UsageWindow)
+    -> anyhow::Result<i64>;
 }
 
 struct GatewayProxyAccessStore<'a> {
@@ -1392,7 +1770,9 @@ struct GatewayProxyAccessStore<'a> {
 }
 
 impl<'a> GatewayProxyAccessStore<'a> {
-    fn new(gw: &'a Gateway) -> Self { Self { gw } }
+    fn new(gw: &'a Gateway) -> Self {
+        Self { gw }
+    }
 }
 
 #[async_trait]
@@ -1413,13 +1793,21 @@ impl ProxyAccessStore for GatewayProxyAccessStore<'_> {
             None => Ok(false),
         }
     }
-    async fn request_count_since(&self, api_key_id: &str, window: UsageWindow) -> anyhow::Result<i64> {
+    async fn request_count_since(
+        &self,
+        api_key_id: &str,
+        window: UsageWindow,
+    ) -> anyhow::Result<i64> {
         match self.gw.storage.auth() {
             Some(store) => store.request_count_since(api_key_id, window).await,
             None => Ok(0),
         }
     }
-    async fn token_count_since(&self, api_key_id: &str, window: UsageWindow) -> anyhow::Result<i64> {
+    async fn token_count_since(
+        &self,
+        api_key_id: &str,
+        window: UsageWindow,
+    ) -> anyhow::Result<i64> {
         match self.gw.storage.auth() {
             Some(store) => store.token_count_since(api_key_id, window).await,
             None => Ok(0),
@@ -1454,9 +1842,10 @@ async fn authorize_route_access<S: ProxyAccessStore + ?Sized>(
     }
 
     if let Some(expires) = key_row.expires_at.as_ref()
-        && is_key_expired(expires) {
-            return Err(error_response(403, "api key expired"));
-        }
+        && is_key_expired(expires)
+    {
+        return Err(error_response(403, "api key expired"));
+    }
 
     let allowed = access_store
         .route_binding_exists(&key_row.id, &route.id)
@@ -1506,7 +1895,9 @@ async fn authorize_route_access<S: ProxyAccessStore + ?Sized>(
         }
     }
 
-    Ok(AuthenticatedKey { id: Some(key_row.id) })
+    Ok(AuthenticatedKey {
+        id: Some(key_row.id),
+    })
 }
 
 async fn get_provider<S: ProxyAccessStore + ?Sized>(
@@ -1519,7 +1910,6 @@ async fn get_provider<S: ProxyAccessStore + ?Sized>(
         .ok_or_else(|| anyhow::anyhow!("provider not found or inactive: {id}"))
 }
 
-
 // Cache helpers (SemanticWriteContext, resolve_route_cache, route_*_ttl,
 // is_semantic_entry_expired, request_has_image_input, extract_semantic_embedding_input,
 // is_retryable, runtime_binding_headers, load_route_targets) are in util.rs.
@@ -1531,19 +1921,23 @@ fn set_cache_headers(
     score: Option<f64>,
     expose_headers: bool,
 ) {
-    if !expose_headers { return; }
+    if !expose_headers {
+        return;
+    }
     let headers = response.headers_mut();
     if let Ok(value) = HeaderValue::from_str(cache_status) {
         headers.insert("X-NYRO-CACHE", value);
     }
     if let Some(key) = key
-        && let Ok(value) = HeaderValue::from_str(key) {
-            headers.insert("X-NYRO-CACHE-KEY", value);
-        }
+        && let Ok(value) = HeaderValue::from_str(key)
+    {
+        headers.insert("X-NYRO-CACHE-KEY", value);
+    }
     if let Some(score) = score
-        && let Ok(value) = HeaderValue::from_str(&format!("{score:.4}")) {
-            headers.insert("X-NYRO-CACHE-SCORE", value);
-        }
+        && let Ok(value) = HeaderValue::from_str(&format!("{score:.4}"))
+    {
+        headers.insert("X-NYRO-CACHE-SCORE", value);
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1557,19 +1951,29 @@ fn cached_entry_to_response(
     stream_replay_tps: u32,
     expose_headers: bool,
 ) -> Response {
-    if is_stream
-        && let Some(internal) = entry.internal_response.as_ref() {
-            return replay_cached_stream(
-                ingress, internal, cache_key, cache_status, score,
-                stream_replay_tps, expose_headers,
-            );
-        }
+    if is_stream && let Some(internal) = entry.internal_response.as_ref() {
+        return replay_cached_stream(
+            ingress,
+            internal,
+            cache_key,
+            cache_status,
+            score,
+            stream_replay_tps,
+            expose_headers,
+        );
+    }
     let mut response = (
         StatusCode::from_u16(entry.status_code).unwrap_or(StatusCode::OK),
         Json(entry.payload.clone()),
     )
         .into_response();
-    set_cache_headers(&mut response, cache_status, cache_key, score, expose_headers);
+    set_cache_headers(
+        &mut response,
+        cache_status,
+        cache_key,
+        score,
+        expose_headers,
+    );
     response
 }
 
@@ -1584,16 +1988,27 @@ fn replay_cached_stream(
 ) -> Response {
     let mut formatter = ingress.handler().make_stream_formatter();
     let deltas = internal_response_to_deltas(internal);
-    let deltas = if stream_replay_tps > 0 { split_text_deltas(deltas, 4) } else { deltas };
+    let deltas = if stream_replay_tps > 0 {
+        split_text_deltas(deltas, 4)
+    } else {
+        deltas
+    };
     let mut payloads: Vec<String> = formatter
         .format_deltas(&deltas)
         .into_iter()
         .map(|ev| ev.to_sse_string())
         .collect();
-    payloads.extend(formatter.format_done().into_iter().map(|ev| ev.to_sse_string()));
+    payloads.extend(
+        formatter
+            .format_done()
+            .into_iter()
+            .map(|ev| ev.to_sse_string()),
+    );
 
     let interval = if stream_replay_tps > 0 {
-        Some(std::time::Duration::from_micros(1_000_000 / stream_replay_tps as u64))
+        Some(std::time::Duration::from_micros(
+            1_000_000 / stream_replay_tps as u64,
+        ))
     } else {
         None
     };
@@ -1602,8 +2017,13 @@ fn replay_cached_stream(
     tokio::spawn(async move {
         for (i, payload) in payloads.into_iter().enumerate() {
             if i > 0
-                && let Some(d) = interval { tokio::time::sleep(d).await; }
-            if tx.send(Ok(payload)).await.is_err() { break; }
+                && let Some(d) = interval
+            {
+                tokio::time::sleep(d).await;
+            }
+            if tx.send(Ok(payload)).await.is_err() {
+                break;
+            }
         }
     });
 
@@ -1615,7 +2035,13 @@ fn replay_cached_stream(
         .header(header::CONNECTION, "keep-alive")
         .body(body)
         .unwrap();
-    set_cache_headers(&mut response, cache_status, cache_key, score, expose_headers);
+    set_cache_headers(
+        &mut response,
+        cache_status,
+        cache_key,
+        score,
+        expose_headers,
+    );
     response
 }
 
@@ -1629,12 +2055,17 @@ fn internal_response_to_deltas(internal: &InternalResponse) -> Vec<StreamDelta> 
         model: internal.model.clone(),
     }];
     if let Some(reasoning) = &internal.reasoning_content
-        && !reasoning.is_empty() {
-            deltas.push(StreamDelta::ReasoningDelta(reasoning.clone()));
-            if let Some(sig) = internal.reasoning_signature.as_ref().filter(|s| !s.is_empty()) {
-                deltas.push(StreamDelta::ReasoningSignature(sig.clone()));
-            }
+        && !reasoning.is_empty()
+    {
+        deltas.push(StreamDelta::ReasoningDelta(reasoning.clone()));
+        if let Some(sig) = internal
+            .reasoning_signature
+            .as_ref()
+            .filter(|s| !s.is_empty())
+        {
+            deltas.push(StreamDelta::ReasoningSignature(sig.clone()));
         }
+    }
     if !internal.content.is_empty() {
         deltas.push(StreamDelta::TextDelta(internal.content.clone()));
     }
@@ -1645,31 +2076,49 @@ fn internal_response_to_deltas(internal: &InternalResponse) -> Vec<StreamDelta> 
             name: tool_call.name.clone(),
         });
         if !tool_call.arguments.is_empty() {
-            deltas.push(StreamDelta::ToolCallDelta { index, arguments: tool_call.arguments.clone() });
+            deltas.push(StreamDelta::ToolCallDelta {
+                index,
+                arguments: tool_call.arguments.clone(),
+            });
         }
     }
     deltas.push(StreamDelta::Usage(internal.usage.clone()));
     deltas.push(StreamDelta::Done {
-        stop_reason: internal.stop_reason.clone().unwrap_or_else(|| "stop".to_string()),
+        stop_reason: internal
+            .stop_reason
+            .clone()
+            .unwrap_or_else(|| "stop".to_string()),
     });
     deltas
 }
 
 fn split_text_deltas(deltas: Vec<StreamDelta>, chunk_chars: usize) -> Vec<StreamDelta> {
-    deltas.into_iter().flat_map(|d| match d {
-        StreamDelta::TextDelta(text) => {
-            let chars: Vec<char> = text.chars().collect();
-            if chars.len() <= chunk_chars { return vec![StreamDelta::TextDelta(text)]; }
-            chars.chunks(chunk_chars).map(|c| StreamDelta::TextDelta(c.iter().collect())).collect()
-        }
-        StreamDelta::ReasoningDelta(text) => {
-            let chars: Vec<char> = text.chars().collect();
-            if chars.len() <= chunk_chars { return vec![StreamDelta::ReasoningDelta(text)]; }
-            chars.chunks(chunk_chars).map(|c| StreamDelta::ReasoningDelta(c.iter().collect())).collect()
-        }
-        other => vec![other],
-    })
-    .collect()
+    deltas
+        .into_iter()
+        .flat_map(|d| match d {
+            StreamDelta::TextDelta(text) => {
+                let chars: Vec<char> = text.chars().collect();
+                if chars.len() <= chunk_chars {
+                    return vec![StreamDelta::TextDelta(text)];
+                }
+                chars
+                    .chunks(chunk_chars)
+                    .map(|c| StreamDelta::TextDelta(c.iter().collect()))
+                    .collect()
+            }
+            StreamDelta::ReasoningDelta(text) => {
+                let chars: Vec<char> = text.chars().collect();
+                if chars.len() <= chunk_chars {
+                    return vec![StreamDelta::ReasoningDelta(text)];
+                }
+                chars
+                    .chunks(chunk_chars)
+                    .map(|c| StreamDelta::ReasoningDelta(c.iter().collect()))
+                    .collect()
+            }
+            other => vec![other],
+        })
+        .collect()
 }
 
 async fn finalize_singleflight(
@@ -1677,11 +2126,18 @@ async fn finalize_singleflight(
     leader: Option<&(String, broadcast::Sender<Vec<u8>>)>,
     success: bool,
 ) {
-    let Some((key, tx)) = leader else { return; };
+    let Some((key, tx)) = leader else {
+        return;
+    };
     let payload = if success {
         let cache_backend = (**gw.cache_backend.load()).clone();
         if let Some(cache_backend) = cache_backend.as_ref() {
-            cache_backend.get(key).await.ok().flatten().unwrap_or_default()
+            cache_backend
+                .get(key)
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_default()
         } else {
             Vec::new()
         }
@@ -1695,15 +2151,26 @@ async fn finalize_singleflight(
 pub(crate) fn error_response(status: u16, message: &str) -> Response {
     let err: GatewayError = match status {
         400 => GatewayError::bad_request("bad_request", message),
-        401 => GatewayError::Unauthorized { reason: AuthFailure::Invalid },
-        403 => GatewayError::Forbidden { reason: crate::error::AccessDenial::Custom(message.to_string()) },
-        404 => GatewayError::RouteNotFound { model: message.to_string() },
+        401 => GatewayError::Unauthorized {
+            reason: AuthFailure::Invalid,
+        },
+        403 => GatewayError::Forbidden {
+            reason: crate::error::AccessDenial::Custom(message.to_string()),
+        },
+        404 => GatewayError::RouteNotFound {
+            model: message.to_string(),
+        },
         429 => GatewayError::QuotaExceeded {
-            window: crate::error::QuotaWindow { window_type: "request".to_string(), reset_at_secs: None },
+            window: crate::error::QuotaWindow {
+                window_type: "request".to_string(),
+                reset_at_secs: None,
+            },
         },
         503 => GatewayError::provider_unavailable("unknown", message),
         502 => GatewayError::upstream_status("unknown", 502, Some(message.to_string())),
-        _ => GatewayError::Internal { source: anyhow::anyhow!("{}", message) },
+        _ => GatewayError::Internal {
+            source: anyhow::anyhow!("{}", message),
+        },
     };
     err.render(None)
 }
@@ -1793,7 +2260,10 @@ async fn compute_embedding(gw: &Gateway, text: &str) -> anyhow::Result<Vec<f32>>
             Err(_) => continue,
         };
         let request_body = serde_json::json!({ "model": actual_model, "input": text });
-        match client.call_non_stream(&upstream_url, request_headers, request_body).await {
+        match client
+            .call_non_stream(&upstream_url, request_headers, request_body)
+            .await
+        {
             Ok((payload, status, _)) if status < 400 => {
                 if let Some(vector) = parse_embedding_vector(&payload) {
                     return Ok(vector);
@@ -1825,9 +2295,14 @@ fn parse_embedding_vector(payload: &Value) -> Option<Vec<f32>> {
 
 fn resolve_openai_base_url(provider: &Provider) -> Option<String> {
     let protocols = ProviderProtocols::from_provider(provider);
-    if !protocols.supports(OPENAI_CHAT_V1) { return None; }
+    if !protocols.supports(OPENAI_CHAT_V1) {
+        return None;
+    }
     let resolved = protocols.resolve_egress(OPENAI_CHAT_V1);
     let trimmed = resolved.base_url.trim();
-    if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
-

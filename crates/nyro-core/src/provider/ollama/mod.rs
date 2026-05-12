@@ -11,7 +11,9 @@ use crate::Gateway;
 use crate::error::GatewayError;
 use crate::protocol::ids::ProtocolId;
 use crate::protocol::types::{InternalRequest, InternalResponse};
-use crate::provider::common::openai::{openai_bearer_auth_headers, openai_build_url, openai_map_error};
+use crate::provider::common::openai::{
+    openai_bearer_auth_headers, openai_build_url, openai_map_error,
+};
 use crate::provider::common::pipeline;
 use crate::provider::inbound::InboundResponse;
 use crate::provider::metadata::{AuthMode, ChannelDef, Label, ProtocolBaseUrl, VendorMetadata};
@@ -23,15 +25,27 @@ use crate::provider::vendor_ext::VendorCtx;
 
 const METADATA: VendorMetadata = VendorMetadata {
     id: "ollama",
-    label: Label { zh: "Ollama", en: "Ollama" },
+    label: Label {
+        zh: "Ollama",
+        en: "Ollama",
+    },
     icon: "ollama",
     default_protocol: "openai",
     channels: &[ChannelDef {
         id: "default",
-        label: Label { zh: "默认", en: "Default" },
+        label: Label {
+            zh: "默认",
+            en: "Default",
+        },
         base_urls: &[
-            ProtocolBaseUrl { protocol: "openai", base_url: "http://127.0.0.1:11434/v1" },
-            ProtocolBaseUrl { protocol: "anthropic", base_url: "http://127.0.0.1:11434" },
+            ProtocolBaseUrl {
+                protocol: "openai",
+                base_url: "http://127.0.0.1:11434/v1",
+            },
+            ProtocolBaseUrl {
+                protocol: "anthropic",
+                base_url: "http://127.0.0.1:11434",
+            },
         ],
         api_key: Some("sk-ollama"),
         models_source: Some("http://127.0.0.1:11434/v1/models"),
@@ -47,10 +61,20 @@ pub struct OllamaVendor;
 
 #[async_trait]
 impl Vendor for OllamaVendor {
-    fn scope(&self) -> VendorScope { VendorScope::Vendor { vendor_id: "ollama" } }
-    fn metadata(&self) -> Option<&'static VendorMetadata> { Some(&METADATA) }
-    fn auth_headers(&self, ctx: &VendorCtx<'_>) -> HeaderMap { openai_bearer_auth_headers(ctx) }
-    fn build_url(&self, _ctx: &VendorCtx<'_>, base_url: &str, path: &str) -> String { openai_build_url(base_url, path) }
+    fn scope(&self) -> VendorScope {
+        VendorScope::Vendor {
+            vendor_id: "ollama",
+        }
+    }
+    fn metadata(&self) -> Option<&'static VendorMetadata> {
+        Some(&METADATA)
+    }
+    fn auth_headers(&self, ctx: &VendorCtx<'_>) -> HeaderMap {
+        openai_bearer_auth_headers(ctx)
+    }
+    fn build_url(&self, _ctx: &VendorCtx<'_>, base_url: &str, path: &str) -> String {
+        openai_build_url(base_url, path)
+    }
 
     async fn pre_request(
         &self,
@@ -84,19 +108,33 @@ impl Vendor for OllamaVendor {
         Ok(())
     }
 
-    fn vendor_id(&self) -> &'static str { "ollama" }
+    fn vendor_id(&self) -> &'static str {
+        "ollama"
+    }
     fn supported_protocols(&self) -> &'static [ProtocolId] {
         use crate::protocol::ids::OPENAI_CHAT_V1;
         &[OPENAI_CHAT_V1]
     }
-    async fn build_request(&self, req: &mut InternalRequest, ctx: &ProviderCtx<'_>) -> Result<OutboundRequest, GatewayError> {
+    async fn build_request(
+        &self,
+        req: &mut InternalRequest,
+        ctx: &ProviderCtx<'_>,
+    ) -> Result<OutboundRequest, GatewayError> {
         pipeline::build_request(self, req, ctx).await
     }
-    async fn parse_response(&self, resp: InboundResponse, ctx: &ProviderCtx<'_>) -> Result<InternalResponse, GatewayError> {
+    async fn parse_response(
+        &self,
+        resp: InboundResponse,
+        ctx: &ProviderCtx<'_>,
+    ) -> Result<InternalResponse, GatewayError> {
         pipeline::parse_response(self, resp, ctx).await
     }
-    fn stream_parser(&self, ctx: &ProviderCtx<'_>) -> Box<dyn ProviderStreamParser + Send> { pipeline::stream_parser(ctx) }
-    fn map_error(&self, status: u16, body: Value) -> GatewayError { openai_map_error("ollama", status, body) }
+    fn stream_parser(&self, ctx: &ProviderCtx<'_>) -> Box<dyn ProviderStreamParser + Send> {
+        pipeline::stream_parser(ctx)
+    }
+    fn map_error(&self, status: u16, body: Value) -> GatewayError {
+        openai_map_error("ollama", status, body)
+    }
 }
 
 inventory::submit! { VendorRegistration { make: || Box::new(OllamaVendor) } }

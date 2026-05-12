@@ -133,13 +133,19 @@ mod tests {
         assert!(base_ends_with_version_segment(
             "https://open.bigmodel.cn/api/coding/paas/v4"
         ));
-        assert!(base_ends_with_version_segment("https://api.deepseek.com/v1/"));
+        assert!(base_ends_with_version_segment(
+            "https://api.deepseek.com/v1/"
+        ));
         assert!(base_ends_with_version_segment("https://example.com/v123"));
         assert!(base_ends_with_version_segment(
             "https://generativelanguage.googleapis.com/v1beta"
         ));
-        assert!(base_ends_with_version_segment("https://example.com/v2alpha"));
-        assert!(base_ends_with_version_segment("https://example.com/v3stable"));
+        assert!(base_ends_with_version_segment(
+            "https://example.com/v2alpha"
+        ));
+        assert!(base_ends_with_version_segment(
+            "https://example.com/v3stable"
+        ));
 
         assert!(!base_ends_with_version_segment(
             "https://open.bigmodel.cn/api/anthropic"
@@ -151,7 +157,9 @@ mod tests {
         assert!(!base_ends_with_version_segment("https://api.deepseek.com/"));
         assert!(!base_ends_with_version_segment("https://example.com/vNext"));
         assert!(!base_ends_with_version_segment("https://example.com/v"));
-        assert!(!base_ends_with_version_segment("https://example.com/vendor"));
+        assert!(!base_ends_with_version_segment(
+            "https://example.com/vendor"
+        ));
         assert!(!base_ends_with_version_segment("https://example.com/v1b2"));
     }
 

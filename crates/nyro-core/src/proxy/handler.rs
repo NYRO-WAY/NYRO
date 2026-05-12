@@ -10,13 +10,13 @@
 
 use std::collections::{BTreeSet, HashSet};
 
+use axum::Json;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 
-use crate::proxy::security::{extract_api_key, is_key_expired};
 use crate::Gateway;
+use crate::proxy::security::{extract_api_key, is_key_expired};
 
 // ── GET /v1/models ────────────────────────────────────────────────────────────
 
@@ -25,19 +25,19 @@ pub async fn models_list(State(gw): State<Gateway>, headers: HeaderMap) -> Respo
 
     if let Some(raw_key) = extract_api_key(&headers)
         && let Some(store) = gw.storage.auth()
-            && let Ok(Some(key_row)) = store.find_api_key(&raw_key).await {
-                let key_active = key_row.is_enabled
-                    && key_row
-                        .expires_at
-                        .as_ref()
-                        .map(|expires| !is_key_expired(expires))
-                        .unwrap_or(true);
+        && let Ok(Some(key_row)) = store.find_api_key(&raw_key).await
+    {
+        let key_active = key_row.is_enabled
+            && key_row
+                .expires_at
+                .as_ref()
+                .map(|expires| !is_key_expired(expires))
+                .unwrap_or(true);
 
-                if key_active
-                    && let Ok(bound_route_ids) = store.list_bound_route_ids(&key_row.id).await {
-                        accessible_route_ids.extend(bound_route_ids);
-                    }
-            }
+        if key_active && let Ok(bound_route_ids) = store.list_bound_route_ids(&key_row.id).await {
+            accessible_route_ids.extend(bound_route_ids);
+        }
+    }
 
     let cache = gw.route_cache.read().await;
     let models = cache
@@ -67,4 +67,3 @@ pub async fn models_list(State(gw): State<Gateway>, headers: HeaderMap) -> Respo
     }))
     .into_response()
 }
-

@@ -14,19 +14,19 @@
 //!    mutations (fill missing `tool_call_id`, fix orphaned refs, patch broken
 //!    conversation structure) without rejecting the request.
 
+pub mod compat;
+pub mod envelope;
+pub mod repair;
 pub mod request;
 pub mod response;
 pub mod stream;
-pub mod envelope;
 pub mod vendor_ext;
-pub mod repair;
-pub mod compat;
 
+pub use envelope::RawEnvelope;
 pub use request::{
     AiRequest, GenerationConfig, Message, MessageContent, ReasoningConfig, RequestMetadata,
     ResponseFormat, Role, SafetySettings, StreamConfig, ToolChoice, ToolSpec,
 };
 pub use response::{AiResponse, ResponseItem};
 pub use stream::StreamDelta as AiStreamDelta;
-pub use envelope::RawEnvelope;
 pub use vendor_ext::VendorExtensions;

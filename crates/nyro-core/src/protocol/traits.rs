@@ -10,8 +10,7 @@
 //! to pull in everything needed to implement a handler.
 
 pub use super::{
-    EgressEncoder, IngressDecoder, ResponseFormatter, ResponseParser, StreamFormatter,
-    StreamParser,
+    EgressEncoder, IngressDecoder, ResponseFormatter, ResponseParser, StreamFormatter, StreamParser,
 };
 
 use crate::protocol::ids::{EndpointCapabilities, Protocol, ProtocolEndpoint};

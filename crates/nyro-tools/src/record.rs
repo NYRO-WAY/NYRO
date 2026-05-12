@@ -9,7 +9,7 @@
 //! Existing fixture files are skipped (no overwrite). Sensitive headers are scrubbed before persistence.
 
 use crate::fixture::{
-    Fixture, FIXTURE_VERSION, RecordedRequest, RecordedResponse, scrub_sensitive_headers,
+    FIXTURE_VERSION, Fixture, RecordedRequest, RecordedResponse, scrub_sensitive_headers,
 };
 use crate::protocol::{ProtocolKind, validate_upstream_endpoint};
 use crate::scenarios::{MODEL_PLACEHOLDER, SCENARIOS, Scenario};
@@ -212,7 +212,10 @@ async fn record_one(
         }
     }
     let body_bytes = resp.bytes().await.with_context(|| {
-        format!("scenario `{}`: failed to read full response body", scenario.name)
+        format!(
+            "scenario `{}`: failed to read full response body",
+            scenario.name
+        )
     })?;
     if status >= 400 {
         let snippet = String::from_utf8_lossy(&body_bytes[..body_bytes.len().min(512)]);
@@ -286,10 +289,7 @@ fn recorded_request_headers(protocol: ProtocolKind) -> BTreeMap<String, String> 
     let mut map = BTreeMap::new();
     map.insert("content-type".to_string(), "application/json".to_string());
     if matches!(protocol, ProtocolKind::AnthropicMessages) {
-        map.insert(
-            "anthropic-version".to_string(),
-            "2023-06-01".to_string(),
-        );
+        map.insert("anthropic-version".to_string(), "2023-06-01".to_string());
     }
     scrub_sensitive_headers(&mut map);
     map

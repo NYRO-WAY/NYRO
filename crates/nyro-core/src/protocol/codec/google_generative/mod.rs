@@ -1,5 +1,5 @@
-pub mod types;
 pub mod decoder;
 pub mod encoder;
-pub mod stream;
 pub mod generate_content;
+pub mod stream;
+pub mod types;

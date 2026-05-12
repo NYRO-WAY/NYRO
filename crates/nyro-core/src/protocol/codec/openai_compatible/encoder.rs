@@ -4,14 +4,15 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-use crate::protocol::types::*;
 use crate::protocol::EgressEncoder;
+use crate::protocol::types::*;
 
 pub struct OpenAIEncoder;
 
 impl EgressEncoder for OpenAIEncoder {
     fn encode_request(&self, req: &InternalRequest) -> Result<(Value, HeaderMap)> {
-        let normalized_messages = normalize_messages_for_openai(&req.messages, req.tools.as_deref());
+        let normalized_messages =
+            normalize_messages_for_openai(&req.messages, req.tools.as_deref());
         let messages: Vec<Value> = normalized_messages
             .iter()
             .map(encode_message)
@@ -58,9 +59,11 @@ impl EgressEncoder for OpenAIEncoder {
         // ── PR-08 fields forwarded from extra ─────────────────────────────────
         // Always include_usage when streaming.
         if req.stream {
-            let stream_opts = req.extra.get("stream_options").cloned().unwrap_or_else(|| {
-                serde_json::json!({"include_usage": true})
-            });
+            let stream_opts = req
+                .extra
+                .get("stream_options")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({"include_usage": true}));
             obj.insert("stream_options".into(), stream_opts);
         }
 
@@ -206,7 +209,7 @@ fn normalize_messages_for_openai(
                         arguments: "{}".to_string(),
                     }]),
                     tool_call_id: None,
-    extra: HashMap::new(),
+                    extra: HashMap::new(),
                 });
                 seen_tool_call_ids.insert(final_id.clone());
             }
@@ -244,15 +247,16 @@ fn prune_orphan_assistant_tool_calls(messages: Vec<InternalMessage>) -> Vec<Inte
     let mut out: Vec<InternalMessage> = Vec::with_capacity(messages.len());
     for mut msg in messages {
         if msg.role == Role::Assistant
-            && let Some(calls) = msg.tool_calls.take() {
-                let kept: Vec<ToolCall> = calls
-                    .into_iter()
-                    .filter(|tc| referenced_tool_ids.contains(&tc.id))
-                    .collect();
-                if !kept.is_empty() {
-                    msg.tool_calls = Some(kept);
-                }
+            && let Some(calls) = msg.tool_calls.take()
+        {
+            let kept: Vec<ToolCall> = calls
+                .into_iter()
+                .filter(|tc| referenced_tool_ids.contains(&tc.id))
+                .collect();
+            if !kept.is_empty() {
+                msg.tool_calls = Some(kept);
             }
+        }
         out.push(msg);
     }
     out
@@ -294,7 +298,10 @@ fn remap_duplicate_tool_call_ids(messages: &[InternalMessage]) -> Vec<InternalMe
                         format!("{}_dup{}", original, *count)
                     };
                     tc.id = unique.clone();
-                    pending_by_original.entry(original).or_default().push(unique);
+                    pending_by_original
+                        .entry(original)
+                        .or_default()
+                        .push(unique);
                 }
             }
             continue;
@@ -314,9 +321,10 @@ fn remap_duplicate_tool_call_ids(messages: &[InternalMessage]) -> Vec<InternalMe
         };
 
         if let Some(stack) = pending_by_original.get_mut(&original_id)
-            && let Some(unique_id) = stack.pop() {
-                msg.tool_call_id = Some(unique_id);
-            }
+            && let Some(unique_id) = stack.pop()
+        {
+            msg.tool_call_id = Some(unique_id);
+        }
     }
 
     out
@@ -447,7 +455,10 @@ fn encode_message(msg: &InternalMessage) -> Result<Value> {
                             "function": {"name": name, "arguments": input.to_string()}
                         })
                     }
-                    ContentBlock::ToolResult { tool_use_id, content } => {
+                    ContentBlock::ToolResult {
+                        tool_use_id,
+                        content,
+                    } => {
                         serde_json::json!({
                             "type": "text",
                             "text": content.to_string(),

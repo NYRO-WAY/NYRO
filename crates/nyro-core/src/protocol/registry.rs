@@ -9,9 +9,8 @@ use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
 use crate::protocol::ids::{
-    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GENERATE_CONTENT_V1BETA,
-    OPENAI_CHAT_COMPLETIONS_V1, OPENAI_EMBEDDINGS_V1, OPENAI_RESPONSES_V1,
-    Protocol, ProtocolEndpoint,
+    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GENERATE_CONTENT_V1BETA, OPENAI_CHAT_COMPLETIONS_V1,
+    OPENAI_EMBEDDINGS_V1, OPENAI_RESPONSES_V1, Protocol, ProtocolEndpoint,
 };
 use crate::protocol::traits::EndpointHandler;
 
@@ -139,7 +138,13 @@ impl ProtocolRegistry {
         let mut handlers: Vec<_> = self
             .by_id
             .iter()
-            .filter_map(|(id, h)| if id.protocol == protocol { Some(h) } else { None })
+            .filter_map(|(id, h)| {
+                if id.protocol == protocol {
+                    Some(h)
+                } else {
+                    None
+                }
+            })
             .collect();
         handlers.sort_by_key(|h| h.id());
         handlers
@@ -156,11 +161,8 @@ impl ProtocolRegistry {
 
     /// All distinct protocols that have at least one registered handler.
     pub fn list_protocols(&self) -> Vec<Protocol> {
-        let protocols: std::collections::BTreeSet<Protocol> = self
-            .by_id
-            .keys()
-            .map(|id| id.protocol)
-            .collect();
+        let protocols: std::collections::BTreeSet<Protocol> =
+            self.by_id.keys().map(|id| id.protocol).collect();
         protocols.into_iter().collect()
     }
 
@@ -254,8 +256,9 @@ impl ProtocolRegistry {
                             );
                         }
                         // Accumulate endpoint name in the endpoints array
-                        let endpoints =
-                            entry_obj.entry("endpoints").or_insert(serde_json::Value::Array(vec![]));
+                        let endpoints = entry_obj
+                            .entry("endpoints")
+                            .or_insert(serde_json::Value::Array(vec![]));
                         if let Some(arr) = endpoints.as_array_mut() {
                             let ep_name = serde_json::Value::String(ep.name.to_string());
                             if !arr.contains(&ep_name) {
@@ -299,12 +302,14 @@ impl ProtocolRegistry {
                 && let Some(obj) = entry_val.as_object_mut()
             {
                 if let Some(eps_val) = obj.get("endpoints").and_then(|v| v.as_array()) {
-                    let all_for_protocol: Vec<_> =
-                        self.list_by_protocol(protocol).iter().map(|h| h.id().name).collect();
-                    let all_present =
-                        all_for_protocol.iter().all(|n| {
-                            eps_val.iter().any(|v| v.as_str() == Some(n))
-                        });
+                    let all_for_protocol: Vec<_> = self
+                        .list_by_protocol(protocol)
+                        .iter()
+                        .map(|h| h.id().name)
+                        .collect();
+                    let all_present = all_for_protocol
+                        .iter()
+                        .all(|n| eps_val.iter().any(|v| v.as_str() == Some(n)));
                     if all_present && all_for_protocol.len() == eps_val.len() {
                         obj.remove("endpoints");
                     }
@@ -345,7 +350,10 @@ fn default_endpoint_aliases() -> HashMap<&'static str, ProtocolEndpoint> {
     m.insert("openai/chat/v1", OPENAI_CHAT_COMPLETIONS_V1);
     m.insert("openai/embeddings/v1", OPENAI_EMBEDDINGS_V1);
     m.insert("openai/responses/v1", OPENAI_RESPONSES_V1);
-    m.insert("anthropic/messages/2023-06-01", ANTHROPIC_MESSAGES_2023_06_01);
+    m.insert(
+        "anthropic/messages/2023-06-01",
+        ANTHROPIC_MESSAGES_2023_06_01,
+    );
     m.insert("google/generate/v1beta", GOOGLE_GENERATE_CONTENT_V1BETA);
 
     // ── Tier 2: Canonical short names ─────────────────────────────────────────
@@ -436,29 +444,71 @@ mod tests {
     fn alias_table_resolves_old_canonical_and_short() {
         let reg = ProtocolRegistry::global();
         // Old canonical (tier 1)
-        assert_eq!(reg.resolve_alias("openai/chat/v1"), Some(OPENAI_CHAT_COMPLETIONS_V1));
-        assert_eq!(reg.resolve_alias("anthropic/messages/2023-06-01"), Some(ANTHROPIC_MESSAGES_2023_06_01));
-        assert_eq!(reg.resolve_alias("google/generate/v1beta"), Some(GOOGLE_GENERATE_CONTENT_V1BETA));
+        assert_eq!(
+            reg.resolve_alias("openai/chat/v1"),
+            Some(OPENAI_CHAT_COMPLETIONS_V1)
+        );
+        assert_eq!(
+            reg.resolve_alias("anthropic/messages/2023-06-01"),
+            Some(ANTHROPIC_MESSAGES_2023_06_01)
+        );
+        assert_eq!(
+            reg.resolve_alias("google/generate/v1beta"),
+            Some(GOOGLE_GENERATE_CONTENT_V1BETA)
+        );
 
         // Canonical short (tier 2)
-        assert_eq!(reg.resolve_alias("openai-chat"), Some(OPENAI_CHAT_COMPLETIONS_V1));
-        assert_eq!(reg.resolve_alias("openai-chat-completions"), Some(OPENAI_CHAT_COMPLETIONS_V1));
-        assert_eq!(reg.resolve_alias("anthropic-messages"), Some(ANTHROPIC_MESSAGES_2023_06_01));
-        assert_eq!(reg.resolve_alias("google-generate"), Some(GOOGLE_GENERATE_CONTENT_V1BETA));
-        assert_eq!(reg.resolve_alias("google-generate-content"), Some(GOOGLE_GENERATE_CONTENT_V1BETA));
+        assert_eq!(
+            reg.resolve_alias("openai-chat"),
+            Some(OPENAI_CHAT_COMPLETIONS_V1)
+        );
+        assert_eq!(
+            reg.resolve_alias("openai-chat-completions"),
+            Some(OPENAI_CHAT_COMPLETIONS_V1)
+        );
+        assert_eq!(
+            reg.resolve_alias("anthropic-messages"),
+            Some(ANTHROPIC_MESSAGES_2023_06_01)
+        );
+        assert_eq!(
+            reg.resolve_alias("google-generate"),
+            Some(GOOGLE_GENERATE_CONTENT_V1BETA)
+        );
+        assert_eq!(
+            reg.resolve_alias("google-generate-content"),
+            Some(GOOGLE_GENERATE_CONTENT_V1BETA)
+        );
 
         // Legacy brand (tier 3)
-        assert_eq!(reg.resolve_alias("openai"), Some(OPENAI_CHAT_COMPLETIONS_V1));
-        assert_eq!(reg.resolve_alias("anthropic"), Some(ANTHROPIC_MESSAGES_2023_06_01));
-        assert_eq!(reg.resolve_alias("claude"), Some(ANTHROPIC_MESSAGES_2023_06_01));
-        assert_eq!(reg.resolve_alias("gemini"), Some(GOOGLE_GENERATE_CONTENT_V1BETA));
+        assert_eq!(
+            reg.resolve_alias("openai"),
+            Some(OPENAI_CHAT_COMPLETIONS_V1)
+        );
+        assert_eq!(
+            reg.resolve_alias("anthropic"),
+            Some(ANTHROPIC_MESSAGES_2023_06_01)
+        );
+        assert_eq!(
+            reg.resolve_alias("claude"),
+            Some(ANTHROPIC_MESSAGES_2023_06_01)
+        );
+        assert_eq!(
+            reg.resolve_alias("gemini"),
+            Some(GOOGLE_GENERATE_CONTENT_V1BETA)
+        );
     }
 
     #[test]
     fn alias_resolution_is_case_insensitive_and_trims() {
         let reg = ProtocolRegistry::global();
-        assert_eq!(reg.resolve_alias("  OpenAI  "), Some(OPENAI_CHAT_COMPLETIONS_V1));
-        assert_eq!(reg.resolve_alias("GEMINI"), Some(GOOGLE_GENERATE_CONTENT_V1BETA));
+        assert_eq!(
+            reg.resolve_alias("  OpenAI  "),
+            Some(OPENAI_CHAT_COMPLETIONS_V1)
+        );
+        assert_eq!(
+            reg.resolve_alias("GEMINI"),
+            Some(GOOGLE_GENERATE_CONTENT_V1BETA)
+        );
     }
 
     #[test]
@@ -474,7 +524,11 @@ mod tests {
         let reg = ProtocolRegistry::global();
         let openai_compat = reg.list_by_protocol(Protocol::OpenAICompatible);
         assert_eq!(openai_compat.len(), 2);
-        assert!(openai_compat.iter().any(|h| h.id() == OPENAI_CHAT_COMPLETIONS_V1));
+        assert!(
+            openai_compat
+                .iter()
+                .any(|h| h.id() == OPENAI_CHAT_COMPLETIONS_V1)
+        );
         assert!(openai_compat.iter().any(|h| h.id() == OPENAI_EMBEDDINGS_V1));
 
         assert_eq!(reg.list_by_protocol(Protocol::OpenAIResponses).len(), 1);
@@ -485,11 +539,26 @@ mod tests {
     #[test]
     fn parse_protocol_resolves_aliases() {
         let reg = ProtocolRegistry::global();
-        assert_eq!(reg.parse_protocol("openai-compat"), Some(Protocol::OpenAICompatible));
-        assert_eq!(reg.parse_protocol("openai"), Some(Protocol::OpenAICompatible));
-        assert_eq!(reg.parse_protocol("claude"), Some(Protocol::AnthropicMessages));
-        assert_eq!(reg.parse_protocol("gemini"), Some(Protocol::GoogleGenerativeAI));
-        assert_eq!(reg.parse_protocol("google-genai"), Some(Protocol::GoogleGenerativeAI));
+        assert_eq!(
+            reg.parse_protocol("openai-compat"),
+            Some(Protocol::OpenAICompatible)
+        );
+        assert_eq!(
+            reg.parse_protocol("openai"),
+            Some(Protocol::OpenAICompatible)
+        );
+        assert_eq!(
+            reg.parse_protocol("claude"),
+            Some(Protocol::AnthropicMessages)
+        );
+        assert_eq!(
+            reg.parse_protocol("gemini"),
+            Some(Protocol::GoogleGenerativeAI)
+        );
+        assert_eq!(
+            reg.parse_protocol("google-genai"),
+            Some(Protocol::GoogleGenerativeAI)
+        );
     }
 
     #[test]
@@ -512,11 +581,13 @@ mod tests {
             Some(OPENAI_CHAT_COMPLETIONS_V1)
         );
         assert_eq!(
-            reg.find_by_ingress_route("POST", "/v1/responses").map(|h| h.id()),
+            reg.find_by_ingress_route("POST", "/v1/responses")
+                .map(|h| h.id()),
             Some(OPENAI_RESPONSES_V1)
         );
         assert_eq!(
-            reg.find_by_ingress_route("POST", "/v1/messages").map(|h| h.id()),
+            reg.find_by_ingress_route("POST", "/v1/messages")
+                .map(|h| h.id()),
             Some(ANTHROPIC_MESSAGES_2023_06_01)
         );
         assert_eq!(
@@ -524,7 +595,10 @@ mod tests {
                 .map(|h| h.id()),
             Some(OPENAI_CHAT_COMPLETIONS_V1)
         );
-        assert!(reg.find_by_ingress_route("GET", "/v1/chat/completions").is_none());
+        assert!(
+            reg.find_by_ingress_route("GET", "/v1/chat/completions")
+                .is_none()
+        );
     }
 
     #[test]

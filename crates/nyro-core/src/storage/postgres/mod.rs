@@ -252,7 +252,11 @@ impl OAuthCredentialStore for PostgresOAuthCredentialStore {
         .await?)
     }
 
-    async fn upsert(&self, provider_id: &str, input: UpsertOAuthCredential) -> anyhow::Result<OAuthCredential> {
+    async fn upsert(
+        &self,
+        provider_id: &str,
+        input: UpsertOAuthCredential,
+    ) -> anyhow::Result<OAuthCredential> {
         sqlx::query(
             "INSERT INTO provider_oauth_credentials (provider_id, driver_key, scheme, access_token, refresh_token, expires_at, resource_url, subject_id, scopes, meta, status, status_version, last_error) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'connected', 0, NULL) ON CONFLICT(provider_id) DO UPDATE SET driver_key=EXCLUDED.driver_key, scheme=EXCLUDED.scheme, access_token=EXCLUDED.access_token, refresh_token=EXCLUDED.refresh_token, expires_at=EXCLUDED.expires_at, resource_url=EXCLUDED.resource_url, subject_id=EXCLUDED.subject_id, scopes=EXCLUDED.scopes, meta=EXCLUDED.meta, status='connected', status_version=provider_oauth_credentials.status_version+1, last_error=NULL, updated_at=CURRENT_TIMESTAMP",
         )
@@ -268,7 +272,9 @@ impl OAuthCredentialStore for PostgresOAuthCredentialStore {
         .bind(input.meta.as_deref().unwrap_or("{}"))
         .execute(&self.pool)
         .await?;
-        self.get(provider_id).await?.context("credential not found after upsert")
+        self.get(provider_id)
+            .await?
+            .context("credential not found after upsert")
     }
 
     async fn delete(&self, provider_id: &str) -> anyhow::Result<()> {
@@ -279,7 +285,11 @@ impl OAuthCredentialStore for PostgresOAuthCredentialStore {
         Ok(())
     }
 
-    async fn try_begin_refresh(&self, provider_id: &str, expected_version: i32) -> anyhow::Result<Option<OAuthCredential>> {
+    async fn try_begin_refresh(
+        &self,
+        provider_id: &str,
+        expected_version: i32,
+    ) -> anyhow::Result<Option<OAuthCredential>> {
         let result = sqlx::query(
             "UPDATE provider_oauth_credentials SET status='refreshing', status_version=status_version+1, updated_at=CURRENT_TIMESTAMP WHERE provider_id=$1 AND status='connected' AND status_version=$2",
         )
@@ -294,7 +304,11 @@ impl OAuthCredentialStore for PostgresOAuthCredentialStore {
         }
     }
 
-    async fn complete_refresh(&self, provider_id: &str, input: UpsertOAuthCredential) -> anyhow::Result<OAuthCredential> {
+    async fn complete_refresh(
+        &self,
+        provider_id: &str,
+        input: UpsertOAuthCredential,
+    ) -> anyhow::Result<OAuthCredential> {
         sqlx::query(
             "UPDATE provider_oauth_credentials SET driver_key=$1, scheme=$2, access_token=$3, refresh_token=$4, expires_at=$5, resource_url=$6, subject_id=$7, scopes=$8, meta=$9, status='connected', status_version=status_version+1, last_error=NULL, last_refresh_at=CURRENT_TIMESTAMP, updated_at=CURRENT_TIMESTAMP WHERE provider_id=$10",
         )
@@ -310,7 +324,9 @@ impl OAuthCredentialStore for PostgresOAuthCredentialStore {
         .bind(provider_id)
         .execute(&self.pool)
         .await?;
-        self.get(provider_id).await?.context("credential not found after complete_refresh")
+        self.get(provider_id)
+            .await?
+            .context("credential not found after complete_refresh")
     }
 
     async fn fail_refresh(&self, provider_id: &str, error_message: &str) -> anyhow::Result<()> {
@@ -654,7 +670,10 @@ impl RouteStore for PostgresRouteStore {
 #[async_trait]
 impl RouteSnapshotStore for PostgresRouteStore {
     async fn load_active_snapshot(&self) -> anyhow::Result<Vec<Route>> {
-        let sql = format!("{} WHERE COALESCE(is_enabled, TRUE) = true", route_select(None));
+        let sql = format!(
+            "{} WHERE COALESCE(is_enabled, TRUE) = true",
+            route_select(None)
+        );
         Ok(sqlx::query_as::<_, Route>(&sql)
             .fetch_all(&self.pool)
             .await?)
@@ -1291,9 +1310,11 @@ END $$;"#,
             .execute(self.adapter.pool())
             .await?;
         // Migrate: providers/routes is_active -> is_enabled
-        sqlx::query("ALTER TABLE providers ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN DEFAULT TRUE")
-            .execute(self.adapter.pool())
-            .await?;
+        sqlx::query(
+            "ALTER TABLE providers ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN DEFAULT TRUE",
+        )
+        .execute(self.adapter.pool())
+        .await?;
         sqlx::query("UPDATE providers SET is_enabled = is_active WHERE is_active IS NOT NULL AND is_enabled IS DISTINCT FROM is_active")
             .execute(self.adapter.pool())
             .await
@@ -1306,9 +1327,11 @@ END $$;"#,
             .await
             .ok();
         // Migrate: api_keys status -> is_enabled
-        sqlx::query("ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN DEFAULT TRUE")
-            .execute(self.adapter.pool())
-            .await?;
+        sqlx::query(
+            "ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS is_enabled BOOLEAN DEFAULT TRUE",
+        )
+        .execute(self.adapter.pool())
+        .await?;
         sqlx::query(
             "UPDATE api_keys SET is_enabled = CASE WHEN status = 'active' THEN TRUE ELSE FALSE END \
              WHERE status IS NOT NULL AND is_enabled IS DISTINCT FROM (status = 'active')",
@@ -1342,13 +1365,11 @@ END $$;"#,
                 .bind(from)
                 .execute(self.adapter.pool())
                 .await?;
-            sqlx::query(
-                "UPDATE providers SET preset_key = $1 WHERE lower(btrim(preset_key)) = $2",
-            )
-            .bind(to)
-            .bind(from)
-            .execute(self.adapter.pool())
-            .await?;
+            sqlx::query("UPDATE providers SET preset_key = $1 WHERE lower(btrim(preset_key)) = $2")
+                .bind(to)
+                .bind(from)
+                .execute(self.adapter.pool())
+                .await?;
         }
         // PR4: rewrite provider protocol identifiers into canonical
         // `family/dialect/version` form. Idempotent.
@@ -1378,11 +1399,10 @@ async fn normalize_provider_protocols_pg(pool: &Pool<Postgres>) -> anyhow::Resul
     use crate::protocol::registry::ProtocolRegistry;
 
     let reg = ProtocolRegistry::global();
-    let rows: Vec<(String, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT id, default_protocol, protocol_endpoints FROM providers",
-    )
-    .fetch_all(pool)
-    .await?;
+    let rows: Vec<(String, Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT id, default_protocol, protocol_endpoints FROM providers")
+            .fetch_all(pool)
+            .await?;
 
     for (id, raw_default, raw_endpoints) in rows {
         let raw_default = raw_default.unwrap_or_default();
@@ -1420,11 +1440,12 @@ async fn ensure_semantic_cache_vectors_table(
     vector_dimensions: usize,
 ) -> anyhow::Result<()> {
     let dimensions = vector_dimensions.max(1);
-    let stored_dimension = sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = $1")
-        .bind(VECTOR_DIMENSIONS_SETTING_KEY)
-        .fetch_optional(pool)
-        .await?
-        .and_then(|raw| raw.trim().parse::<usize>().ok());
+    let stored_dimension =
+        sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = $1")
+            .bind(VECTOR_DIMENSIONS_SETTING_KEY)
+            .fetch_optional(pool)
+            .await?
+            .and_then(|raw| raw.trim().parse::<usize>().ok());
     let table_exists = sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS (
             SELECT 1
@@ -1484,9 +1505,10 @@ fn is_pg_permission_error(error: &anyhow::Error) -> bool {
     for cause in error.chain() {
         if let Some(sqlx_error) = cause.downcast_ref::<sqlx::Error>()
             && let sqlx::Error::Database(db_error) = sqlx_error
-                && db_error.code().as_deref() == Some("42501") {
-                    return true;
-                }
+            && db_error.code().as_deref() == Some("42501")
+        {
+            return true;
+        }
     }
     false
 }

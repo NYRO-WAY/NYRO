@@ -3,7 +3,7 @@
 //! Wire version is the schema date `2023-06-01` (the `anthropic-version` header
 //! the API requires), not the URL prefix `v1`.
 
-use crate::protocol::ids::{EndpointCapabilities, ANTHROPIC_MESSAGES_2023_06_01, ProtocolEndpoint};
+use crate::protocol::ids::{ANTHROPIC_MESSAGES_2023_06_01, EndpointCapabilities, ProtocolEndpoint};
 use crate::protocol::registry::EndpointRegistration;
 use crate::protocol::traits::*;
 

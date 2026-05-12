@@ -22,13 +22,19 @@ use crate::provider::vendor_ext::{VendorCtx, VendorExtension};
 
 const METADATA: VendorMetadata = VendorMetadata {
     id: "anthropic",
-    label: Label { zh: "Anthropic", en: "Anthropic" },
+    label: Label {
+        zh: "Anthropic",
+        en: "Anthropic",
+    },
     icon: "anthropic",
     default_protocol: "anthropic",
     channels: &[
         ChannelDef {
             id: "default",
-            label: Label { zh: "默认", en: "Default" },
+            label: Label {
+                zh: "默认",
+                en: "Default",
+            },
             base_urls: &[ProtocolBaseUrl {
                 protocol: "anthropic",
                 base_url: "https://api.anthropic.com",
@@ -43,7 +49,10 @@ const METADATA: VendorMetadata = VendorMetadata {
         },
         ChannelDef {
             id: "claude-code",
-            label: Label { zh: "Claude Code", en: "Claude Code" },
+            label: Label {
+                zh: "Claude Code",
+                en: "Claude Code",
+            },
             base_urls: &[ProtocolBaseUrl {
                 protocol: "anthropic",
                 base_url: "https://api.anthropic.com",
@@ -80,8 +89,14 @@ pub struct AnthropicVendor;
 
 #[async_trait]
 impl Vendor for AnthropicVendor {
-    fn scope(&self) -> VendorScope { VendorScope::Vendor { vendor_id: "anthropic" } }
-    fn metadata(&self) -> Option<&'static VendorMetadata> { Some(&METADATA) }
+    fn scope(&self) -> VendorScope {
+        VendorScope::Vendor {
+            vendor_id: "anthropic",
+        }
+    }
+    fn metadata(&self) -> Option<&'static VendorMetadata> {
+        Some(&METADATA)
+    }
     fn auth_headers(&self, ctx: &VendorCtx<'_>) -> HeaderMap {
         let mut h = HeaderMap::new();
         if let Ok(v) = HeaderValue::from_str(ctx.api_key) {
@@ -90,17 +105,31 @@ impl Vendor for AnthropicVendor {
         h.insert("anthropic-version", HeaderValue::from_static("2023-06-01"));
         h
     }
-    fn vendor_id(&self) -> &'static str { "anthropic" }
+    fn vendor_id(&self) -> &'static str {
+        "anthropic"
+    }
     fn supported_protocols(&self) -> &'static [ProtocolId] {
         use crate::protocol::ids::ANTHROPIC_MESSAGES_2023_06_01;
         &[ANTHROPIC_MESSAGES_2023_06_01]
     }
-    fn declared_request_mutations(&self) -> bool { false }
-    fn declared_response_mutations(&self) -> bool { false }
-    async fn build_request(&self, req: &mut InternalRequest, ctx: &ProviderCtx<'_>) -> Result<OutboundRequest, GatewayError> {
+    fn declared_request_mutations(&self) -> bool {
+        false
+    }
+    fn declared_response_mutations(&self) -> bool {
+        false
+    }
+    async fn build_request(
+        &self,
+        req: &mut InternalRequest,
+        ctx: &ProviderCtx<'_>,
+    ) -> Result<OutboundRequest, GatewayError> {
         pipeline::build_request(self, req, ctx).await
     }
-    async fn parse_response(&self, resp: InboundResponse, ctx: &ProviderCtx<'_>) -> Result<InternalResponse, GatewayError> {
+    async fn parse_response(
+        &self,
+        resp: InboundResponse,
+        ctx: &ProviderCtx<'_>,
+    ) -> Result<InternalResponse, GatewayError> {
         pipeline::parse_response(self, resp, ctx).await
     }
     fn stream_parser(&self, ctx: &ProviderCtx<'_>) -> Box<dyn ProviderStreamParser + Send> {
@@ -123,8 +152,14 @@ inventory::submit! { VendorRegistration { make: || Box::new(AnthropicVendor) } }
 pub struct AnthropicFamilyExt;
 
 impl VendorExtension for AnthropicFamilyExt {
-    fn scope(&self) -> VendorScope { VendorScope::Vendor { vendor_id: "anthropic" } }
-    fn metadata(&self) -> Option<&'static VendorMetadata> { None }
+    fn scope(&self) -> VendorScope {
+        VendorScope::Vendor {
+            vendor_id: "anthropic",
+        }
+    }
+    fn metadata(&self) -> Option<&'static VendorMetadata> {
+        None
+    }
     fn auth_headers(&self, ctx: &VendorCtx<'_>) -> HeaderMap {
         let mut h = HeaderMap::new();
         if let Ok(v) = HeaderValue::from_str(ctx.api_key) {

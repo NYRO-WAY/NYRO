@@ -58,13 +58,16 @@ impl ProtocolKind {
             ProtocolKind::OpenAiResponses => ("/responses".to_string(), None),
             ProtocolKind::AnthropicMessages => ("/messages".to_string(), None),
             ProtocolKind::GoogleContent => {
-                let action = if stream { "streamGenerateContent" } else { "generateContent" };
+                let action = if stream {
+                    "streamGenerateContent"
+                } else {
+                    "generateContent"
+                };
                 let query = stream.then(|| "alt=sse".to_string());
                 (format!("/models/{real_model}:{action}"), query)
             }
         }
     }
-
 }
 
 /// Validate that `-e/--upstream-endpoint` carries a non-empty path component.
@@ -118,7 +121,9 @@ fn parse_google_content_model(path: &str) -> Result<String> {
         bail!("google-content path has empty model segment: {path}");
     }
     if !matches!(action, "generateContent" | "streamGenerateContent") {
-        bail!("google-content path has unsupported action `{action}` (expected generateContent or streamGenerateContent)");
+        bail!(
+            "google-content path has unsupported action `{action}` (expected generateContent or streamGenerateContent)"
+        );
     }
     Ok(model.to_owned())
 }
@@ -152,7 +157,8 @@ mod tests {
     #[test]
     fn extract_model_from_google_path() {
         for action in ["generateContent", "streamGenerateContent"] {
-            let path = format!("/v1beta/models/google-aistudio--google-content--basic-stream:{action}");
+            let path =
+                format!("/v1beta/models/google-aistudio--google-content--basic-stream:{action}");
             let m = ProtocolKind::GoogleContent
                 .extract_request_model(&path, &serde_json::json!({}))
                 .unwrap();

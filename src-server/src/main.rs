@@ -29,25 +29,44 @@ struct WebUiAssets;
 #[command(name = "nyro-server", version, about = "Nyro AI Gateway — Server Mode")]
 struct Args {
     // ── Server ────────────────────────────────────────────────────────────────
-    #[arg(long, default_value = "127.0.0.1", env = "NYRO_PROXY_HOST",
-          help_heading = "Server")]
+    #[arg(
+        long,
+        default_value = "127.0.0.1",
+        env = "NYRO_PROXY_HOST",
+        help_heading = "Server"
+    )]
     proxy_host: String,
 
-    #[arg(long, default_value_t = 19530, env = "NYRO_PROXY_PORT",
-          help_heading = "Server")]
+    #[arg(
+        long,
+        default_value_t = 19530,
+        env = "NYRO_PROXY_PORT",
+        help_heading = "Server"
+    )]
     proxy_port: u16,
 
-    #[arg(long, default_value = "127.0.0.1", env = "NYRO_ADMIN_HOST",
-          help_heading = "Server")]
+    #[arg(
+        long,
+        default_value = "127.0.0.1",
+        env = "NYRO_ADMIN_HOST",
+        help_heading = "Server"
+    )]
     admin_host: String,
 
-    #[arg(long, default_value_t = 19531, env = "NYRO_ADMIN_PORT",
-          help_heading = "Server")]
+    #[arg(
+        long,
+        default_value_t = 19531,
+        env = "NYRO_ADMIN_PORT",
+        help_heading = "Server"
+    )]
     admin_port: u16,
 
-    #[arg(long, env = "NYRO_ADMIN_TOKEN",
-          help = "Bearer token for admin API authentication",
-          help_heading = "Server")]
+    #[arg(
+        long,
+        env = "NYRO_ADMIN_TOKEN",
+        help = "Bearer token for admin API authentication",
+        help_heading = "Server"
+    )]
     admin_token: Option<String>,
 
     #[arg(
@@ -77,8 +96,12 @@ struct Args {
     proxy_cors_origins: Vec<String>,
 
     // ── Storage ───────────────────────────────────────────────────────────────
-    #[arg(long, default_value = "~/.nyro", env = "NYRO_DATA_DIR",
-          help_heading = "Storage")]
+    #[arg(
+        long,
+        default_value = "~/.nyro",
+        env = "NYRO_DATA_DIR",
+        help_heading = "Storage"
+    )]
     data_dir: String,
 
     #[arg(long, value_parser = ["sqlite", "postgres"], default_value = "sqlite",
@@ -102,27 +125,42 @@ struct Args {
     )]
     postgres_dsn: Option<String>,
 
-    #[arg(long, default_value_t = 10,
-          help = "Postgres: max connection pool size",
-          help_heading = "Storage")]
+    #[arg(
+        long,
+        default_value_t = 10,
+        help = "Postgres: max connection pool size",
+        help_heading = "Storage"
+    )]
     postgres_max_connections: u32,
 
-    #[arg(long, default_value_t = 1,
-          help = "Postgres: min connection pool size",
-          help_heading = "Storage")]
+    #[arg(
+        long,
+        default_value_t = 1,
+        help = "Postgres: min connection pool size",
+        help_heading = "Storage"
+    )]
     postgres_min_connections: u32,
 
-    #[arg(long, default_value_t = 10,
-          help = "Postgres: connection acquire timeout (seconds)",
-          help_heading = "Storage")]
+    #[arg(
+        long,
+        default_value_t = 10,
+        help = "Postgres: connection acquire timeout (seconds)",
+        help_heading = "Storage"
+    )]
     postgres_acquire_timeout: u64,
 
-    #[arg(long, help = "Postgres: idle connection timeout (seconds)",
-          help_heading = "Storage")]
+    #[arg(
+        long,
+        help = "Postgres: idle connection timeout (seconds)",
+        help_heading = "Storage"
+    )]
     postgres_idle_timeout: Option<u64>,
 
-    #[arg(long, help = "Postgres: max connection lifetime (seconds)",
-          help_heading = "Storage")]
+    #[arg(
+        long,
+        help = "Postgres: max connection lifetime (seconds)",
+        help_heading = "Storage"
+    )]
     postgres_max_lifetime: Option<u64>,
 
     // ── Standalone ────────────────────────────────────────────────────────────
@@ -139,13 +177,8 @@ struct Args {
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
 
-    let filter = format!(
-        "nyro={level},tower_http={level}",
-        level = args.log_level
-    );
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .init();
+    let filter = format!("nyro={level},tower_http={level}", level = args.log_level);
+    tracing_subscriber::fmt().with_env_filter(filter).init();
 
     if let Some(ref config_path) = args.config_file {
         return run_standalone(config_path, &args).await;

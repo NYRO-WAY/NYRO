@@ -43,7 +43,6 @@ pub mod zhipuai;
 
 // ── Flat re-exports ───────────────────────────────────────────────────────────
 
-pub use vendor::ProviderCtx;
 pub use inbound::InboundResponse;
 pub use metadata::{
     AuthMode, ChannelDef, Label, OAuthConfig, ProtocolBaseUrl, RuntimeConfig, VendorMetadata,
@@ -51,5 +50,6 @@ pub use metadata::{
 pub use outbound::OutboundRequest;
 pub use registry::{ExtensionRegistration, VendorRegistration, VendorRegistry, VendorScope};
 pub use stream::{LegacyStreamParserAdapter, ProviderStreamParser};
+pub use vendor::ProviderCtx;
 pub use vendor::Vendor;
 pub use vendor_ext::{VendorCtx, VendorExtension};

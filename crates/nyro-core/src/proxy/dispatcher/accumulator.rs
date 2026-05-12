@@ -17,14 +17,20 @@ pub(super) struct StreamResponseAccumulator {
 
 impl StreamResponseAccumulator {
     pub(super) fn apply_all(&mut self, deltas: &[StreamDelta]) {
-        for delta in deltas { self.apply(delta); }
+        for delta in deltas {
+            self.apply(delta);
+        }
     }
 
     pub(super) fn apply(&mut self, delta: &StreamDelta) {
         match delta {
             StreamDelta::MessageStart { id, model } => {
-                if self.id.is_empty() { self.id = id.clone(); }
-                if self.model.is_empty() { self.model = model.clone(); }
+                if self.id.is_empty() {
+                    self.id = id.clone();
+                }
+                if self.model.is_empty() {
+                    self.model = model.clone();
+                }
             }
             StreamDelta::ReasoningDelta(text) => self.reasoning_content.push_str(text),
             StreamDelta::ReasoningSignature(sig) => self.reasoning_signature.push_str(sig),
@@ -56,7 +62,10 @@ impl StreamResponseAccumulator {
     }
 
     pub(super) fn into_internal_response(self) -> InternalResponse {
-        let tool_calls = self.tool_calls.into_iter().flatten()
+        let tool_calls = self
+            .tool_calls
+            .into_iter()
+            .flatten()
             .filter(|tc| !tc.name.is_empty())
             .collect::<Vec<_>>();
         InternalResponse {

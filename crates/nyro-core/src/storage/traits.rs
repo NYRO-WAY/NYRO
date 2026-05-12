@@ -55,7 +55,11 @@ pub trait ProviderStore: Send + Sync {
     async fn update(&self, id: &str, input: UpdateProvider) -> anyhow::Result<Provider>;
     async fn delete(&self, id: &str) -> anyhow::Result<()>;
     async fn exists_by_name(&self, name: &str, exclude_id: Option<&str>) -> anyhow::Result<bool>;
-    async fn record_test_result(&self, provider_id: &str, result: ProviderTestResult) -> anyhow::Result<()>;
+    async fn record_test_result(
+        &self,
+        provider_id: &str,
+        result: ProviderTestResult,
+    ) -> anyhow::Result<()>;
 }
 
 #[async_trait]
@@ -111,8 +115,13 @@ pub trait AuthAccessStore: Send + Sync {
     async fn find_api_key(&self, raw_key: &str) -> anyhow::Result<Option<ApiKeyAccessRecord>>;
     async fn route_binding_exists(&self, api_key_id: &str, route_id: &str) -> anyhow::Result<bool>;
     async fn list_bound_route_ids(&self, api_key_id: &str) -> anyhow::Result<Vec<String>>;
-    async fn request_count_since(&self, api_key_id: &str, window: UsageWindow) -> anyhow::Result<i64>;
-    async fn token_count_since(&self, api_key_id: &str, window: UsageWindow) -> anyhow::Result<i64>;
+    async fn request_count_since(
+        &self,
+        api_key_id: &str,
+        window: UsageWindow,
+    ) -> anyhow::Result<i64>;
+    async fn token_count_since(&self, api_key_id: &str, window: UsageWindow)
+    -> anyhow::Result<i64>;
 }
 
 #[async_trait]
@@ -155,11 +164,7 @@ pub trait OAuthCredentialStore: Send + Sync {
         provider_id: &str,
         input: UpsertOAuthCredential,
     ) -> anyhow::Result<OAuthCredential>;
-    async fn fail_refresh(
-        &self,
-        provider_id: &str,
-        error_message: &str,
-    ) -> anyhow::Result<()>;
+    async fn fail_refresh(&self, provider_id: &str, error_message: &str) -> anyhow::Result<()>;
     async fn list_expiring(&self, before: Duration) -> anyhow::Result<Vec<OAuthCredential>>;
     async fn recover_stale_refreshing(&self, timeout: Duration) -> anyhow::Result<u64>;
 }

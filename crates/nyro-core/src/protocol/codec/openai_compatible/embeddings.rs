@@ -31,24 +31,19 @@ use std::collections::HashMap;
 use reqwest::header::HeaderMap;
 use serde_json::Value;
 
-use crate::protocol::ids::{OPENAI_EMBEDDINGS_V1, EndpointCapabilities, ProtocolEndpoint};
+use crate::protocol::SseEvent;
+use crate::protocol::ids::{EndpointCapabilities, OPENAI_EMBEDDINGS_V1, ProtocolEndpoint};
 use crate::protocol::registry::EndpointRegistration;
 use crate::protocol::traits::*;
 use crate::protocol::types::{InternalRequest, InternalResponse, StreamDelta, TokenUsage};
-use crate::protocol::SseEvent;
 
 /// Key under which the complete original request body is kept as a
 /// fallback (used by `embeddings_proxy` in handler.rs).
 pub const EMBEDDINGS_BODY_KEY: &str = "__embeddings_passthrough_body__";
 
 /// OpenAI-spec field names for the embeddings endpoint.
-const KNOWN_EMBEDDINGS_FIELDS: &[&str] = &[
-    "model",
-    "input",
-    "dimensions",
-    "encoding_format",
-    "user",
-];
+const KNOWN_EMBEDDINGS_FIELDS: &[&str] =
+    &["model", "input", "dimensions", "encoding_format", "user"];
 
 const CAPS: EndpointCapabilities = EndpointCapabilities {
     streaming: false,
@@ -57,10 +52,7 @@ const CAPS: EndpointCapabilities = EndpointCapabilities {
     embeddings: true,
     force_upstream_stream: false,
     override_model_in_body: false,
-    ingress_routes: &[
-        ("POST", "/v1/embeddings"),
-        ("POST", "/embeddings"),
-    ],
+    ingress_routes: &[("POST", "/v1/embeddings"), ("POST", "/embeddings")],
     multimodal: false,
     structured_output: false,
     function_calling: false,

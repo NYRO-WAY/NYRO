@@ -21,15 +21,15 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use nyro_core::Gateway;
 use nyro_core::config::GatewayConfig;
-use nyro_core::db::models::Provider;
 use nyro_core::db::models::ProtocolEndpointEntry;
+use nyro_core::db::models::Provider;
 use nyro_core::error::GatewayError;
+use nyro_core::protocol::ProviderProtocols;
 use nyro_core::protocol::ids::{
     ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GENERATE_V1BETA, OPENAI_CHAT_V1, OPENAI_RESPONSES_V1,
     ProtocolId,
 };
 use nyro_core::protocol::types::{InternalRequest, InternalResponse};
-use nyro_core::protocol::ProviderProtocols;
 use nyro_core::provider::inbound::InboundResponse;
 use nyro_core::provider::outbound::OutboundRequest;
 use nyro_core::provider::registry::VendorScope;
@@ -55,17 +55,53 @@ async fn build_test_gateway() -> Gateway {
 
 fn all_four_decl() -> ProviderProtocols {
     let endpoints = vec![
-        (OPENAI_CHAT_V1, ProtocolEndpointEntry { base_url: "https://chat.example.com".into(), endpoints: None }),
-        (OPENAI_RESPONSES_V1, ProtocolEndpointEntry { base_url: "https://responses.example.com".into(), endpoints: None }),
-        (ANTHROPIC_MESSAGES_2023_06_01, ProtocolEndpointEntry { base_url: "https://messages.example.com".into(), endpoints: None }),
-        (GOOGLE_GENERATE_V1BETA, ProtocolEndpointEntry { base_url: "https://generate.example.com".into(), endpoints: None }),
+        (
+            OPENAI_CHAT_V1,
+            ProtocolEndpointEntry {
+                base_url: "https://chat.example.com".into(),
+                endpoints: None,
+            },
+        ),
+        (
+            OPENAI_RESPONSES_V1,
+            ProtocolEndpointEntry {
+                base_url: "https://responses.example.com".into(),
+                endpoints: None,
+            },
+        ),
+        (
+            ANTHROPIC_MESSAGES_2023_06_01,
+            ProtocolEndpointEntry {
+                base_url: "https://messages.example.com".into(),
+                endpoints: None,
+            },
+        ),
+        (
+            GOOGLE_GENERATE_V1BETA,
+            ProtocolEndpointEntry {
+                base_url: "https://generate.example.com".into(),
+                endpoints: None,
+            },
+        ),
     ];
-    ProviderProtocols { default: OPENAI_CHAT_V1, endpoints }
+    ProviderProtocols {
+        default: OPENAI_CHAT_V1,
+        endpoints,
+    }
 }
 
 fn single_decl(proto: ProtocolId, url: &str) -> ProviderProtocols {
-    let endpoints = vec![(proto, ProtocolEndpointEntry { base_url: url.to_string(), endpoints: None })];
-    ProviderProtocols { default: proto, endpoints }
+    let endpoints = vec![(
+        proto,
+        ProtocolEndpointEntry {
+            base_url: url.to_string(),
+            endpoints: None,
+        },
+    )];
+    ProviderProtocols {
+        default: proto,
+        endpoints,
+    }
 }
 
 fn req_ctx(ingress: ProtocolId) -> RequestContext {
@@ -78,22 +114,31 @@ struct BearerVendor(&'static str);
 
 #[async_trait]
 impl Vendor for BearerVendor {
-    fn scope(&self) -> VendorScope { VendorScope::Vendor { vendor_id: self.0 } }
+    fn scope(&self) -> VendorScope {
+        VendorScope::Vendor { vendor_id: self.0 }
+    }
     fn auth_headers(&self, ctx: &VendorCtx<'_>) -> HeaderMap {
         let mut h = HeaderMap::new();
         if !ctx.api_key.is_empty() {
             h.insert(
                 reqwest::header::AUTHORIZATION,
-                reqwest::header::HeaderValue::from_str(&format!("Bearer {}", ctx.api_key))
-                    .unwrap(),
+                reqwest::header::HeaderValue::from_str(&format!("Bearer {}", ctx.api_key)).unwrap(),
             );
         }
         h
     }
-    fn vendor_id(&self) -> &'static str { self.0 }
-    fn supported_protocols(&self) -> &'static [ProtocolId] { &[OPENAI_CHAT_V1] }
-    fn declared_request_mutations(&self) -> bool { false }
-    fn declared_response_mutations(&self) -> bool { false }
+    fn vendor_id(&self) -> &'static str {
+        self.0
+    }
+    fn supported_protocols(&self) -> &'static [ProtocolId] {
+        &[OPENAI_CHAT_V1]
+    }
+    fn declared_request_mutations(&self) -> bool {
+        false
+    }
+    fn declared_response_mutations(&self) -> bool {
+        false
+    }
     async fn build_request(
         &self,
         _req: &mut InternalRequest,
@@ -158,7 +203,11 @@ fn diagonal_responses_responses_is_native() {
     let decl = single_decl(OPENAI_RESPONSES_V1, "https://api.openai.com");
     let mut ctx = req_ctx(OPENAI_RESPONSES_V1);
     let plan = negotiate(OPENAI_RESPONSES_V1, None, Some(&decl), &mut ctx).unwrap();
-    assert_eq!(plan.mode, ProtocolMode::Native, "responses→responses must be Native");
+    assert_eq!(
+        plan.mode,
+        ProtocolMode::Native,
+        "responses→responses must be Native"
+    );
     assert_eq!(plan.egress, OPENAI_RESPONSES_V1);
     assert!(!plan.needs_conversion);
 }
@@ -167,19 +216,29 @@ fn diagonal_responses_responses_is_native() {
 fn diagonal_messages_messages_is_native() {
     let decl = single_decl(ANTHROPIC_MESSAGES_2023_06_01, "https://api.anthropic.com");
     let mut ctx = req_ctx(ANTHROPIC_MESSAGES_2023_06_01);
-    let plan =
-        negotiate(ANTHROPIC_MESSAGES_2023_06_01, None, Some(&decl), &mut ctx).unwrap();
-    assert_eq!(plan.mode, ProtocolMode::Native, "messages→messages must be Native");
+    let plan = negotiate(ANTHROPIC_MESSAGES_2023_06_01, None, Some(&decl), &mut ctx).unwrap();
+    assert_eq!(
+        plan.mode,
+        ProtocolMode::Native,
+        "messages→messages must be Native"
+    );
     assert_eq!(plan.egress, ANTHROPIC_MESSAGES_2023_06_01);
     assert!(!plan.needs_conversion);
 }
 
 #[test]
 fn diagonal_generate_generate_is_native() {
-    let decl = single_decl(GOOGLE_GENERATE_V1BETA, "https://generativelanguage.googleapis.com");
+    let decl = single_decl(
+        GOOGLE_GENERATE_V1BETA,
+        "https://generativelanguage.googleapis.com",
+    );
     let mut ctx = req_ctx(GOOGLE_GENERATE_V1BETA);
     let plan = negotiate(GOOGLE_GENERATE_V1BETA, None, Some(&decl), &mut ctx).unwrap();
-    assert_eq!(plan.mode, ProtocolMode::Native, "generate→generate must be Native");
+    assert_eq!(
+        plan.mode,
+        ProtocolMode::Native,
+        "generate→generate must be Native"
+    );
     assert_eq!(plan.egress, GOOGLE_GENERATE_V1BETA);
     assert!(!plan.needs_conversion);
 }
@@ -200,26 +259,78 @@ macro_rules! off_diagonal_test {
                 $ing,
                 $eg
             );
-            assert!(plan.needs_conversion, "{} → {} must need conversion", $ing, $eg);
+            assert!(
+                plan.needs_conversion,
+                "{} → {} must need conversion",
+                $ing, $eg
+            );
         }
     };
 }
 
-off_diagonal_test!(chat_to_responses_is_transform,    ingress = OPENAI_CHAT_V1, egress = OPENAI_RESPONSES_V1);
-off_diagonal_test!(chat_to_messages_is_transform,     ingress = OPENAI_CHAT_V1, egress = ANTHROPIC_MESSAGES_2023_06_01);
-off_diagonal_test!(chat_to_generate_is_transform,     ingress = OPENAI_CHAT_V1, egress = GOOGLE_GENERATE_V1BETA);
+off_diagonal_test!(
+    chat_to_responses_is_transform,
+    ingress = OPENAI_CHAT_V1,
+    egress = OPENAI_RESPONSES_V1
+);
+off_diagonal_test!(
+    chat_to_messages_is_transform,
+    ingress = OPENAI_CHAT_V1,
+    egress = ANTHROPIC_MESSAGES_2023_06_01
+);
+off_diagonal_test!(
+    chat_to_generate_is_transform,
+    ingress = OPENAI_CHAT_V1,
+    egress = GOOGLE_GENERATE_V1BETA
+);
 
-off_diagonal_test!(responses_to_chat_is_transform,    ingress = OPENAI_RESPONSES_V1, egress = OPENAI_CHAT_V1);
-off_diagonal_test!(responses_to_messages_is_transform,ingress = OPENAI_RESPONSES_V1, egress = ANTHROPIC_MESSAGES_2023_06_01);
-off_diagonal_test!(responses_to_generate_is_transform,ingress = OPENAI_RESPONSES_V1, egress = GOOGLE_GENERATE_V1BETA);
+off_diagonal_test!(
+    responses_to_chat_is_transform,
+    ingress = OPENAI_RESPONSES_V1,
+    egress = OPENAI_CHAT_V1
+);
+off_diagonal_test!(
+    responses_to_messages_is_transform,
+    ingress = OPENAI_RESPONSES_V1,
+    egress = ANTHROPIC_MESSAGES_2023_06_01
+);
+off_diagonal_test!(
+    responses_to_generate_is_transform,
+    ingress = OPENAI_RESPONSES_V1,
+    egress = GOOGLE_GENERATE_V1BETA
+);
 
-off_diagonal_test!(messages_to_chat_is_transform,     ingress = ANTHROPIC_MESSAGES_2023_06_01, egress = OPENAI_CHAT_V1);
-off_diagonal_test!(messages_to_responses_is_transform,ingress = ANTHROPIC_MESSAGES_2023_06_01, egress = OPENAI_RESPONSES_V1);
-off_diagonal_test!(messages_to_generate_is_transform, ingress = ANTHROPIC_MESSAGES_2023_06_01, egress = GOOGLE_GENERATE_V1BETA);
+off_diagonal_test!(
+    messages_to_chat_is_transform,
+    ingress = ANTHROPIC_MESSAGES_2023_06_01,
+    egress = OPENAI_CHAT_V1
+);
+off_diagonal_test!(
+    messages_to_responses_is_transform,
+    ingress = ANTHROPIC_MESSAGES_2023_06_01,
+    egress = OPENAI_RESPONSES_V1
+);
+off_diagonal_test!(
+    messages_to_generate_is_transform,
+    ingress = ANTHROPIC_MESSAGES_2023_06_01,
+    egress = GOOGLE_GENERATE_V1BETA
+);
 
-off_diagonal_test!(generate_to_chat_is_transform,     ingress = GOOGLE_GENERATE_V1BETA, egress = OPENAI_CHAT_V1);
-off_diagonal_test!(generate_to_responses_is_transform,ingress = GOOGLE_GENERATE_V1BETA, egress = OPENAI_RESPONSES_V1);
-off_diagonal_test!(generate_to_messages_is_transform, ingress = GOOGLE_GENERATE_V1BETA, egress = ANTHROPIC_MESSAGES_2023_06_01);
+off_diagonal_test!(
+    generate_to_chat_is_transform,
+    ingress = GOOGLE_GENERATE_V1BETA,
+    egress = OPENAI_CHAT_V1
+);
+off_diagonal_test!(
+    generate_to_responses_is_transform,
+    ingress = GOOGLE_GENERATE_V1BETA,
+    egress = OPENAI_RESPONSES_V1
+);
+off_diagonal_test!(
+    generate_to_messages_is_transform,
+    ingress = GOOGLE_GENERATE_V1BETA,
+    egress = ANTHROPIC_MESSAGES_2023_06_01
+);
 
 // ── passthrough_run body fidelity ─────────────────────────────────────────────
 
@@ -249,13 +360,10 @@ async fn passthrough_run_preserves_vendor_specific_fields() {
         disable_default_auth: false,
     };
 
-    let out = nyro_core::provider::common::pipeline::passthrough_run(
-        &vendor,
-        raw_body.clone(),
-        &ctx,
-    )
-    .await
-    .expect("passthrough_run must succeed");
+    let out =
+        nyro_core::provider::common::pipeline::passthrough_run(&vendor, raw_body.clone(), &ctx)
+            .await
+            .expect("passthrough_run must succeed");
 
     // Vendor-specific extension fields must survive; model is replaced with
     // actual_model (same value here, so body equality still holds).
@@ -333,16 +441,16 @@ async fn passthrough_run_sets_stream_path_for_streaming_body() {
         disable_default_auth: false,
     };
 
-    let out = nyro_core::provider::common::pipeline::passthrough_run(
-        &vendor,
-        raw_body.clone(),
-        &ctx,
-    )
-    .await
-    .expect("passthrough_run must succeed");
+    let out =
+        nyro_core::provider::common::pipeline::passthrough_run(&vendor, raw_body.clone(), &ctx)
+            .await
+            .expect("passthrough_run must succeed");
 
     assert_eq!(out.body, raw_body);
-    assert!(out.url.contains("/v1/chat/completions"), "stream path same as non-stream for chat");
+    assert!(
+        out.url.contains("/v1/chat/completions"),
+        "stream path same as non-stream for chat"
+    );
 }
 
 // ── declared_mutations default for conservative vendors ───────────────────────
@@ -352,17 +460,47 @@ fn vendor_declared_mutations_defaults_are_conservative() {
     struct DefaultVendor;
     #[async_trait]
     impl Vendor for DefaultVendor {
-        fn scope(&self) -> VendorScope { VendorScope::Vendor { vendor_id: "default" } }
-        fn vendor_id(&self) -> &'static str { "default" }
-        fn supported_protocols(&self) -> &'static [ProtocolId] { &[OPENAI_CHAT_V1] }
-        async fn build_request(&self, _: &mut InternalRequest, _: &ProviderCtx<'_>) -> Result<OutboundRequest, GatewayError> { unreachable!() }
-        async fn parse_response(&self, _: InboundResponse, _: &ProviderCtx<'_>) -> Result<InternalResponse, GatewayError> { unreachable!() }
-        fn stream_parser(&self, _: &ProviderCtx<'_>) -> Box<dyn ProviderStreamParser + Send> { unreachable!() }
-        fn map_error(&self, s: u16, _: Value) -> GatewayError { GatewayError::upstream_status("default", s, None) }
+        fn scope(&self) -> VendorScope {
+            VendorScope::Vendor {
+                vendor_id: "default",
+            }
+        }
+        fn vendor_id(&self) -> &'static str {
+            "default"
+        }
+        fn supported_protocols(&self) -> &'static [ProtocolId] {
+            &[OPENAI_CHAT_V1]
+        }
+        async fn build_request(
+            &self,
+            _: &mut InternalRequest,
+            _: &ProviderCtx<'_>,
+        ) -> Result<OutboundRequest, GatewayError> {
+            unreachable!()
+        }
+        async fn parse_response(
+            &self,
+            _: InboundResponse,
+            _: &ProviderCtx<'_>,
+        ) -> Result<InternalResponse, GatewayError> {
+            unreachable!()
+        }
+        fn stream_parser(&self, _: &ProviderCtx<'_>) -> Box<dyn ProviderStreamParser + Send> {
+            unreachable!()
+        }
+        fn map_error(&self, s: u16, _: Value) -> GatewayError {
+            GatewayError::upstream_status("default", s, None)
+        }
     }
     let v = DefaultVendor;
-    assert!(v.declared_request_mutations(), "default must be conservative (true)");
-    assert!(v.declared_response_mutations(), "default must be conservative (true)");
+    assert!(
+        v.declared_request_mutations(),
+        "default must be conservative (true)"
+    );
+    assert!(
+        v.declared_response_mutations(),
+        "default must be conservative (true)"
+    );
 }
 
 // ── negotiate() with all-four provider: each ingress selects exact match ──────

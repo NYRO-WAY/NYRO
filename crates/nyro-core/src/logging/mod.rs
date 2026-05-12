@@ -68,9 +68,10 @@ async fn cleanup_old_logs(storage: DynStorage) {
 
     let cutoff = format!("-{days} days");
     if let Ok(deleted) = storage.logs().cleanup_before(&cutoff).await
-        && deleted > 0 {
-            tracing::info!("cleaned up {deleted} logs older than {days} days");
-        }
+        && deleted > 0
+    {
+        tracing::info!("cleaned up {deleted} logs older than {days} days");
+    }
 }
 
 async fn read_record_payloads(storage: &DynStorage) -> bool {
@@ -80,7 +81,12 @@ async fn read_record_payloads(storage: &DynStorage) -> bool {
         .await
         .ok()
         .flatten()
-        .map(|v| !matches!(v.to_ascii_lowercase().as_str(), "false" | "0" | "off" | "no"))
+        .map(|v| {
+            !matches!(
+                v.to_ascii_lowercase().as_str(),
+                "false" | "0" | "off" | "no"
+            )
+        })
         .unwrap_or(DEFAULT_RECORD_PAYLOADS)
 }
 

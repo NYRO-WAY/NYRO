@@ -29,18 +29,18 @@
 //! See [`registry::ProtocolRegistry`] for three-tier resolution of endpoint aliases
 //! and [`registry::ProtocolRegistry::parse_protocol`] for Protocol-level resolution.
 
-pub mod types;
 pub mod codec;
+pub mod types;
 
 pub mod ids;
 pub mod ir;
-pub mod traits;
 pub mod registry;
+pub mod traits;
 
 use reqwest::header::HeaderMap;
 
-use crate::db::models::{Provider, ProtocolEndpointEntry};
-use crate::protocol::ids::{ProtocolEndpoint, OPENAI_CHAT_COMPLETIONS_V1};
+use crate::db::models::{ProtocolEndpointEntry, Provider};
+use crate::protocol::ids::{OPENAI_CHAT_COMPLETIONS_V1, ProtocolEndpoint};
 
 // ── Client → Gateway ──
 
@@ -62,10 +62,7 @@ pub trait EgressEncoder {
 // ── Provider response → internal ──
 
 pub trait ResponseParser: Send {
-    fn parse_response(
-        &self,
-        resp: serde_json::Value,
-    ) -> anyhow::Result<types::InternalResponse>;
+    fn parse_response(&self, resp: serde_json::Value) -> anyhow::Result<types::InternalResponse>;
 }
 
 // ── Internal → client response ──
@@ -174,21 +171,29 @@ impl ProviderProtocols {
                         }
                     }
                     if seen.insert(id) {
-                        endpoints.push((id, ProtocolEndpointEntry {
-                            base_url: entry.base_url.clone(),
-                            endpoints: None,
-                        }));
+                        endpoints.push((
+                            id,
+                            ProtocolEndpointEntry {
+                                base_url: entry.base_url.clone(),
+                                endpoints: None,
+                            },
+                        ));
                     }
                 }
                 continue;
             }
 
             // Fall back to endpoint-keyed format (old / normalized)
-            if let Some(id) = Self::parse_protocol_key(key) && seen.insert(id) {
-                endpoints.push((id, ProtocolEndpointEntry {
-                    base_url: entry.base_url.clone(),
-                    endpoints: None,
-                }));
+            if let Some(id) = Self::parse_protocol_key(key)
+                && seen.insert(id)
+            {
+                endpoints.push((
+                    id,
+                    ProtocolEndpointEntry {
+                        base_url: entry.base_url.clone(),
+                        endpoints: None,
+                    },
+                ));
             }
         }
 
@@ -209,7 +214,9 @@ impl ProviderProtocols {
 
     /// Look up the endpoint entry for a specific protocol endpoint.
     pub fn get(&self, protocol: ProtocolEndpoint) -> Option<&ProtocolEndpointEntry> {
-        self.endpoints.iter().find_map(|(id, ep)| if *id == protocol { Some(ep) } else { None })
+        self.endpoints
+            .iter()
+            .find_map(|(id, ep)| if *id == protocol { Some(ep) } else { None })
     }
 
     /// Deterministic three-tier egress resolution:

@@ -7,11 +7,11 @@
 
 use anyhow::{Context, Result};
 use axum::{
+    Router,
     body::Body,
     extract::{Request, State},
     http::{HeaderMap, HeaderName, HeaderValue, StatusCode, Uri},
     response::{IntoResponse, Response},
-    Router,
 };
 use bytes::Bytes;
 use clap::Args;
@@ -381,9 +381,7 @@ fn upstream_last_segment_is_version(upstream: &url::Url) -> bool {
 /// - `/api/v1/foo`           → `None`
 fn strip_version_prefix(path: &str) -> Option<&str> {
     let without_slash = path.strip_prefix('/')?;
-    let (seg, _) = without_slash
-        .split_once('/')
-        .unwrap_or((without_slash, ""));
+    let (seg, _) = without_slash.split_once('/').unwrap_or((without_slash, ""));
     let mut chars = seg.chars();
     if chars.next() != Some('v') {
         return None;
@@ -395,7 +393,11 @@ fn strip_version_prefix(path: &str) -> Option<&str> {
         return None;
     }
     let suffix = &path[1 + seg.len()..];
-    if suffix.is_empty() { Some("/") } else { Some(suffix) }
+    if suffix.is_empty() {
+        Some("/")
+    } else {
+        Some(suffix)
+    }
 }
 
 /// Returns `true` for the four known LLM ingress paths this proxy handles.
@@ -520,14 +522,20 @@ fn assemble_anthropic(chunks: &[serde_json::Value]) -> serde_json::Value {
     let mut web_fetch_requests: Option<u64> = None;
 
     let read_cache_fields = |usage: &serde_json::Value,
-                              cache_read: &mut Option<u64>,
-                              cache_creation: &mut Option<u64>,
-                              web_search: &mut Option<u64>,
-                              web_fetch: &mut Option<u64>| {
-        if let Some(v) = usage.get("cache_read_input_tokens").and_then(|v| v.as_u64()) {
+                             cache_read: &mut Option<u64>,
+                             cache_creation: &mut Option<u64>,
+                             web_search: &mut Option<u64>,
+                             web_fetch: &mut Option<u64>| {
+        if let Some(v) = usage
+            .get("cache_read_input_tokens")
+            .and_then(|v| v.as_u64())
+        {
             *cache_read = Some(v);
         }
-        if let Some(v) = usage.get("cache_creation_input_tokens").and_then(|v| v.as_u64()) {
+        if let Some(v) = usage
+            .get("cache_creation_input_tokens")
+            .and_then(|v| v.as_u64())
+        {
             *cache_creation = Some(v);
         }
         if let Some(stu) = usage.get("server_tool_use") {
@@ -544,11 +552,21 @@ fn assemble_anthropic(chunks: &[serde_json::Value]) -> serde_json::Value {
         match chunk.get("type").and_then(|t| t.as_str()) {
             Some("message_start") => {
                 if let Some(msg) = chunk.get("message") {
-                    id = msg.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    model = msg.get("model").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    id = msg
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    model = msg
+                        .get("model")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     if let Some(usage) = msg.get("usage") {
-                        input_tokens =
-                            usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                        input_tokens = usage
+                            .get("input_tokens")
+                            .and_then(|v| v.as_u64())
+                            .unwrap_or(0);
                         read_cache_fields(
                             usage,
                             &mut cache_read,
@@ -579,13 +597,17 @@ fn assemble_anthropic(chunks: &[serde_json::Value]) -> serde_json::Value {
                 if let Some(usage) = chunk.get("usage") {
                     // Override input_tokens when message_delta carries the real value
                     // (ZhipuAI / MiniMax pattern).
-                    let delta_input =
-                        usage.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let delta_input = usage
+                        .get("input_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
                     if delta_input > 0 {
                         input_tokens = delta_input;
                     }
-                    output_tokens =
-                        usage.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                    output_tokens = usage
+                        .get("output_tokens")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
                     read_cache_fields(
                         usage,
                         &mut cache_read,
@@ -639,8 +661,16 @@ fn assemble_openai_chat(chunks: &[serde_json::Value]) -> serde_json::Value {
 
     for chunk in chunks {
         if id.is_empty() {
-            id = chunk.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            model = chunk.get("model").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            id = chunk
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            model = chunk
+                .get("model")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
         }
         if let Some(choices) = chunk.get("choices").and_then(|v| v.as_array()) {
             if let Some(choice) = choices.first() {
@@ -708,7 +738,10 @@ fn assemble_google(chunks: &[serde_json::Value]) -> serde_json::Value {
     for chunk in chunks {
         if let Some(candidates) = chunk.get("candidates").and_then(|v| v.as_array()) {
             if let Some(candidate) = candidates.first() {
-                if let Some(parts) = candidate.pointer("/content/parts").and_then(|v| v.as_array()) {
+                if let Some(parts) = candidate
+                    .pointer("/content/parts")
+                    .and_then(|v| v.as_array())
+                {
                     for part in parts {
                         if let Some(t) = part.get("text").and_then(|v| v.as_str()) {
                             text.push_str(t);
@@ -776,8 +809,7 @@ mod tests {
 
     #[test]
     fn google_content_keeps_action_segment() {
-        let upstream =
-            url::Url::parse("https://generativelanguage.googleapis.com/v1beta").unwrap();
+        let upstream = url::Url::parse("https://generativelanguage.googleapis.com/v1beta").unwrap();
         let uri: Uri = "/v1beta/models/gemini-2.0-flash:streamGenerateContent?alt=sse"
             .parse()
             .unwrap();
@@ -804,18 +836,14 @@ mod tests {
         let upstream = url::Url::parse("https://proxy.example.com").unwrap();
         let uri: Uri = "/v1/responses".parse().unwrap();
         let merged = build_target_url(&upstream, &uri).unwrap();
-        assert_eq!(
-            merged.as_str(),
-            "https://proxy.example.com/v1/responses"
-        );
+        assert_eq!(merged.as_str(), "https://proxy.example.com/v1/responses");
     }
 
     // upstream_last_segment_is_version
 
     #[test]
     fn version_segment_detection() {
-        let is_ver =
-            |s: &str| upstream_last_segment_is_version(&url::Url::parse(s).unwrap());
+        let is_ver = |s: &str| upstream_last_segment_is_version(&url::Url::parse(s).unwrap());
         assert!(is_ver("https://api.openai.com/v1"));
         assert!(is_ver("https://api.openai.com/v1beta"));
         assert!(is_ver("https://api.openai.com/v3"));
@@ -895,7 +923,10 @@ mod tests {
         );
         let v = assemble_sse("/v1/chat/completions", buf.as_bytes());
         assert_eq!(v["id"].as_str().unwrap(), "c1");
-        assert_eq!(v["choices"][0]["message"]["content"].as_str().unwrap(), "Hi!");
+        assert_eq!(
+            v["choices"][0]["message"]["content"].as_str().unwrap(),
+            "Hi!"
+        );
         assert_eq!(v["choices"][0]["finish_reason"].as_str().unwrap(), "stop");
     }
 
@@ -956,7 +987,11 @@ mod tests {
         let chunks = vec![start_chunk(0), delta_chunk(60, 43)];
         let result = assemble_anthropic(&chunks);
         let u = &result["usage"];
-        assert_eq!(u["input_tokens"].as_u64(), Some(60), "message_delta wins when > 0");
+        assert_eq!(
+            u["input_tokens"].as_u64(),
+            Some(60),
+            "message_delta wins when > 0"
+        );
         assert_eq!(u["output_tokens"].as_u64(), Some(43));
     }
 
@@ -1002,7 +1037,10 @@ mod tests {
             u.get("cache_creation_input_tokens").is_none(),
             "absent field must not appear in assembled output",
         );
-        assert_eq!(u["server_tool_use"]["web_search_requests"].as_u64(), Some(2));
+        assert_eq!(
+            u["server_tool_use"]["web_search_requests"].as_u64(),
+            Some(2)
+        );
         assert_eq!(u["server_tool_use"]["web_fetch_requests"].as_u64(), Some(1));
     }
 }

@@ -9,7 +9,9 @@ use serde_json::Value;
 use crate::error::GatewayError;
 use crate::protocol::ids::ProtocolId;
 use crate::protocol::types::{InternalRequest, InternalResponse};
-use crate::provider::common::openai::{openai_bearer_auth_headers, openai_build_url, openai_map_error};
+use crate::provider::common::openai::{
+    openai_bearer_auth_headers, openai_build_url, openai_map_error,
+};
 use crate::provider::common::pipeline;
 use crate::provider::inbound::InboundResponse;
 use crate::provider::metadata::{
@@ -23,13 +25,19 @@ use crate::provider::vendor_ext::{VendorCtx, VendorExtension};
 
 const METADATA: VendorMetadata = VendorMetadata {
     id: "openai",
-    label: Label { zh: "OpenAI", en: "OpenAI" },
+    label: Label {
+        zh: "OpenAI",
+        en: "OpenAI",
+    },
     icon: "openai",
     default_protocol: "openai",
     channels: &[
         ChannelDef {
             id: "default",
-            label: Label { zh: "默认", en: "Default" },
+            label: Label {
+                zh: "默认",
+                en: "Default",
+            },
             base_urls: &[ProtocolBaseUrl {
                 protocol: "openai",
                 base_url: "https://api.openai.com/v1",
@@ -44,7 +52,10 @@ const METADATA: VendorMetadata = VendorMetadata {
         },
         ChannelDef {
             id: "codex",
-            label: Label { zh: "Codex", en: "Codex" },
+            label: Label {
+                zh: "Codex",
+                en: "Codex",
+            },
             base_urls: &[ProtocolBaseUrl {
                 protocol: "openai_responses",
                 base_url: "https://chatgpt.com/backend-api/codex",
@@ -75,25 +86,53 @@ pub struct OpenAiVendor;
 
 #[async_trait]
 impl Vendor for OpenAiVendor {
-    fn scope(&self) -> VendorScope { VendorScope::Vendor { vendor_id: "openai" } }
-    fn metadata(&self) -> Option<&'static VendorMetadata> { Some(&METADATA) }
-    fn auth_headers(&self, ctx: &VendorCtx<'_>) -> HeaderMap { openai_bearer_auth_headers(ctx) }
-    fn build_url(&self, _ctx: &VendorCtx<'_>, base_url: &str, path: &str) -> String { openai_build_url(base_url, path) }
-    fn vendor_id(&self) -> &'static str { "openai" }
+    fn scope(&self) -> VendorScope {
+        VendorScope::Vendor {
+            vendor_id: "openai",
+        }
+    }
+    fn metadata(&self) -> Option<&'static VendorMetadata> {
+        Some(&METADATA)
+    }
+    fn auth_headers(&self, ctx: &VendorCtx<'_>) -> HeaderMap {
+        openai_bearer_auth_headers(ctx)
+    }
+    fn build_url(&self, _ctx: &VendorCtx<'_>, base_url: &str, path: &str) -> String {
+        openai_build_url(base_url, path)
+    }
+    fn vendor_id(&self) -> &'static str {
+        "openai"
+    }
     fn supported_protocols(&self) -> &'static [ProtocolId] {
         use crate::protocol::ids::{OPENAI_CHAT_V1, OPENAI_EMBEDDINGS_V1, OPENAI_RESPONSES_V1};
         &[OPENAI_CHAT_V1, OPENAI_RESPONSES_V1, OPENAI_EMBEDDINGS_V1]
     }
-    fn declared_request_mutations(&self) -> bool { false }
-    fn declared_response_mutations(&self) -> bool { false }
-    async fn build_request(&self, req: &mut InternalRequest, ctx: &ProviderCtx<'_>) -> Result<OutboundRequest, GatewayError> {
+    fn declared_request_mutations(&self) -> bool {
+        false
+    }
+    fn declared_response_mutations(&self) -> bool {
+        false
+    }
+    async fn build_request(
+        &self,
+        req: &mut InternalRequest,
+        ctx: &ProviderCtx<'_>,
+    ) -> Result<OutboundRequest, GatewayError> {
         pipeline::build_request(self, req, ctx).await
     }
-    async fn parse_response(&self, resp: InboundResponse, ctx: &ProviderCtx<'_>) -> Result<InternalResponse, GatewayError> {
+    async fn parse_response(
+        &self,
+        resp: InboundResponse,
+        ctx: &ProviderCtx<'_>,
+    ) -> Result<InternalResponse, GatewayError> {
         pipeline::parse_response(self, resp, ctx).await
     }
-    fn stream_parser(&self, ctx: &ProviderCtx<'_>) -> Box<dyn ProviderStreamParser + Send> { pipeline::stream_parser(ctx) }
-    fn map_error(&self, status: u16, body: Value) -> GatewayError { openai_map_error("openai", status, body) }
+    fn stream_parser(&self, ctx: &ProviderCtx<'_>) -> Box<dyn ProviderStreamParser + Send> {
+        pipeline::stream_parser(ctx)
+    }
+    fn map_error(&self, status: u16, body: Value) -> GatewayError {
+        openai_map_error("openai", status, body)
+    }
 }
 
 inventory::submit! { VendorRegistration { make: || Box::new(OpenAiVendor) } }
@@ -103,10 +142,20 @@ inventory::submit! { VendorRegistration { make: || Box::new(OpenAiVendor) } }
 pub struct OpenAIFamilyExt;
 
 impl VendorExtension for OpenAIFamilyExt {
-    fn scope(&self) -> VendorScope { VendorScope::Vendor { vendor_id: "openai" } }
-    fn metadata(&self) -> Option<&'static VendorMetadata> { None }
-    fn auth_headers(&self, ctx: &VendorCtx<'_>) -> HeaderMap { openai_bearer_auth_headers(ctx) }
-    fn build_url(&self, _ctx: &VendorCtx<'_>, base_url: &str, path: &str) -> String { openai_build_url(base_url, path) }
+    fn scope(&self) -> VendorScope {
+        VendorScope::Vendor {
+            vendor_id: "openai",
+        }
+    }
+    fn metadata(&self) -> Option<&'static VendorMetadata> {
+        None
+    }
+    fn auth_headers(&self, ctx: &VendorCtx<'_>) -> HeaderMap {
+        openai_bearer_auth_headers(ctx)
+    }
+    fn build_url(&self, _ctx: &VendorCtx<'_>, base_url: &str, path: &str) -> String {
+        openai_build_url(base_url, path)
+    }
 }
 
 inventory::submit! { ExtensionRegistration { make: || Box::new(OpenAIFamilyExt) } }

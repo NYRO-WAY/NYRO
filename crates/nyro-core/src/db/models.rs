@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 
-use crate::provider::VendorRegistry;
 use crate::provider::AuthMode;
+use crate::provider::VendorRegistry;
 
 pub fn default_provider_auth_mode() -> String {
     "apikey".to_string()
@@ -167,7 +167,6 @@ pub enum RouteStrategy {
     Weighted,
     Priority,
 }
-
 
 impl RouteStrategy {
     pub fn as_str(&self) -> &'static str {
@@ -559,11 +558,15 @@ impl Provider {
     /// Parse `protocol_endpoints` JSON into a map.
     /// Falls back to building a single-entry map from legacy `protocol`/`base_url`.
     pub fn parsed_protocol_endpoints(&self) -> HashMap<String, ProtocolEndpointEntry> {
-        if !self.protocol_endpoints.trim().is_empty() && self.protocol_endpoints.trim() != "{}"
-            && let Ok(map) = serde_json::from_str::<HashMap<String, ProtocolEndpointEntry>>(&self.protocol_endpoints)
-                && !map.is_empty() {
-                    return map;
-                }
+        if !self.protocol_endpoints.trim().is_empty()
+            && self.protocol_endpoints.trim() != "{}"
+            && let Ok(map) = serde_json::from_str::<HashMap<String, ProtocolEndpointEntry>>(
+                &self.protocol_endpoints,
+            )
+            && !map.is_empty()
+        {
+            return map;
+        }
         let mut map = HashMap::new();
         if !self.protocol.trim().is_empty() && !self.base_url.trim().is_empty() {
             map.insert(

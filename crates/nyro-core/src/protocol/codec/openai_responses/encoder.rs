@@ -13,8 +13,8 @@ use anyhow::Result;
 use reqwest::header::HeaderMap;
 use serde_json::Value;
 
-use crate::protocol::types::*;
 use crate::protocol::EgressEncoder;
+use crate::protocol::types::*;
 
 /// Encoder for the OpenAI Responses API (`POST /v1/responses`).
 ///
@@ -45,8 +45,11 @@ impl EgressEncoder for ResponsesEncoder {
                             Role::User => "user",
                             _ => "assistant",
                         };
-                        let content_type =
-                            if message.role == Role::Assistant { "output_text" } else { "input_text" };
+                        let content_type = if message.role == Role::Assistant {
+                            "output_text"
+                        } else {
+                            "input_text"
+                        };
                         input.push(serde_json::json!({
                             "type": "message",
                             "role": role_str,
@@ -85,7 +88,8 @@ impl EgressEncoder for ResponsesEncoder {
         };
 
         // Determine `store` — default false unless the request explicitly set it.
-        let store = req.extra
+        let store = req
+            .extra
             .get("store")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);

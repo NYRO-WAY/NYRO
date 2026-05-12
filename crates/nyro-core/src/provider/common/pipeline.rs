@@ -173,7 +173,10 @@ pub async fn passthrough_run(
     // Replace the model field with the route-configured actual model so the
     // upstream receives the real model name, not the client's virtual alias.
     if let Some(obj) = raw_body.as_object_mut() {
-        obj.insert("model".to_string(), serde_json::Value::String(ctx.actual_model.to_string()));
+        obj.insert(
+            "model".to_string(),
+            serde_json::Value::String(ctx.actual_model.to_string()),
+        );
     }
 
     let vendor_ctx = ctx.to_vendor_ctx();
@@ -206,7 +209,11 @@ pub async fn passthrough_run(
         .egress_path(ctx.actual_model, is_stream);
     let url = vendor.build_url(&vendor_ctx, ctx.egress_base_url, &egress_path);
 
-    Ok(crate::provider::outbound::OutboundRequest { url, headers, body: raw_body })
+    Ok(crate::provider::outbound::OutboundRequest {
+        url,
+        headers,
+        body: raw_body,
+    })
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -219,19 +226,21 @@ mod tests {
     //! rewrite MUST be suppressed. Both directions are pinned so a future
     //! refactor that flips a gate fails loudly.
     use super::*;
-    use async_trait::async_trait;
     use crate::Gateway;
     use crate::GatewayConfig;
     use crate::db::models::Provider;
     use crate::error::GatewayError;
     use crate::protocol::ids::{ANTHROPIC_MESSAGES_2023_06_01, OPENAI_CHAT_V1, ProtocolId};
-    use crate::protocol::types::{InternalMessage, InternalRequest, InternalResponse, MessageContent, Role};
+    use crate::protocol::types::{
+        InternalMessage, InternalRequest, InternalResponse, MessageContent, Role,
+    };
     use crate::provider::inbound::InboundResponse;
     use crate::provider::outbound::OutboundRequest;
+    use crate::provider::registry::VendorScope;
     use crate::provider::stream::ProviderStreamParser;
     use crate::provider::vendor::{ProviderCtx, Vendor};
-    use crate::provider::registry::VendorScope;
     use crate::provider::vendor_ext::VendorCtx;
+    use async_trait::async_trait;
     use reqwest::header::HeaderMap as ExtHeaderMap;
     use serde_json::Value;
     use std::collections::HashMap;
@@ -244,20 +253,47 @@ mod tests {
 
     #[async_trait]
     impl Vendor for FakeApiKeyVendor {
-        fn scope(&self) -> VendorScope { VendorScope::Vendor { vendor_id: "fake-test" } }
+        fn scope(&self) -> VendorScope {
+            VendorScope::Vendor {
+                vendor_id: "fake-test",
+            }
+        }
         fn auth_headers(&self, ctx: &VendorCtx<'_>) -> ExtHeaderMap {
             let mut h = ExtHeaderMap::new();
             if !ctx.api_key.is_empty() {
-                h.insert("x-api-key", reqwest::header::HeaderValue::from_str(ctx.api_key).unwrap());
+                h.insert(
+                    "x-api-key",
+                    reqwest::header::HeaderValue::from_str(ctx.api_key).unwrap(),
+                );
             }
             h
         }
-        fn vendor_id(&self) -> &'static str { "fake-test" }
-        fn supported_protocols(&self) -> &'static [ProtocolId] { &[OPENAI_CHAT_V1] }
-        async fn build_request(&self, _req: &mut InternalRequest, _ctx: &ProviderCtx<'_>) -> Result<OutboundRequest, GatewayError> { unreachable!() }
-        async fn parse_response(&self, _resp: InboundResponse, _ctx: &ProviderCtx<'_>) -> Result<InternalResponse, GatewayError> { unreachable!() }
-        fn stream_parser(&self, _ctx: &ProviderCtx<'_>) -> Box<dyn ProviderStreamParser + Send> { unreachable!() }
-        fn map_error(&self, status: u16, _body: Value) -> GatewayError { GatewayError::upstream_status("fake-test", status, None) }
+        fn vendor_id(&self) -> &'static str {
+            "fake-test"
+        }
+        fn supported_protocols(&self) -> &'static [ProtocolId] {
+            &[OPENAI_CHAT_V1]
+        }
+        async fn build_request(
+            &self,
+            _req: &mut InternalRequest,
+            _ctx: &ProviderCtx<'_>,
+        ) -> Result<OutboundRequest, GatewayError> {
+            unreachable!()
+        }
+        async fn parse_response(
+            &self,
+            _resp: InboundResponse,
+            _ctx: &ProviderCtx<'_>,
+        ) -> Result<InternalResponse, GatewayError> {
+            unreachable!()
+        }
+        fn stream_parser(&self, _ctx: &ProviderCtx<'_>) -> Box<dyn ProviderStreamParser + Send> {
+            unreachable!()
+        }
+        fn map_error(&self, status: u16, _body: Value) -> GatewayError {
+            GatewayError::upstream_status("fake-test", status, None)
+        }
     }
 
     /// Emits `Authorization: Bearer <ctx.api_key>`, mirroring OpenAI-compat
@@ -266,23 +302,48 @@ mod tests {
 
     #[async_trait]
     impl Vendor for FakeBearerVendor {
-        fn scope(&self) -> VendorScope { VendorScope::Vendor { vendor_id: "fake-bearer" } }
+        fn scope(&self) -> VendorScope {
+            VendorScope::Vendor {
+                vendor_id: "fake-bearer",
+            }
+        }
         fn auth_headers(&self, ctx: &VendorCtx<'_>) -> ExtHeaderMap {
             let mut h = ExtHeaderMap::new();
             if !ctx.api_key.is_empty() {
                 h.insert(
                     reqwest::header::AUTHORIZATION,
-                    reqwest::header::HeaderValue::from_str(&format!("Bearer {}", ctx.api_key)).unwrap(),
+                    reqwest::header::HeaderValue::from_str(&format!("Bearer {}", ctx.api_key))
+                        .unwrap(),
                 );
             }
             h
         }
-        fn vendor_id(&self) -> &'static str { "fake-bearer" }
-        fn supported_protocols(&self) -> &'static [ProtocolId] { &[OPENAI_CHAT_V1] }
-        async fn build_request(&self, _req: &mut InternalRequest, _ctx: &ProviderCtx<'_>) -> Result<OutboundRequest, GatewayError> { unreachable!() }
-        async fn parse_response(&self, _resp: InboundResponse, _ctx: &ProviderCtx<'_>) -> Result<InternalResponse, GatewayError> { unreachable!() }
-        fn stream_parser(&self, _ctx: &ProviderCtx<'_>) -> Box<dyn ProviderStreamParser + Send> { unreachable!() }
-        fn map_error(&self, status: u16, _body: Value) -> GatewayError { GatewayError::upstream_status("fake-bearer", status, None) }
+        fn vendor_id(&self) -> &'static str {
+            "fake-bearer"
+        }
+        fn supported_protocols(&self) -> &'static [ProtocolId] {
+            &[OPENAI_CHAT_V1]
+        }
+        async fn build_request(
+            &self,
+            _req: &mut InternalRequest,
+            _ctx: &ProviderCtx<'_>,
+        ) -> Result<OutboundRequest, GatewayError> {
+            unreachable!()
+        }
+        async fn parse_response(
+            &self,
+            _resp: InboundResponse,
+            _ctx: &ProviderCtx<'_>,
+        ) -> Result<InternalResponse, GatewayError> {
+            unreachable!()
+        }
+        fn stream_parser(&self, _ctx: &ProviderCtx<'_>) -> Box<dyn ProviderStreamParser + Send> {
+            unreachable!()
+        }
+        fn map_error(&self, status: u16, _body: Value) -> GatewayError {
+            GatewayError::upstream_status("fake-bearer", status, None)
+        }
     }
 
     fn provider_with_api_key(api_key: &str) -> Provider {

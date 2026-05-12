@@ -1,4 +1,4 @@
-.PHONY: dev build server check clean webui smoke smoke-storage release-check help
+.PHONY: dev build server check fmt fmt-check clean webui smoke smoke-storage release-check help
 
 # Development — start Tauri desktop app with hot reload
 dev: webui-build
@@ -20,8 +20,16 @@ server-dev: webui-build
 webui-build:
 	cd webui && pnpm install && pnpm build
 
+# Format all Rust code
+fmt:
+	cargo fmt --all
+
+# Check Rust formatting (non-destructive, used in CI)
+fmt-check:
+	cargo fmt --all -- --check
+
 # Type check & lint everything
-check:
+check: fmt-check
 	cargo check --workspace
 	cd webui && pnpm build
 
@@ -49,6 +57,8 @@ help:
 	@echo "  make server       Build server binary (release)"
 	@echo "  make server-dev   Run server binary (debug)"
 	@echo "  make webui-build  Build frontend only"
+	@echo "  make fmt          Format Rust code"
+	@echo "  make fmt-check    Check Rust formatting (CI)"
 	@echo "  make check        Type check Rust + TypeScript"
 	@echo "  make smoke        Run local server smoke tests"
 	@echo "  make smoke-storage Run storage smoke tests (default sqlite + postgres)"

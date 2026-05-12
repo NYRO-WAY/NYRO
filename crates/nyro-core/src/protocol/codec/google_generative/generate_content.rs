@@ -5,7 +5,9 @@
 //! `override_model_in_body` is true: the encoder embeds the actual model name
 //! in the request body / URL path rather than a top-level `model` field.
 
-use crate::protocol::ids::{EndpointCapabilities, GOOGLE_GENERATE_CONTENT_V1BETA, ProtocolEndpoint};
+use crate::protocol::ids::{
+    EndpointCapabilities, GOOGLE_GENERATE_CONTENT_V1BETA, ProtocolEndpoint,
+};
 use crate::protocol::registry::EndpointRegistration;
 use crate::protocol::traits::*;
 

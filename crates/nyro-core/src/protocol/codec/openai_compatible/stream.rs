@@ -76,7 +76,6 @@ impl ResponseParser for OpenAIResponseParser {
             usage,
         })
     }
-
 }
 
 // ── Non-streaming response formatter ──
@@ -211,13 +210,14 @@ impl OpenAIStreamParser {
             && let (Some(id), Some(model)) = (
                 chunk.get("id").and_then(|v| v.as_str()),
                 chunk.get("model").and_then(|v| v.as_str()),
-            ) {
-                self.started = true;
-                deltas.push(StreamDelta::MessageStart {
-                    id: id.to_string(),
-                    model: model.to_string(),
-                });
-            }
+            )
+        {
+            self.started = true;
+            deltas.push(StreamDelta::MessageStart {
+                id: id.to_string(),
+                model: model.to_string(),
+            });
+        }
 
         let Some(choice) = chunk
             .get("choices")
@@ -233,9 +233,10 @@ impl OpenAIStreamParser {
 
         if let Some(delta) = choice.get("delta") {
             if let Some(reasoning) = extract_reasoning_from_message(delta)
-                && !reasoning.is_empty() {
-                    deltas.push(StreamDelta::ReasoningDelta(reasoning));
-                }
+                && !reasoning.is_empty()
+            {
+                deltas.push(StreamDelta::ReasoningDelta(reasoning));
+            }
             if let Some(text) = delta.get("content").and_then(|v| v.as_str()) {
                 self.parse_text_with_think_tags(text, deltas);
             }
@@ -257,12 +258,13 @@ impl OpenAIStreamParser {
                             });
                         }
                         if let Some(args) = func.get("arguments").and_then(|v| v.as_str())
-                            && !args.is_empty() {
-                                deltas.push(StreamDelta::ToolCallDelta {
-                                    index: idx,
-                                    arguments: args.to_string(),
-                                });
-                            }
+                            && !args.is_empty()
+                        {
+                            deltas.push(StreamDelta::ToolCallDelta {
+                                index: idx,
+                                arguments: args.to_string(),
+                            });
+                        }
                     }
                 }
             }
@@ -521,16 +523,19 @@ pub(crate) fn extract_reasoning_from_message(message: &Value) -> Option<String> 
         return Some(reasoning.to_string());
     }
 
-    let details = message.get("reasoning_details").and_then(|v| v.as_array())?;
+    let details = message
+        .get("reasoning_details")
+        .and_then(|v| v.as_array())?;
     let mut parts: Vec<String> = Vec::new();
     for detail in details {
         if let Some(text) = detail
             .get("text")
             .or_else(|| detail.get("content"))
             .and_then(|v| v.as_str())
-            && !text.is_empty() {
-                parts.push(text.to_string());
-            }
+            && !text.is_empty()
+        {
+            parts.push(text.to_string());
+        }
     }
     if parts.is_empty() {
         None
@@ -608,13 +613,25 @@ mod tests {
         let has_tool_start = deltas
             .iter()
             .any(|d| matches!(d, StreamDelta::ToolCallStart { id, name, .. } if id == "call_abc" && name == "get_weather"));
-        assert!(has_tool_start, "expected ToolCallStart with id+name, got: {deltas:?}");
+        assert!(
+            has_tool_start,
+            "expected ToolCallStart with id+name, got: {deltas:?}"
+        );
 
         let args: String = deltas
             .iter()
-            .filter_map(|d| if let StreamDelta::ToolCallDelta { arguments, .. } = d { Some(arguments.as_str()) } else { None })
+            .filter_map(|d| {
+                if let StreamDelta::ToolCallDelta { arguments, .. } = d {
+                    Some(arguments.as_str())
+                } else {
+                    None
+                }
+            })
             .collect();
-        assert!(args.contains("Paris"), "tool call arguments fragments not accumulated: {args}");
+        assert!(
+            args.contains("Paris"),
+            "tool call arguments fragments not accumulated: {args}"
+        );
     }
 
     #[test]
@@ -635,7 +652,13 @@ mod tests {
 
         let reasoning: Vec<_> = deltas
             .iter()
-            .filter_map(|d| if let StreamDelta::ReasoningDelta(t) = d { Some(t.as_str()) } else { None })
+            .filter_map(|d| {
+                if let StreamDelta::ReasoningDelta(t) = d {
+                    Some(t.as_str())
+                } else {
+                    None
+                }
+            })
             .collect();
         let full_reasoning = reasoning.concat();
         assert!(
@@ -645,7 +668,13 @@ mod tests {
 
         let text: Vec<_> = deltas
             .iter()
-            .filter_map(|d| if let StreamDelta::TextDelta(t) = d { Some(t.as_str()) } else { None })
+            .filter_map(|d| {
+                if let StreamDelta::TextDelta(t) = d {
+                    Some(t.as_str())
+                } else {
+                    None
+                }
+            })
             .collect();
         assert!(
             text.iter().any(|t| t.contains("answer")),
@@ -667,10 +696,17 @@ mod tests {
         let mut deltas = parser.parse_chunk(&chunks).unwrap();
         deltas.extend(parser.finish().unwrap());
 
-        let has_text = deltas.iter().any(|d| matches!(d, StreamDelta::TextDelta(t) if t.contains("hello")));
-        let has_reasoning = deltas.iter().any(|d| matches!(d, StreamDelta::ReasoningDelta(_)));
+        let has_text = deltas
+            .iter()
+            .any(|d| matches!(d, StreamDelta::TextDelta(t) if t.contains("hello")));
+        let has_reasoning = deltas
+            .iter()
+            .any(|d| matches!(d, StreamDelta::ReasoningDelta(_)));
         assert!(has_text, "expected TextDelta('hello'), got: {deltas:?}");
-        assert!(!has_reasoning, "should not have ReasoningDelta when no think tags, got: {deltas:?}");
+        assert!(
+            !has_reasoning,
+            "should not have ReasoningDelta when no think tags, got: {deltas:?}"
+        );
     }
     #[test]
     fn test_extract_reasoning_mlx_field_name() {
@@ -678,8 +714,11 @@ mod tests {
         // Both field names must produce a reasoning delta.
         let msg = serde_json::json!({"role": "assistant", "content": "answer", "reasoning": "my reasoning"});
         let extracted = extract_reasoning_from_message(&msg);
-        assert_eq!(extracted.as_deref(), Some("my reasoning"),
-            "extract_reasoning_from_message must accept 'reasoning' field name (mlx-lm compat)");
+        assert_eq!(
+            extracted.as_deref(),
+            Some("my reasoning"),
+            "extract_reasoning_from_message must accept 'reasoning' field name (mlx-lm compat)"
+        );
     }
 
     #[test]
@@ -701,8 +740,11 @@ mod tests {
         });
         let r = OpenAIResponseParser.parse_response(resp).unwrap();
         assert_eq!(r.content, "final answer");
-        assert_eq!(r.reasoning_content.as_deref(), Some("step by step thinking"),
-            "parse_response must extract reasoning from 'reasoning' field (mlx-lm compat)");
+        assert_eq!(
+            r.reasoning_content.as_deref(),
+            Some("step by step thinking"),
+            "parse_response must extract reasoning from 'reasoning' field (mlx-lm compat)"
+        );
     }
 
     #[test]
@@ -717,13 +759,20 @@ mod tests {
             tool_calls: vec![],
             response_items: None,
             stop_reason: Some("stop".to_string()),
-            usage: TokenUsage { input_tokens: 10, output_tokens: 5, ..TokenUsage::default() },
+            usage: TokenUsage {
+                input_tokens: 10,
+                output_tokens: 5,
+                ..TokenUsage::default()
+            },
         };
         let formatted = OpenAIResponseFormatter.format_response(&internal);
         let msg = &formatted["choices"][0]["message"];
         assert_eq!(msg["content"].as_str(), Some("visible text"));
-        assert_eq!(msg["reasoning_content"].as_str(), Some("hidden chain of thought"),
-            "format_response must include reasoning_content in the message");
+        assert_eq!(
+            msg["reasoning_content"].as_str(),
+            Some("hidden chain of thought"),
+            "format_response must include reasoning_content in the message"
+        );
     }
 
     #[test]
@@ -744,18 +793,36 @@ mod tests {
 
         let reasoning: String = deltas
             .iter()
-            .filter_map(|d| if let StreamDelta::ReasoningDelta(t) = d { Some(t.as_str()) } else { None })
+            .filter_map(|d| {
+                if let StreamDelta::ReasoningDelta(t) = d {
+                    Some(t.as_str())
+                } else {
+                    None
+                }
+            })
             .collect();
-        assert!(reasoning.contains("thinking"),
-            "expected 'thinking' in ReasoningDelta, got: {reasoning}");
-        assert!(reasoning.contains("done"),
-            "expected 'done' in ReasoningDelta, got: {reasoning}");
+        assert!(
+            reasoning.contains("thinking"),
+            "expected 'thinking' in ReasoningDelta, got: {reasoning}"
+        );
+        assert!(
+            reasoning.contains("done"),
+            "expected 'done' in ReasoningDelta, got: {reasoning}"
+        );
 
         let text: String = deltas
             .iter()
-            .filter_map(|d| if let StreamDelta::TextDelta(t) = d { Some(t.as_str()) } else { None })
+            .filter_map(|d| {
+                if let StreamDelta::TextDelta(t) = d {
+                    Some(t.as_str())
+                } else {
+                    None
+                }
+            })
             .collect();
-        assert!(text.contains("final answer"),
-            "expected 'final answer' in TextDelta, got: {text:?}");
+        assert!(
+            text.contains("final answer"),
+            "expected 'final answer' in TextDelta, got: {text:?}"
+        );
     }
 }

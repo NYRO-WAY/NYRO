@@ -131,25 +131,55 @@ impl<T: crate::provider::vendor::Vendor> VendorExtension for T {
     fn build_url(&self, ctx: &VendorCtx<'_>, base_url: &str, path: &str) -> String {
         crate::provider::vendor::Vendor::build_url(self, ctx, base_url, path)
     }
-    async fn pre_encode(&self, ctx: &VendorCtx<'_>, req: &mut InternalRequest) -> anyhow::Result<()> {
+    async fn pre_encode(
+        &self,
+        ctx: &VendorCtx<'_>,
+        req: &mut InternalRequest,
+    ) -> anyhow::Result<()> {
         crate::provider::vendor::Vendor::pre_encode(self, ctx, req).await
     }
-    async fn post_encode(&self, ctx: &VendorCtx<'_>, body: &mut serde_json::Value, headers: &mut HeaderMap) -> anyhow::Result<()> {
+    async fn post_encode(
+        &self,
+        ctx: &VendorCtx<'_>,
+        body: &mut serde_json::Value,
+        headers: &mut HeaderMap,
+    ) -> anyhow::Result<()> {
         crate::provider::vendor::Vendor::post_encode(self, ctx, body, headers).await
     }
-    async fn pre_parse(&self, ctx: &VendorCtx<'_>, resp: &mut serde_json::Value) -> anyhow::Result<()> {
+    async fn pre_parse(
+        &self,
+        ctx: &VendorCtx<'_>,
+        resp: &mut serde_json::Value,
+    ) -> anyhow::Result<()> {
         crate::provider::vendor::Vendor::pre_parse(self, ctx, resp).await
     }
-    async fn post_parse(&self, ctx: &VendorCtx<'_>, resp: &mut InternalResponse) -> anyhow::Result<()> {
+    async fn post_parse(
+        &self,
+        ctx: &VendorCtx<'_>,
+        resp: &mut InternalResponse,
+    ) -> anyhow::Result<()> {
         crate::provider::vendor::Vendor::post_parse(self, ctx, resp).await
     }
-    async fn on_stream_raw_chunk(&self, ctx: &VendorCtx<'_>, chunk: &mut String) -> anyhow::Result<()> {
+    async fn on_stream_raw_chunk(
+        &self,
+        ctx: &VendorCtx<'_>,
+        chunk: &mut String,
+    ) -> anyhow::Result<()> {
         crate::provider::vendor::Vendor::on_stream_raw_chunk(self, ctx, chunk).await
     }
-    async fn on_stream_delta(&self, ctx: &VendorCtx<'_>, delta: &mut StreamDelta) -> anyhow::Result<()> {
+    async fn on_stream_delta(
+        &self,
+        ctx: &VendorCtx<'_>,
+        delta: &mut StreamDelta,
+    ) -> anyhow::Result<()> {
         crate::provider::vendor::Vendor::on_stream_delta(self, ctx, delta).await
     }
-    async fn pre_request(&self, ctx: &VendorCtx<'_>, req: &mut InternalRequest, gw: &Gateway) -> anyhow::Result<()> {
+    async fn pre_request(
+        &self,
+        ctx: &VendorCtx<'_>,
+        req: &mut InternalRequest,
+        gw: &Gateway,
+    ) -> anyhow::Result<()> {
         crate::provider::vendor::Vendor::pre_request(self, ctx, req, gw).await
     }
 }

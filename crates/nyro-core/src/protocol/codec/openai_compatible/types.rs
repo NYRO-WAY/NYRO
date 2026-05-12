@@ -108,9 +108,7 @@ pub struct StreamOptions {
 pub enum ResponseFormatWire {
     Text,
     JsonObject,
-    JsonSchema {
-        json_schema: JsonSchemaConfig,
-    },
+    JsonSchema { json_schema: JsonSchemaConfig },
 }
 
 #[derive(Debug, Deserialize, Serialize)]

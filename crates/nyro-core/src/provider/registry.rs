@@ -103,7 +103,11 @@ impl VendorRegistry {
             extensions.push(Arc::from((reg.make)()));
         }
 
-        Self { vendors, vendor_as_ext, extensions }
+        Self {
+            vendors,
+            vendor_as_ext,
+            extensions,
+        }
     }
 
     /// Look up a full [`Vendor`] by `vendor_id` (case-insensitive).
@@ -142,7 +146,10 @@ impl VendorRegistry {
         //    implementations don't carry channel scope).
         if let (Some(v), Some(c)) = (vendor_id, channel_id) {
             for ext in &self.extensions {
-                if let VendorScope::Channel { vendor_id: vk, channel_id: ck } = ext.scope()
+                if let VendorScope::Channel {
+                    vendor_id: vk,
+                    channel_id: ck,
+                } = ext.scope()
                     && vk.eq_ignore_ascii_case(v)
                     && ck.eq_ignore_ascii_case(c)
                 {
@@ -193,11 +200,8 @@ impl VendorRegistry {
     }
 
     pub fn list_metadata(&self) -> Vec<&'static VendorMetadata> {
-        let mut out: Vec<&'static VendorMetadata> = self
-            .vendors
-            .iter()
-            .filter_map(|v| v.metadata())
-            .collect();
+        let mut out: Vec<&'static VendorMetadata> =
+            self.vendors.iter().filter_map(|v| v.metadata()).collect();
         // Include any metadata from extension-only entries (rare).
         for ext in &self.extensions {
             if let Some(m) = ext.metadata() {
@@ -239,7 +243,11 @@ impl VendorRegistry {
                 .unwrap_or(LEGACY_ORDER.len())
         };
         let mut metas = self.list_metadata();
-        metas.sort_by(|a, b| position(a.id).cmp(&position(b.id)).then_with(|| a.id.cmp(b.id)));
+        metas.sort_by(|a, b| {
+            position(a.id)
+                .cmp(&position(b.id))
+                .then_with(|| a.id.cmp(b.id))
+        });
         metas
             .into_iter()
             .filter_map(|m| serde_json::to_value(m).ok())

@@ -159,11 +159,7 @@ pub trait Vendor: Send + Sync + 'static {
         Ok(())
     }
 
-    async fn pre_parse(
-        &self,
-        _ctx: &VendorCtx<'_>,
-        _resp: &mut Value,
-    ) -> anyhow::Result<()> {
+    async fn pre_parse(&self, _ctx: &VendorCtx<'_>, _resp: &mut Value) -> anyhow::Result<()> {
         Ok(())
     }
 

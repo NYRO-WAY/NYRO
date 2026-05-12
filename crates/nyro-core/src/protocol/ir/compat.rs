@@ -9,14 +9,13 @@
 //! lossless for all fields present in `InternalRequest`.
 
 use crate::protocol::ir::request::{
-    AiRequest, ContentBlock, GenerationConfig, Message, MessageContent, Role,
-    StreamConfig, ToolCall, ToolSpec,
+    AiRequest, ContentBlock, GenerationConfig, Message, MessageContent, Role, StreamConfig,
+    ToolCall, ToolSpec,
 };
 use crate::protocol::ir::response::AiResponse;
 use crate::protocol::types::{
     ContentBlock as OldContentBlock, InternalMessage, InternalRequest, InternalResponse,
-    MessageContent as OldMessageContent, Role as OldRole, ToolCall as OldToolCall,
-    ToolDef,
+    MessageContent as OldMessageContent, Role as OldRole, ToolCall as OldToolCall, ToolDef,
 };
 
 // ── InternalRequest → AiRequest ───────────────────────────────────────────────
@@ -24,7 +23,9 @@ use crate::protocol::types::{
 impl From<InternalRequest> for AiRequest {
     fn from(old: InternalRequest) -> Self {
         let messages = old.messages.into_iter().map(msg_from_old).collect();
-        let tools = old.tools.map(|ts| ts.into_iter().map(tool_spec_from_old).collect());
+        let tools = old
+            .tools
+            .map(|ts| ts.into_iter().map(tool_spec_from_old).collect());
         let mut req = AiRequest::new(old.model, messages);
         req.generation = GenerationConfig {
             temperature: old.temperature,
@@ -32,9 +33,14 @@ impl From<InternalRequest> for AiRequest {
             top_p: old.top_p,
             ..Default::default()
         };
-        req.stream = StreamConfig { enabled: old.stream, include_usage: false };
+        req.stream = StreamConfig {
+            enabled: old.stream,
+            include_usage: false,
+        };
         req.tools = tools;
-        req.tool_choice = old.tool_choice.map(crate::protocol::ir::request::ToolChoice::Raw);
+        req.tool_choice = old
+            .tool_choice
+            .map(crate::protocol::ir::request::ToolChoice::Raw);
         req.meta.source_protocol = Some(old.source_protocol);
         // Copy unknown extra fields into the ingress vendor bag.
         for (k, v) in old.extra {
@@ -53,7 +59,9 @@ fn msg_from_old(old: InternalMessage) -> Message {
     Message {
         role: role_from_old(old.role),
         content: content_from_old(old.content),
-        tool_calls: old.tool_calls.map(|tcs| tcs.into_iter().map(tc_from_old).collect()),
+        tool_calls: old
+            .tool_calls
+            .map(|tcs| tcs.into_iter().map(tc_from_old).collect()),
         tool_call_id: old.tool_call_id,
         meta,
     }
@@ -84,20 +92,35 @@ fn block_from_old(b: OldContentBlock) -> ContentBlock {
             media_type: source.media_type,
             data: source.data,
         },
-        OldContentBlock::Reasoning { text, signature } => ContentBlock::Reasoning { text, signature },
-        OldContentBlock::ToolUse { id, name, input } => ContentBlock::ToolUse { id, name, input },
-        OldContentBlock::ToolResult { tool_use_id, content } => {
-            ContentBlock::ToolResult { tool_use_id, content }
+        OldContentBlock::Reasoning { text, signature } => {
+            ContentBlock::Reasoning { text, signature }
         }
+        OldContentBlock::ToolUse { id, name, input } => ContentBlock::ToolUse { id, name, input },
+        OldContentBlock::ToolResult {
+            tool_use_id,
+            content,
+        } => ContentBlock::ToolResult {
+            tool_use_id,
+            content,
+        },
     }
 }
 
 fn tc_from_old(tc: OldToolCall) -> ToolCall {
-    ToolCall { id: tc.id, name: tc.name, arguments: tc.arguments }
+    ToolCall {
+        id: tc.id,
+        name: tc.name,
+        arguments: tc.arguments,
+    }
 }
 
 fn tool_spec_from_old(td: ToolDef) -> ToolSpec {
-    ToolSpec { name: td.name, description: td.description, parameters: td.parameters, meta: None }
+    ToolSpec {
+        name: td.name,
+        description: td.description,
+        parameters: td.parameters,
+        meta: None,
+    }
 }
 
 // ── AiRequest → InternalRequest ───────────────────────────────────────────────
@@ -105,8 +128,13 @@ fn tool_spec_from_old(td: ToolDef) -> ToolSpec {
 impl From<AiRequest> for InternalRequest {
     fn from(new: AiRequest) -> Self {
         let messages = new.messages.into_iter().map(msg_to_old).collect();
-        let tools = new.tools.map(|ts: Vec<_>| ts.into_iter().map(tool_spec_to_old).collect());
-        let source_protocol = new.meta.source_protocol.unwrap_or(crate::protocol::ids::OPENAI_CHAT_V1);
+        let tools = new
+            .tools
+            .map(|ts: Vec<_>| ts.into_iter().map(tool_spec_to_old).collect());
+        let source_protocol = new
+            .meta
+            .source_protocol
+            .unwrap_or(crate::protocol::ids::OPENAI_CHAT_V1);
         let mut extra = std::collections::HashMap::new();
         for (k, v) in new.meta.vendor.ingress {
             extra.insert(k, v);
@@ -137,7 +165,9 @@ fn msg_to_old(msg: Message) -> InternalMessage {
     InternalMessage {
         role: role_to_old(msg.role),
         content: content_to_old(msg.content),
-        tool_calls: msg.tool_calls.map(|tcs| tcs.into_iter().map(tc_to_old).collect()),
+        tool_calls: msg
+            .tool_calls
+            .map(|tcs| tcs.into_iter().map(tc_to_old).collect()),
         tool_call_id: msg.tool_call_id,
         extra,
     }
@@ -164,28 +194,40 @@ fn content_to_old(c: MessageContent) -> OldMessageContent {
 fn block_to_old(b: ContentBlock) -> Option<OldContentBlock> {
     match b {
         ContentBlock::Text { text } => Some(OldContentBlock::Text { text }),
-        ContentBlock::Image { media_type, data } => {
-            Some(OldContentBlock::Image {
-                source: crate::protocol::types::ImageSource { media_type, data },
-            })
-        }
+        ContentBlock::Image { media_type, data } => Some(OldContentBlock::Image {
+            source: crate::protocol::types::ImageSource { media_type, data },
+        }),
         ContentBlock::Reasoning { text, signature } => {
             Some(OldContentBlock::Reasoning { text, signature })
         }
-        ContentBlock::ToolUse { id, name, input } => Some(OldContentBlock::ToolUse { id, name, input }),
-        ContentBlock::ToolResult { tool_use_id, content } => {
-            Some(OldContentBlock::ToolResult { tool_use_id, content })
+        ContentBlock::ToolUse { id, name, input } => {
+            Some(OldContentBlock::ToolUse { id, name, input })
         }
+        ContentBlock::ToolResult {
+            tool_use_id,
+            content,
+        } => Some(OldContentBlock::ToolResult {
+            tool_use_id,
+            content,
+        }),
         ContentBlock::Unknown { .. } => None,
     }
 }
 
 fn tc_to_old(tc: ToolCall) -> OldToolCall {
-    OldToolCall { id: tc.id, name: tc.name, arguments: tc.arguments }
+    OldToolCall {
+        id: tc.id,
+        name: tc.name,
+        arguments: tc.arguments,
+    }
 }
 
 fn tool_spec_to_old(ts: ToolSpec) -> ToolDef {
-    ToolDef { name: ts.name, description: ts.description, parameters: ts.parameters }
+    ToolDef {
+        name: ts.name,
+        description: ts.description,
+        parameters: ts.parameters,
+    }
 }
 
 // ── InternalResponse → AiResponse ────────────────────────────────────────────
@@ -196,11 +238,15 @@ impl From<InternalResponse> for AiResponse {
         resp.content = old.content;
         resp.reasoning_content = old.reasoning_content;
         resp.reasoning_signature = old.reasoning_signature;
-        resp.tool_calls = old.tool_calls.into_iter().map(|tc| ToolCall {
-            id: tc.id,
-            name: tc.name,
-            arguments: tc.arguments,
-        }).collect();
+        resp.tool_calls = old
+            .tool_calls
+            .into_iter()
+            .map(|tc| ToolCall {
+                id: tc.id,
+                name: tc.name,
+                arguments: tc.arguments,
+            })
+            .collect();
         resp.stop_reason = old.stop_reason;
         resp.usage = old.usage;
         resp
@@ -214,7 +260,11 @@ impl From<AiResponse> for InternalResponse {
         let tool_calls = new
             .tool_calls
             .into_iter()
-            .map(|tc| crate::protocol::types::ToolCall { id: tc.id, name: tc.name, arguments: tc.arguments })
+            .map(|tc| crate::protocol::types::ToolCall {
+                id: tc.id,
+                name: tc.name,
+                arguments: tc.arguments,
+            })
             .collect();
         let response_items = new.items.map(|items| {
             items
@@ -226,9 +276,15 @@ impl From<AiResponse> for InternalResponse {
                     crate::protocol::ir::response::ResponseItem::Reasoning { text } => {
                         Some(crate::protocol::types::ResponseItem::Reasoning { text })
                     }
-                    crate::protocol::ir::response::ResponseItem::FunctionCall { call_id, name, arguments } => {
-                        Some(crate::protocol::types::ResponseItem::FunctionCall { call_id, name, arguments })
-                    }
+                    crate::protocol::ir::response::ResponseItem::FunctionCall {
+                        call_id,
+                        name,
+                        arguments,
+                    } => Some(crate::protocol::types::ResponseItem::FunctionCall {
+                        call_id,
+                        name,
+                        arguments,
+                    }),
                     _ => None,
                 })
                 .collect()

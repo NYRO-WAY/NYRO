@@ -189,25 +189,21 @@ async fn migrate_vendor_renames(pool: &SqlitePool) -> anyhow::Result<()> {
 
     if column_exists(pool, "providers", "vendor").await? {
         for (from, to) in RENAMES {
-            sqlx::query(
-                "UPDATE providers SET vendor = ?1 WHERE lower(trim(vendor)) = ?2",
-            )
-            .bind(to)
-            .bind(from)
-            .execute(pool)
-            .await?;
+            sqlx::query("UPDATE providers SET vendor = ?1 WHERE lower(trim(vendor)) = ?2")
+                .bind(to)
+                .bind(from)
+                .execute(pool)
+                .await?;
         }
     }
 
     if column_exists(pool, "providers", "preset_key").await? {
         for (from, to) in RENAMES {
-            sqlx::query(
-                "UPDATE providers SET preset_key = ?1 WHERE lower(trim(preset_key)) = ?2",
-            )
-            .bind(to)
-            .bind(from)
-            .execute(pool)
-            .await?;
+            sqlx::query("UPDATE providers SET preset_key = ?1 WHERE lower(trim(preset_key)) = ?2")
+                .bind(to)
+                .bind(from)
+                .execute(pool)
+                .await?;
         }
     }
     Ok(())
@@ -376,7 +372,10 @@ async fn ensure_cache_entries_table(pool: &SqlitePool) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub async fn recreate_vec0_table(pool: &SqlitePool, vector_dimensions: usize) -> anyhow::Result<()> {
+pub async fn recreate_vec0_table(
+    pool: &SqlitePool,
+    vector_dimensions: usize,
+) -> anyhow::Result<()> {
     let dimensions = vector_dimensions.max(1);
     sqlx::query("DROP TABLE IF EXISTS semantic_cache_vectors")
         .execute(pool)
@@ -409,11 +408,12 @@ async fn ensure_semantic_cache_vectors_table(
     vector_dimensions: usize,
 ) -> anyhow::Result<()> {
     let dimensions = vector_dimensions.max(1);
-    let stored_dimension = sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = ?")
-        .bind(VECTOR_DIMENSIONS_SETTING_KEY)
-        .fetch_optional(pool)
-        .await?
-        .and_then(|raw| raw.trim().parse::<usize>().ok());
+    let stored_dimension =
+        sqlx::query_scalar::<_, String>("SELECT value FROM settings WHERE key = ?")
+            .bind(VECTOR_DIMENSIONS_SETTING_KEY)
+            .fetch_optional(pool)
+            .await?
+            .and_then(|raw| raw.trim().parse::<usize>().ok());
     let table_exists = semantic_cache_vectors_table_exists(pool).await?;
     if !table_exists || stored_dimension != Some(dimensions) {
         recreate_vec0_table(pool, dimensions).await?;

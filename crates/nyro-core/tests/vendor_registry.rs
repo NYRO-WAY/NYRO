@@ -80,7 +80,9 @@ fn resolve_falls_back_to_vendor_when_channel_unknown() {
     let ext = reg.resolve(&p, OPENAI_CHAT_V1).expect("openai vendor ext");
     assert!(matches!(
         ext.scope(),
-        VendorScope::Vendor { vendor_id: "openai" }
+        VendorScope::Vendor {
+            vendor_id: "openai"
+        }
     ));
 }
 
@@ -88,16 +90,35 @@ fn resolve_falls_back_to_vendor_when_channel_unknown() {
 fn resolve_falls_back_to_protocol_default_vendor_when_vendor_unknown() {
     let reg = VendorRegistry::global();
     let p = make_provider(Some("unmapped-vendor"), None);
-    let openai = reg.resolve(&p, OPENAI_CHAT_V1).expect("openai protocol default");
+    let openai = reg
+        .resolve(&p, OPENAI_CHAT_V1)
+        .expect("openai protocol default");
     let anthropic = reg
         .resolve(&p, ANTHROPIC_MESSAGES_2023_06_01)
         .expect("anthropic protocol default");
-    let google = reg.resolve(&p, GOOGLE_GENERATE_V1BETA).expect("google protocol default");
+    let google = reg
+        .resolve(&p, GOOGLE_GENERATE_V1BETA)
+        .expect("google protocol default");
 
     // Resolves to the default vendor for each protocol suite
-    assert!(matches!(openai.scope(), VendorScope::Vendor { vendor_id: "openai" }));
-    assert!(matches!(anthropic.scope(), VendorScope::Vendor { vendor_id: "anthropic" }));
-    assert!(matches!(google.scope(), VendorScope::Vendor { vendor_id: "google" }));
+    assert!(matches!(
+        openai.scope(),
+        VendorScope::Vendor {
+            vendor_id: "openai"
+        }
+    ));
+    assert!(matches!(
+        anthropic.scope(),
+        VendorScope::Vendor {
+            vendor_id: "anthropic"
+        }
+    ));
+    assert!(matches!(
+        google.scope(),
+        VendorScope::Vendor {
+            vendor_id: "google"
+        }
+    ));
 }
 
 #[test]
@@ -107,7 +128,12 @@ fn resolve_uses_protocol_default_vendor_when_vendor_field_blank() {
     let ext = reg
         .resolve(&p, ANTHROPIC_MESSAGES_2023_06_01)
         .expect("protocol default vendor fallback");
-    assert!(matches!(ext.scope(), VendorScope::Vendor { vendor_id: "anthropic" }));
+    assert!(matches!(
+        ext.scope(),
+        VendorScope::Vendor {
+            vendor_id: "anthropic"
+        }
+    ));
 }
 
 #[test]
@@ -117,7 +143,9 @@ fn ollama_vendor_resolves_even_without_channel() {
     let ext = reg.resolve(&p, OPENAI_CHAT_V1).expect("ollama vendor");
     assert!(matches!(
         ext.scope(),
-        VendorScope::Vendor { vendor_id: "ollama" }
+        VendorScope::Vendor {
+            vendor_id: "ollama"
+        }
     ));
 }
 
@@ -155,7 +183,11 @@ fn google_family_default_appends_key_query_param() {
     let ext = reg.resolve(&p, GOOGLE_GENERATE_V1BETA).unwrap();
     let c = ctx(&p, GOOGLE_GENERATE_V1BETA, "AIzaXYZ", "gemini-1.5", None);
 
-    let url1 = ext.build_url(&c, "https://generativelanguage.googleapis.com", "/v1beta/models");
+    let url1 = ext.build_url(
+        &c,
+        "https://generativelanguage.googleapis.com",
+        "/v1beta/models",
+    );
     assert_eq!(
         url1,
         "https://generativelanguage.googleapis.com/v1beta/models?key=AIzaXYZ"

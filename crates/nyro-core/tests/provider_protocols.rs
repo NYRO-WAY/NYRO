@@ -124,7 +124,7 @@ fn resolve_egress_responses_falls_back_to_provider_default() {
     // separate protocols; there is no same-protocol Tier-2 fallback between them.
     // A client speaking Responses API falls through to Tier 3 (provider default).
     let provider = provider_with_endpoints(
-        "openai",   // default_protocol → resolves to OPENAI_CHAT_V1
+        "openai", // default_protocol → resolves to OPENAI_CHAT_V1
         json!({
             "openai": { "base_url": "https://a.example/v1" },
             "anthropic": { "base_url": "https://b.example/v1" },

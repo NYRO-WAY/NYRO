@@ -1,6 +1,8 @@
 use std::collections::VecDeque;
 
-use crate::protocol::types::{ContentBlock, InternalMessage, InternalRequest, MessageContent, Role, ToolCall};
+use crate::protocol::types::{
+    ContentBlock, InternalMessage, InternalRequest, MessageContent, Role, ToolCall,
+};
 
 pub fn normalize_request_tool_results(req: &mut InternalRequest) {
     let mut pending_calls: VecDeque<(String, String)> = VecDeque::new();
@@ -40,33 +42,35 @@ pub fn normalize_request_tool_results(req: &mut InternalRequest) {
             && let Some(pos) = pending_calls
                 .iter()
                 .position(|(pending_id, _)| pending_id == id)
-            {
-                let _ = pending_calls.remove(pos);
-                resolved_id = Some(id.clone());
-                has_linked_pending_call = true;
-            }
+        {
+            let _ = pending_calls.remove(pos);
+            resolved_id = Some(id.clone());
+            has_linked_pending_call = true;
+        }
 
         let hinted_value = extract_tool_result_hint(&msg.content);
 
         if resolved_id.is_none()
             && let Some(hint) = hinted_value.clone()
-                && let Some(pos) = pending_calls
-                    .iter()
-                    .position(|(pending_id, _)| pending_id == &hint)
-                    && let Some((call_id, _)) = pending_calls.remove(pos) {
-                        resolved_id = Some(call_id);
-                        has_linked_pending_call = true;
-                    }
+            && let Some(pos) = pending_calls
+                .iter()
+                .position(|(pending_id, _)| pending_id == &hint)
+            && let Some((call_id, _)) = pending_calls.remove(pos)
+        {
+            resolved_id = Some(call_id);
+            has_linked_pending_call = true;
+        }
 
         if resolved_id.is_none()
             && let Some(hint) = hinted_value.clone()
-                && let Some(pos) = pending_calls
-                    .iter()
-                    .position(|(_, pending_name)| pending_name.eq_ignore_ascii_case(&hint))
-                    && let Some((call_id, _)) = pending_calls.remove(pos) {
-                        resolved_id = Some(call_id);
-                        has_linked_pending_call = true;
-                    }
+            && let Some(pos) = pending_calls
+                .iter()
+                .position(|(_, pending_name)| pending_name.eq_ignore_ascii_case(&hint))
+            && let Some((call_id, _)) = pending_calls.remove(pos)
+        {
+            resolved_id = Some(call_id);
+            has_linked_pending_call = true;
+        }
 
         if resolved_id.is_none() {
             // Fallback: correlate by FIFO pending tool call when client omitted tool_call_id.
@@ -114,9 +118,10 @@ fn extract_tool_result_hint(content: &MessageContent) -> Option<String> {
     };
     for block in blocks {
         if let ContentBlock::ToolResult { tool_use_id, .. } = block
-            && !tool_use_id.trim().is_empty() {
-                return Some(tool_use_id.clone());
-            }
+            && !tool_use_id.trim().is_empty()
+        {
+            return Some(tool_use_id.clone());
+        }
     }
     None
 }
@@ -224,9 +229,16 @@ mod tests {
         ]);
         normalize_request_tool_results(&mut req);
 
-        let asst = req.messages.iter().find(|m| m.role == Role::Assistant).unwrap();
+        let asst = req
+            .messages
+            .iter()
+            .find(|m| m.role == Role::Assistant)
+            .unwrap();
         let tc_id = &asst.tool_calls.as_ref().unwrap()[0].id;
-        assert!(!tc_id.is_empty(), "blank tool_call_id must be replaced with generated id");
+        assert!(
+            !tc_id.is_empty(),
+            "blank tool_call_id must be replaced with generated id"
+        );
 
         let tool_msg = req.messages.iter().find(|m| m.role == Role::Tool).unwrap();
         assert_eq!(
@@ -243,8 +255,16 @@ mod tests {
                 role: Role::Assistant,
                 content: MessageContent::Text(String::new()),
                 tool_calls: Some(vec![
-                    ToolCall { id: "call_1".to_string(), name: "tool_a".to_string(), arguments: "{}".to_string() },
-                    ToolCall { id: "call_2".to_string(), name: "tool_b".to_string(), arguments: "{}".to_string() },
+                    ToolCall {
+                        id: "call_1".to_string(),
+                        name: "tool_a".to_string(),
+                        arguments: "{}".to_string(),
+                    },
+                    ToolCall {
+                        id: "call_2".to_string(),
+                        name: "tool_b".to_string(),
+                        arguments: "{}".to_string(),
+                    },
                 ]),
                 tool_call_id: None,
                 extra: Default::default(),
@@ -254,8 +274,20 @@ mod tests {
         ]);
         normalize_request_tool_results(&mut req);
 
-        let tool_msgs: Vec<_> = req.messages.iter().filter(|m| m.role == Role::Tool).collect();
-        assert_eq!(tool_msgs[0].tool_call_id.as_deref(), Some("call_1"), "first tool result should map to call_1");
-        assert_eq!(tool_msgs[1].tool_call_id.as_deref(), Some("call_2"), "second tool result should map to call_2");
+        let tool_msgs: Vec<_> = req
+            .messages
+            .iter()
+            .filter(|m| m.role == Role::Tool)
+            .collect();
+        assert_eq!(
+            tool_msgs[0].tool_call_id.as_deref(),
+            Some("call_1"),
+            "first tool result should map to call_1"
+        );
+        assert_eq!(
+            tool_msgs[1].tool_call_id.as_deref(),
+            Some("call_2"),
+            "second tool result should map to call_2"
+        );
     }
 }
