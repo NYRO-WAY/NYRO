@@ -1,5 +1,6 @@
 pub mod models;
 
+use std::os::raw::{c_char, c_int};
 use std::path::Path;
 use std::sync::Once;
 
@@ -13,16 +14,18 @@ use crate::protocol::registry::ProtocolRegistry;
 static SQLITE_VEC_INIT: Once = Once::new();
 const VECTOR_DIMENSIONS_SETTING_KEY: &str = "vector_embedding_dimensions";
 
+type SqliteExtensionInit = unsafe extern "C" fn(
+    *mut libsqlite3_sys::sqlite3,
+    *mut *mut c_char,
+    *const libsqlite3_sys::sqlite3_api_routines,
+) -> c_int;
+
 pub async fn init_pool(data_dir: &Path) -> anyhow::Result<SqlitePool> {
     SQLITE_VEC_INIT.call_once(|| unsafe {
         // Register sqlite-vec once per process. All later SQLite connections can use vec0 tables.
         libsqlite3_sys::sqlite3_auto_extension(Some(std::mem::transmute::<
             *const (),
-            unsafe extern "C" fn(
-                *mut libsqlite3_sys::sqlite3,
-                *mut *mut i8,
-                *const libsqlite3_sys::sqlite3_api_routines,
-            ) -> i32,
+            SqliteExtensionInit,
         >(sqlite3_vec_init as *const ())));
     });
 
