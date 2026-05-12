@@ -970,7 +970,7 @@ impl AdminService {
                     }),
                 )
                 .await;
-            if let Ok((payload, status)) = call
+            if let Ok((payload, status, _)) = call
                 && status < 400
                     && let Some(dims) = parse_embedding_dimensions_from_payload(&payload) {
                         return Ok(dims);
@@ -2634,6 +2634,7 @@ fn sync_runtime_protocol_endpoints(provider: &Provider, base_url: &str) -> anyho
             .and_modify(|entry| entry.base_url = runtime_base_url.to_string())
             .or_insert_with(|| ProtocolEndpointEntry {
                 base_url: runtime_base_url.to_string(),
+                endpoints: None,
             });
     }
 

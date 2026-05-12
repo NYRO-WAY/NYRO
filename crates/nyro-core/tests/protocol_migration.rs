@@ -13,9 +13,7 @@
 //!    by snapshotting the row state before and after.
 
 use nyro_core::db::{init_pool, migrate};
-use nyro_core::protocol::ids::{
-    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GENERATE_V1BETA, OPENAI_CHAT_V1, OPENAI_RESPONSES_V1,
-};
+use nyro_core::protocol::ids::OPENAI_CHAT_V1;
 use sqlx::Row;
 
 #[tokio::test]
@@ -50,10 +48,11 @@ async fn migration_normalizes_legacy_protocol_keys_then_idempotent() {
     let obj = endpoints.as_object().unwrap();
 
     assert_eq!(default_protocol, OPENAI_CHAT_V1.to_string());
-    assert!(obj.contains_key(&OPENAI_CHAT_V1.to_string()));
-    assert!(obj.contains_key(&OPENAI_RESPONSES_V1.to_string()));
-    assert!(obj.contains_key(&ANTHROPIC_MESSAGES_2023_06_01.to_string()));
-    assert!(obj.contains_key(&GOOGLE_GENERATE_V1BETA.to_string()));
+    // After normalization keys are protocol short names, not endpoint canonical strings.
+    assert!(obj.contains_key("openai-compat"),    "missing openai-compat key");
+    assert!(obj.contains_key("openai-resps"),     "missing openai-resps key");
+    assert!(obj.contains_key("anthropic-msgs"),   "missing anthropic-msgs key");
+    assert!(obj.contains_key("google-genai"),     "missing google-genai key");
     // Legacy keys must be gone.
     assert!(!obj.contains_key("openai"));
     assert!(!obj.contains_key("openai_responses"));
@@ -119,7 +118,7 @@ async fn migration_preserves_unknown_keys() {
         .await
         .unwrap();
     let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
-    assert!(v.get(OPENAI_CHAT_V1.to_string().as_str()).is_some());
+    assert!(v.get("openai-compat").is_some(), "missing openai-compat key after normalization");
     assert!(
         v.get("unknown/dialect/v9").is_some(),
         "unknown keys must round-trip unchanged so foreign data isn't dropped"

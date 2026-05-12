@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use crate::error::GatewayError;
-use crate::protocol::ids::{ProtocolFamily, ProtocolId};
+use crate::protocol::ids::ProtocolId;
 use crate::protocol::types::{InternalRequest, InternalResponse};
 use crate::provider::common::pipeline;
 use crate::provider::inbound::InboundResponse;
@@ -90,7 +90,7 @@ inventory::submit! { VendorRegistration { make: || Box::new(GoogleVendor) } }
 pub struct GoogleFamilyExt;
 
 impl VendorExtension for GoogleFamilyExt {
-    fn scope(&self) -> VendorScope { VendorScope::Family(ProtocolFamily::Google) }
+    fn scope(&self) -> VendorScope { VendorScope::Vendor { vendor_id: "google" } }
     fn metadata(&self) -> Option<&'static VendorMetadata> { None }
     fn build_url(&self, ctx: &VendorCtx<'_>, base_url: &str, path: &str) -> String {
         let url = format!("{}{path}", base_url.trim_end_matches('/'));

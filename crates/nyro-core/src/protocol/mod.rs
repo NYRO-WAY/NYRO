@@ -1,41 +1,33 @@
 //! Protocol layer.
 //!
-//! # Two-layer identity
+//! # Three-layer identity
 //!
-//! Canonical form: `{family}/{dialect}/{wire_version}`.
+//! Canonical form: `{protocol}/{name}/{version}`.
 //!
-//! - `family`: closed enum `openai` / `anthropic` / `google`.
-//! - `dialect`: wire-format verb/noun (`chat`, `responses`, `messages`, `generate`).
-//! - `wire_version`: schema version as the vendor labels it (`v1`, `2023-06-01`, `v1beta`).
+//! - `protocol`: closed `Protocol` enum (`openai-compat` / `openai-resps` / `anthropic-msgs` / `google-genai`).
+//! - `name`: wire-format endpoint name (`chat-completions`, `responses`, `messages`, `generate-content`).
+//! - `version`: schema version as the vendor labels it (`v1`, `2023-06-01`, `v1beta`).
 //!
 //! See [`ids`], [`traits`], [`registry`], and [`codec`] for the model.
 //!
-//! ## Codec layout (PR-14)
+//! ## Codec layout
 //!
-//! Each `codec/<family>/` directory now co-locates the wire codecs **and** the
-//! thin `ProtocolHandler` registration shell for every dialect:
+//! Each `codec/<protocol>/` directory co-locates the wire codecs **and** the
+//! thin `EndpointHandler` registration shell for every endpoint:
 //!
-//! - `codec/openai/chat.rs` — `OpenAIChatV1` + `inventory::submit!`
-//! - `codec/openai/embeddings.rs` — `OpenAIEmbeddingsV1` + codec types
-//! - `codec/openai/responses/handler.rs` — `OpenAIResponsesV1`
-//! - `codec/anthropic/messages.rs` — `AnthropicMessages2023`
-//! - `codec/google/generate.rs` — `GoogleGenerateV1Beta`
+//! - `codec/openai_compatible/chat_completions.rs` — `OpenAIChatCompletionsV1`
+//! - `codec/openai_compatible/embeddings.rs` — `OpenAIEmbeddingsV1`
+//! - `codec/openai_responses/responses.rs` — `OpenAIResponsesV1`
+//! - `codec/anthropic_messages/messages.rs` — `AnthropicMessages2023`
+//! - `codec/google_generative/generate_content.rs` — `GoogleGenerateContentV1Beta`
 //!
 //! Shared semantic utilities live in `codec/reasoning.rs` and
 //! `codec/tool_correlation.rs`.
 //!
-//! ## Alias table (resolved at runtime in [`registry::ProtocolRegistry::resolve_alias`])
+//! ## Alias table
 //!
-//! Primary short names: `openai-chat`, `openai-responses`, `anthropic-messages`,
-//! `google-generate` (kebab-case `{family}-{dialect}` form).
-//!
-//! Friendly aliases: `responses` → OpenAI Responses, `claude` → Anthropic Messages,
-//! `embeddings` → OpenAI Embeddings.
-//!
-//! Legacy strings from the pre-PR4 `Protocol` enum (`openai`, `openai_responses`,
-//! `anthropic`, `gemini`) remain resolvable for back-compat: the DB startup
-//! migration rewrites stored values to canonical [`ids::ProtocolId`] strings, but
-//! older yaml configs / older DB snapshots may still carry the legacy spellings.
+//! See [`registry::ProtocolRegistry`] for three-tier resolution of endpoint aliases
+//! and [`registry::ProtocolRegistry::parse_protocol`] for Protocol-level resolution.
 
 pub mod types;
 pub mod codec;
@@ -48,7 +40,7 @@ pub mod registry;
 use reqwest::header::HeaderMap;
 
 use crate::db::models::{Provider, ProtocolEndpointEntry};
-use crate::protocol::ids::ProtocolId;
+use crate::protocol::ids::{ProtocolEndpoint, OPENAI_CHAT_COMPLETIONS_V1};
 
 // ── Client → Gateway ──
 
@@ -133,36 +125,71 @@ impl SseEvent {
 /// lower priority.
 #[derive(Debug, Clone)]
 pub struct ProviderProtocols {
-    pub default: ProtocolId,
+    pub default: ProtocolEndpoint,
     /// Ordered list of supported endpoints.  First match wins in fallback logic.
-    pub endpoints: Vec<(ProtocolId, ProtocolEndpointEntry)>,
+    pub endpoints: Vec<(ProtocolEndpoint, ProtocolEndpointEntry)>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ResolvedEgress {
-    pub protocol: ProtocolId,
+    pub protocol: ProtocolEndpoint,
     pub base_url: String,
     pub needs_conversion: bool,
 }
 
 impl ProviderProtocols {
-    /// Best-effort string → [`ProtocolId`] resolver.
-    pub fn parse_protocol_key(s: &str) -> Option<ProtocolId> {
+    /// Best-effort string → [`ProtocolEndpoint`] resolver.
+    pub fn parse_protocol_key(s: &str) -> Option<ProtocolEndpoint> {
         registry::ProtocolRegistry::global().resolve_alias(s)
     }
 
-    /// Build from a provider DB row.  The `endpoints` Vec preserves the
-    /// iteration order of the JSON map (serde_json preserves insertion order).
+    /// Build from a provider DB row.
+    ///
+    /// Handles both old endpoint-keyed format and new protocol-keyed format:
+    /// - **Old** `{"openai-compat/chat-completions/v1": {"base_url": "..."}}` —
+    ///   each key resolves directly to a `ProtocolEndpoint`.
+    /// - **New** `{"openai-compat": {"base_url": "...", "endpoints": [...]}}` —
+    ///   key resolves to a `Protocol`; expands to all (or declared subset of) its endpoints.
+    ///
+    /// The `endpoints` Vec preserves the iteration order of the JSON map
+    /// (serde_json preserves insertion order).
     pub fn from_provider(provider: &Provider) -> Self {
+        let reg = registry::ProtocolRegistry::global();
         let raw_map = provider.parsed_protocol_endpoints();
         let mut seen = std::collections::HashSet::new();
-        let mut endpoints: Vec<(ProtocolId, ProtocolEndpointEntry)> = Vec::new();
+        let mut endpoints: Vec<(ProtocolEndpoint, ProtocolEndpointEntry)> = Vec::new();
 
         for (key, entry) in &raw_map {
-            if let Some(id) = Self::parse_protocol_key(key)
-                && seen.insert(id) {
-                    endpoints.push((id, entry.clone()));
+            // First try protocol-keyed format (new)
+            if let Some(protocol) = reg.parse_protocol(key) {
+                let all_handlers = reg.list_by_protocol(protocol);
+                let supported_names: Option<&Vec<String>> = entry.endpoints.as_ref();
+
+                for handler in all_handlers {
+                    let id = handler.id();
+                    // If entry.endpoints is Some, only include declared names
+                    if let Some(names) = supported_names {
+                        if !names.iter().any(|n| n == id.name) {
+                            continue;
+                        }
+                    }
+                    if seen.insert(id) {
+                        endpoints.push((id, ProtocolEndpointEntry {
+                            base_url: entry.base_url.clone(),
+                            endpoints: None,
+                        }));
+                    }
                 }
+                continue;
+            }
+
+            // Fall back to endpoint-keyed format (old / normalized)
+            if let Some(id) = Self::parse_protocol_key(key) && seen.insert(id) {
+                endpoints.push((id, ProtocolEndpointEntry {
+                    base_url: entry.base_url.clone(),
+                    endpoints: None,
+                }));
+            }
         }
 
         let declared_default = Self::parse_protocol_key(provider.effective_default_protocol());
@@ -170,28 +197,28 @@ impl ProviderProtocols {
             .filter(|id| endpoints.iter().any(|(eid, _)| eid == id))
             .or_else(|| endpoints.first().map(|(id, _)| *id))
             .or(declared_default)
-            .unwrap_or(ids::OPENAI_CHAT_V1);
+            .unwrap_or(OPENAI_CHAT_COMPLETIONS_V1);
 
         Self { default, endpoints }
     }
 
     /// Returns `true` if the provider declares support for `protocol`.
-    pub fn supports(&self, protocol: ProtocolId) -> bool {
+    pub fn supports(&self, protocol: ProtocolEndpoint) -> bool {
         self.endpoints.iter().any(|(id, _)| *id == protocol)
     }
 
-    /// Look up the endpoint entry for a specific protocol.
-    pub fn get(&self, protocol: ProtocolId) -> Option<&ProtocolEndpointEntry> {
+    /// Look up the endpoint entry for a specific protocol endpoint.
+    pub fn get(&self, protocol: ProtocolEndpoint) -> Option<&ProtocolEndpointEntry> {
         self.endpoints.iter().find_map(|(id, ep)| if *id == protocol { Some(ep) } else { None })
     }
 
     /// Deterministic three-tier egress resolution:
     ///
-    /// 1. **Exact match** — ingress protocol declared by the provider.
-    /// 2. **Same-family, first declared** — iterates `endpoints` in Vec order,
+    /// 1. **Exact match** — ingress endpoint declared by the provider.
+    /// 2. **Same-protocol, first declared** — iterates `endpoints` in Vec order,
     ///    which is JSON insertion order after normalization.  Deterministic.
     /// 3. **Provider default** — last resort.
-    pub fn resolve_egress(&self, ingress: ProtocolId) -> ResolvedEgress {
+    pub fn resolve_egress(&self, ingress: ProtocolEndpoint) -> ResolvedEgress {
         // Tier 1: exact match.
         if let Some(ep) = self.get(ingress) {
             return ResolvedEgress {
@@ -201,8 +228,12 @@ impl ProviderProtocols {
             };
         }
 
-        // Tier 2: same family, first in declared order.
-        if let Some((id, ep)) = self.endpoints.iter().find(|(id, _)| id.family == ingress.family) {
+        // Tier 2: same protocol suite, first in declared order.
+        if let Some((id, ep)) = self
+            .endpoints
+            .iter()
+            .find(|(id, _)| id.protocol == ingress.protocol)
+        {
             return ResolvedEgress {
                 protocol: *id,
                 base_url: ep.base_url.clone(),

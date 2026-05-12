@@ -6,7 +6,7 @@ import { backend } from "@/lib/backend";
 import type { LogPage, LogQuery, Provider, RequestLog } from "@/lib/types";
 import { getRouteType } from "@/lib/types";
 import { formatDuration, formatLogTime, formatTokenCount } from "@/lib/format";
-import { prettyName } from "@/lib/protocol-id";
+import { prettyName } from "@/lib/protocol";
 import { cn } from "@/lib/utils";
 import { useLocale } from "@/lib/i18n";
 import { Button } from "@/components/ui/button";
@@ -289,16 +289,11 @@ export default function LogsPage() {
 }
 
 function ProtocolCell({ value }: { value: string | null | undefined }) {
-  const pretty = prettyName(value);
-  if (!pretty) {
+  const label = prettyName(value);
+  if (!label) {
     return <span className="text-slate-400">–</span>;
   }
-  return (
-    <span className="flex flex-col leading-tight">
-      <span className="font-medium text-slate-700">{pretty.family}</span>
-      <span className="text-[10px] text-slate-400">{pretty.detail}</span>
-    </span>
-  );
+  return <span className="font-medium text-slate-700">{label}</span>;
 }
 
 function ProtocolLane({

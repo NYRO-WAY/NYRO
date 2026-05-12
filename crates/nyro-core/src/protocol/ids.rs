@@ -1,108 +1,142 @@
-//! Two-layer protocol identity: `ProtocolFamily` + `ProtocolId(family/dialect/version)`.
+//! Three-layer protocol identity: `Protocol` (suite) + `ProtocolEndpoint` (specific API endpoint).
 //!
-//! Canonical string form: `{family}/{dialect}/{wire_version}`.
+//! Canonical string form: `{protocol}/{name}/{version}`.
 //!
-//! - `family`: closed enum of protocol families (`openai` / `anthropic` / `google`).
-//! - `dialect`: wire-format verb/noun, no path/version (`chat` / `responses` / `messages` / `generate`).
-//! - `wire_version`: schema version as the vendor labels it (`v1`, `2023-06-01`, `v1beta`).
+//! - `protocol`: closed enum of protocol suites (`openai-compat` / `openai-resps` / `anthropic-msgs` / `google-genai`).
+//! - `name`: wire-format endpoint name (`chat-completions` / `responses` / `messages` / `generate-content` / `embeddings`).
+//! - `version`: schema version as the vendor labels it (`v1`, `2023-06-01`, `v1beta`).
 //!
-//! `ProtocolId` is `Copy` and stores `&'static str` slices — values must be const.
-//! Runtime parsing of arbitrary strings into a `ProtocolId` is the responsibility of
+//! `ProtocolEndpoint` is `Copy` and stores `&'static str` slices — values must be const.
+//! Runtime parsing of arbitrary strings into a `ProtocolEndpoint` is the responsibility of
 //! `ProtocolRegistry::resolve_alias`, which returns one of the registered const ids.
 
 use std::fmt;
 use std::str::FromStr;
 
+/// Top-level protocol suite (wire-format family).
+///
+/// A `Protocol` groups one or more `ProtocolEndpoint`s that share the same
+/// request/response wire format. It is orthogonal to `Vendor` — multiple vendors
+/// (e.g. OpenAI, Moonshot, DeepSeek) may implement the same `Protocol`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum ProtocolFamily {
-    OpenAI,
-    Anthropic,
-    Google,
+pub enum Protocol {
+    /// OpenAI Chat Completions-compatible protocol (`/v1/chat/completions`, `/v1/embeddings`).
+    OpenAICompatible,
+    /// OpenAI Responses API protocol (`/v1/responses`).
+    OpenAIResponses,
+    /// Anthropic Messages protocol (`/v1/messages`).
+    AnthropicMessages,
+    /// Google Generative AI (Gemini) protocol.
+    GoogleGenerativeAI,
 }
 
-impl ProtocolFamily {
+impl Protocol {
     pub const fn as_str(&self) -> &'static str {
         match self {
-            ProtocolFamily::OpenAI => "openai",
-            ProtocolFamily::Anthropic => "anthropic",
-            ProtocolFamily::Google => "google",
+            Self::OpenAICompatible   => "openai-compat",
+            Self::OpenAIResponses    => "openai-resps",
+            Self::AnthropicMessages  => "anthropic-msgs",
+            Self::GoogleGenerativeAI => "google-genai",
+        }
+    }
+
+    pub const fn display_name(&self) -> &'static str {
+        match self {
+            Self::OpenAICompatible   => "OpenAI Compatible",
+            Self::OpenAIResponses    => "OpenAI Responses",
+            Self::AnthropicMessages  => "Anthropic Messages",
+            Self::GoogleGenerativeAI => "Google Generative AI",
         }
     }
 }
 
-impl fmt::Display for ProtocolFamily {
+impl fmt::Display for Protocol {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.as_str())
     }
 }
 
-impl FromStr for ProtocolFamily {
+impl FromStr for Protocol {
     type Err = anyhow::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "openai" => Ok(Self::OpenAI),
-            "anthropic" => Ok(Self::Anthropic),
-            "google" => Ok(Self::Google),
-            other => anyhow::bail!("unknown protocol family: {other}"),
+            "openai-compat" | "openai-compatible" | "openai" => Ok(Self::OpenAICompatible),
+            "openai-resps"  | "openai-responses"             => Ok(Self::OpenAIResponses),
+            "anthropic-msgs"| "anthropic-messages" | "anthropic" | "claude" => Ok(Self::AnthropicMessages),
+            "google-genai"  | "google-generative-ai" | "gemini" | "google" => Ok(Self::GoogleGenerativeAI),
+            other => anyhow::bail!("unknown protocol: {other}"),
         }
     }
 }
 
+/// Specific API endpoint within a `Protocol`.
+///
+/// Canonical display: `{protocol}/{name}/{version}` (e.g. `openai-compat/chat-completions/v1`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct ProtocolId {
-    pub family: ProtocolFamily,
-    pub dialect: &'static str,
+pub struct ProtocolEndpoint {
+    pub protocol: Protocol,
+    /// Endpoint name (kebab-case, matches the final path segment of the ingress route).
+    pub name: &'static str,
+    /// Wire-format version string as the vendor labels it.
     pub version: &'static str,
 }
 
-impl ProtocolId {
+impl ProtocolEndpoint {
     pub const fn new(
-        family: ProtocolFamily,
-        dialect: &'static str,
+        protocol: Protocol,
+        name: &'static str,
         version: &'static str,
     ) -> Self {
-        Self { family, dialect, version }
+        Self { protocol, name, version }
     }
 
-    /// Look up the registered handler for this id.
+    /// Look up the registered handler for this endpoint.
     ///
     /// Panics only if no `inventory::submit!` registration exists — a
     /// build-time invariant covered by `tests/protocol_registry.rs`.
-    pub fn handler(self) -> &'static std::sync::Arc<dyn super::traits::ProtocolHandler> {
+    pub fn handler(self) -> &'static std::sync::Arc<dyn super::traits::EndpointHandler> {
         super::registry::ProtocolRegistry::global()
             .get(&self)
-            .unwrap_or_else(|| panic!("ProtocolHandler for {self} not registered"))
+            .unwrap_or_else(|| panic!("EndpointHandler for {self} not registered"))
     }
 }
 
-impl fmt::Display for ProtocolId {
+impl fmt::Display for ProtocolEndpoint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}/{}/{}", self.family, self.dialect, self.version)
+        write!(f, "{}/{}/{}", self.protocol, self.name, self.version)
     }
 }
 
-// ── Canonical const `ProtocolId` values registered in PR1. ──
-//
-// New dialects added in later PRs append a const here and a matching
-// `inventory::submit!` in `protocol/handler/...`. The alias table in
-// `registry.rs` is the only place that maps short / legacy names to
-// these canonical ids.
+// ── Canonical const `ProtocolEndpoint` values ────────────────────────────────
 
-pub const OPENAI_CHAT_V1: ProtocolId =
-    ProtocolId::new(ProtocolFamily::OpenAI, "chat", "v1");
+pub const OPENAI_CHAT_COMPLETIONS_V1: ProtocolEndpoint =
+    ProtocolEndpoint::new(Protocol::OpenAICompatible, "chat-completions", "v1");
 
-pub const OPENAI_RESPONSES_V1: ProtocolId =
-    ProtocolId::new(ProtocolFamily::OpenAI, "responses", "v1");
+/// Backward-compat alias — prefer `OPENAI_CHAT_COMPLETIONS_V1`.
+pub const OPENAI_CHAT_V1: ProtocolEndpoint = OPENAI_CHAT_COMPLETIONS_V1;
 
-pub const ANTHROPIC_MESSAGES_2023_06_01: ProtocolId =
-    ProtocolId::new(ProtocolFamily::Anthropic, "messages", "2023-06-01");
+pub const OPENAI_EMBEDDINGS_V1: ProtocolEndpoint =
+    ProtocolEndpoint::new(Protocol::OpenAICompatible, "embeddings", "v1");
 
-pub const GOOGLE_GENERATE_V1BETA: ProtocolId =
-    ProtocolId::new(ProtocolFamily::Google, "generate", "v1beta");
+pub const OPENAI_RESPONSES_V1: ProtocolEndpoint =
+    ProtocolEndpoint::new(Protocol::OpenAIResponses, "responses", "v1");
 
-pub const OPENAI_EMBEDDINGS_V1: ProtocolId =
-    ProtocolId::new(ProtocolFamily::OpenAI, "embeddings", "v1");
+pub const ANTHROPIC_MESSAGES_2023_06_01: ProtocolEndpoint =
+    ProtocolEndpoint::new(Protocol::AnthropicMessages, "messages", "2023-06-01");
+
+pub const GOOGLE_GENERATE_CONTENT_V1BETA: ProtocolEndpoint =
+    ProtocolEndpoint::new(Protocol::GoogleGenerativeAI, "generate-content", "v1beta");
+
+/// Backward-compat alias — prefer `GOOGLE_GENERATE_CONTENT_V1BETA`.
+pub const GOOGLE_GENERATE_V1BETA: ProtocolEndpoint = GOOGLE_GENERATE_CONTENT_V1BETA;
+
+// ── Backward-compat type alias ────────────────────────────────────────────────
+
+/// Backward-compat alias — prefer `ProtocolEndpoint`.
+pub type ProtocolId = ProtocolEndpoint;
+
+// ── Static capability types ───────────────────────────────────────────────────
 
 /// Vendor field policy: what happens when the codec encounters a field
 /// that the provider may or may not support.
@@ -135,14 +169,13 @@ impl StreamCaps {
     };
 }
 
-/// Extended static capabilities of a `ProtocolHandler` endpoint.
+/// Extended static capabilities of an `EndpointHandler`.
 ///
-/// PR-07 adds the feature flags, vendor field policy, and stream caps
-/// sections to the original `ProtocolCapabilities`.  The `lossy_default_reject`
+/// Describes what a specific `ProtocolEndpoint` can do.  The `lossy_default_reject`
 /// flag is consumed by `negotiator::negotiate` to decide whether to reject or
 /// accept lossy cross-protocol transforms.
 #[derive(Debug, Clone, Copy)]
-pub struct ProtocolCapabilities {
+pub struct EndpointCapabilities {
     // ── Original fields (PR-01 through PR-06) ────────────────────────────────
     pub streaming: bool,
     pub tools: bool,
@@ -175,19 +208,18 @@ pub struct ProtocolCapabilities {
     /// Stream capabilities for this endpoint.
     pub stream: StreamCaps,
     /// Default policy for unrecognised vendor fields in the egress body.
-    ///
-    /// If `Drop`, the codec will silently omit unknown extras.  If this is set
-    /// to `Supported`, the codec copies `VendorExtensions::passthrough_safe`
-    /// verbatim.
     pub unknown_field_policy: VendorFieldPolicy,
     /// When `true`, a request requiring a lossy cross-protocol transform is
-    /// **rejected** with `GatewayError::ProtocolLossyRejected` unless the
+    /// rejected with `GatewayError::ProtocolLossyRejected` unless the
     /// route has `allow_lossy = true`.  When `false`, the lossy transform is
     /// accepted silently.
     pub lossy_default_reject: bool,
 }
 
-impl ProtocolCapabilities {
+/// Backward-compat alias — prefer `EndpointCapabilities`.
+pub type ProtocolCapabilities = EndpointCapabilities;
+
+impl EndpointCapabilities {
     pub const EMPTY: Self = Self {
         streaming: false,
         tools: false,
@@ -238,34 +270,54 @@ mod tests {
 
     #[test]
     fn display_canonical_form() {
-        assert_eq!(OPENAI_CHAT_V1.to_string(), "openai/chat/v1");
-        assert_eq!(OPENAI_RESPONSES_V1.to_string(), "openai/responses/v1");
+        assert_eq!(
+            OPENAI_CHAT_COMPLETIONS_V1.to_string(),
+            "openai-compat/chat-completions/v1"
+        );
+        assert_eq!(
+            OPENAI_RESPONSES_V1.to_string(),
+            "openai-resps/responses/v1"
+        );
         assert_eq!(
             ANTHROPIC_MESSAGES_2023_06_01.to_string(),
-            "anthropic/messages/2023-06-01"
+            "anthropic-msgs/messages/2023-06-01"
         );
-        assert_eq!(GOOGLE_GENERATE_V1BETA.to_string(), "google/generate/v1beta");
+        assert_eq!(
+            GOOGLE_GENERATE_CONTENT_V1BETA.to_string(),
+            "google-genai/generate-content/v1beta"
+        );
+        assert_eq!(
+            OPENAI_EMBEDDINGS_V1.to_string(),
+            "openai-compat/embeddings/v1"
+        );
     }
 
     #[test]
-    fn family_round_trip() {
-        for f in [
-            ProtocolFamily::OpenAI,
-            ProtocolFamily::Anthropic,
-            ProtocolFamily::Google,
+    fn protocol_round_trip() {
+        for p in [
+            Protocol::OpenAICompatible,
+            Protocol::OpenAIResponses,
+            Protocol::AnthropicMessages,
+            Protocol::GoogleGenerativeAI,
         ] {
-            assert_eq!(f.to_string().parse::<ProtocolFamily>().unwrap(), f);
+            assert_eq!(p.as_str().parse::<Protocol>().unwrap(), p);
         }
     }
 
     #[test]
-    fn protocol_id_is_copy_and_hashable() {
+    fn protocol_endpoint_is_copy_and_hashable() {
         use std::collections::HashSet;
-        let id = OPENAI_CHAT_V1;
+        let id = OPENAI_CHAT_COMPLETIONS_V1;
         let copied = id;
         let mut set = HashSet::new();
         set.insert(id);
         set.insert(copied);
         assert_eq!(set.len(), 1);
+    }
+
+    #[test]
+    fn backward_compat_aliases() {
+        assert_eq!(OPENAI_CHAT_V1, OPENAI_CHAT_COMPLETIONS_V1);
+        assert_eq!(GOOGLE_GENERATE_V1BETA, GOOGLE_GENERATE_CONTENT_V1BETA);
     }
 }

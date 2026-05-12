@@ -7,7 +7,7 @@ use reqwest::header::HeaderMap;
 use serde_json::Value;
 
 use crate::error::GatewayError;
-use crate::protocol::ids::{ProtocolFamily, ProtocolId};
+use crate::protocol::ids::ProtocolId;
 use crate::protocol::types::{InternalRequest, InternalResponse};
 use crate::provider::common::openai::{openai_bearer_auth_headers, openai_build_url, openai_map_error};
 use crate::provider::common::pipeline;
@@ -103,7 +103,7 @@ inventory::submit! { VendorRegistration { make: || Box::new(OpenAiVendor) } }
 pub struct OpenAIFamilyExt;
 
 impl VendorExtension for OpenAIFamilyExt {
-    fn scope(&self) -> VendorScope { VendorScope::Family(ProtocolFamily::OpenAI) }
+    fn scope(&self) -> VendorScope { VendorScope::Vendor { vendor_id: "openai" } }
     fn metadata(&self) -> Option<&'static VendorMetadata> { None }
     fn auth_headers(&self, ctx: &VendorCtx<'_>) -> HeaderMap { openai_bearer_auth_headers(ctx) }
     fn build_url(&self, _ctx: &VendorCtx<'_>, base_url: &str, path: &str) -> String { openai_build_url(base_url, path) }

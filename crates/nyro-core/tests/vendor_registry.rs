@@ -85,40 +85,29 @@ fn resolve_falls_back_to_vendor_when_channel_unknown() {
 }
 
 #[test]
-fn resolve_falls_back_to_family_when_vendor_unknown() {
+fn resolve_falls_back_to_protocol_default_vendor_when_vendor_unknown() {
     let reg = VendorRegistry::global();
     let p = make_provider(Some("unmapped-vendor"), None);
-    let openai = reg.resolve(&p, OPENAI_CHAT_V1).expect("openai family");
+    let openai = reg.resolve(&p, OPENAI_CHAT_V1).expect("openai protocol default");
     let anthropic = reg
         .resolve(&p, ANTHROPIC_MESSAGES_2023_06_01)
-        .expect("anthropic family");
-    let google = reg.resolve(&p, GOOGLE_GENERATE_V1BETA).expect("google family");
+        .expect("anthropic protocol default");
+    let google = reg.resolve(&p, GOOGLE_GENERATE_V1BETA).expect("google protocol default");
 
-    assert!(matches!(
-        openai.scope(),
-        VendorScope::Family(nyro_core::protocol::ids::ProtocolFamily::OpenAI)
-    ));
-    assert!(matches!(
-        anthropic.scope(),
-        VendorScope::Family(nyro_core::protocol::ids::ProtocolFamily::Anthropic)
-    ));
-    assert!(matches!(
-        google.scope(),
-        VendorScope::Family(nyro_core::protocol::ids::ProtocolFamily::Google)
-    ));
+    // Resolves to the default vendor for each protocol suite
+    assert!(matches!(openai.scope(), VendorScope::Vendor { vendor_id: "openai" }));
+    assert!(matches!(anthropic.scope(), VendorScope::Vendor { vendor_id: "anthropic" }));
+    assert!(matches!(google.scope(), VendorScope::Vendor { vendor_id: "google" }));
 }
 
 #[test]
-fn resolve_uses_family_when_vendor_field_blank() {
+fn resolve_uses_protocol_default_vendor_when_vendor_field_blank() {
     let reg = VendorRegistry::global();
     let p = make_provider(None, None);
     let ext = reg
         .resolve(&p, ANTHROPIC_MESSAGES_2023_06_01)
-        .expect("family fallback");
-    assert!(matches!(
-        ext.scope(),
-        VendorScope::Family(nyro_core::protocol::ids::ProtocolFamily::Anthropic)
-    ));
+        .expect("protocol default vendor fallback");
+    assert!(matches!(ext.scope(), VendorScope::Vendor { vendor_id: "anthropic" }));
 }
 
 #[test]

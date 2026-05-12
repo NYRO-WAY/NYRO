@@ -203,7 +203,7 @@ mod tests {
     fn make_decl(pairs: &[(ProtocolId, &str)]) -> ProviderProtocols {
         let endpoints = pairs
             .iter()
-            .map(|(id, url)| (*id, ProtocolEndpointEntry { base_url: url.to_string() }))
+            .map(|(id, url)| (*id, ProtocolEndpointEntry { base_url: url.to_string(), endpoints: None }))
             .collect();
         ProviderProtocols {
             default: pairs.first().map(|(id, _)| *id).unwrap_or(OPENAI_CHAT_V1),
@@ -263,16 +263,17 @@ mod tests {
 
     #[test]
     fn vec_order_is_deterministic() {
-        // The first same-family entry in Vec order is always chosen.
+        // The first same-protocol entry in Vec order is always chosen.
         let decl = make_decl(&[
             (OPENAI_RESPONSES_V1, "https://responses.openai.com"),
             (OPENAI_CHAT_V1, "https://chat.openai.com"),
         ]);
         let mut c = ctx();
-        // Ingress is embeddings (same family, no exact match).
+        // Ingress is embeddings (OpenAICompatible — no exact match).
         use crate::protocol::ids::OPENAI_EMBEDDINGS_V1;
         let plan = negotiate(OPENAI_EMBEDDINGS_V1, None, Some(&decl), &mut c).unwrap();
-        // Must always resolve to OPENAI_RESPONSES_V1 (first in Vec).
-        assert_eq!(plan.egress, OPENAI_RESPONSES_V1);
+        // OPENAI_RESPONSES_V1 is OpenAIResponses (different protocol) — Tier 2 skips it.
+        // OPENAI_CHAT_V1 is OpenAICompatible (same protocol as embeddings) — first match wins.
+        assert_eq!(plan.egress, OPENAI_CHAT_V1);
     }
 }

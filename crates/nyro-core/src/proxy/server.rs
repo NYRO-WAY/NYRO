@@ -24,7 +24,8 @@ pub fn create_router(gateway: Gateway) -> Router {
         .route("/models/:model_action", post(ingress::google_generate::google_generate))
         .route("/v1/models", get(handler::models_list))
         .route("/models", get(handler::models_list))
-        .route("/health", get(health));
+        .route("/health", get(health))
+        .route("/", get(health));
 
     let cors = build_proxy_cors_layer(&gateway.config.proxy_cors_origins, gateway.config.proxy_port);
 

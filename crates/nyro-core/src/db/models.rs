@@ -570,6 +570,7 @@ impl Provider {
                 self.protocol.trim().to_string(),
                 ProtocolEndpointEntry {
                     base_url: self.base_url.trim().to_string(),
+                    endpoints: None,
                 },
             );
         }
@@ -594,6 +595,10 @@ impl Route {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProtocolEndpointEntry {
     pub base_url: String,
+    /// Subset of endpoint names supported by this provider under this protocol.
+    /// `None` means all endpoints declared by the protocol are supported.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub endpoints: Option<Vec<String>>,
 }
 
 impl CreateProvider {

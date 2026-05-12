@@ -1,6 +1,6 @@
-//! Aggregated `ProtocolHandler` trait.
+//! Aggregated `EndpointHandler` trait.
 //!
-//! A handler bundles a `ProtocolId`, static `ProtocolCapabilities`, and factory
+//! A handler bundles a `ProtocolEndpoint`, static `EndpointCapabilities`, and factory
 //! methods for the six codec components (decoder / encoder / response parser /
 //! response formatter / streaming parser / streaming formatter).
 //!
@@ -14,20 +14,25 @@ pub use super::{
     StreamParser,
 };
 
-use crate::protocol::ids::{ProtocolCapabilities, ProtocolId};
+use crate::protocol::ids::{EndpointCapabilities, Protocol, ProtocolEndpoint};
 
 /// Single trait that aggregates the six codec components plus identity and
 /// capabilities. Each registered handler is constructed once via
-/// `ProtocolRegistration::make` and stored in `ProtocolRegistry`.
+/// `EndpointRegistration::make` and stored in `ProtocolRegistry`.
 ///
 /// Stream parsers/formatters are stateful, so factory methods return owned
 /// `Box<dyn ...>`. Stateless decoders/encoders/parsers/formatters also use
-/// `Box` for uniformity (the registry stores `Arc<dyn ProtocolHandler>` so
+/// `Box` for uniformity (the registry stores `Arc<dyn EndpointHandler>` so
 /// the cost is one allocation per request, matching the legacy factory
 /// functions in `protocol/mod.rs`).
-pub trait ProtocolHandler: Send + Sync + 'static {
-    fn id(&self) -> ProtocolId;
-    fn capabilities(&self) -> &'static ProtocolCapabilities;
+pub trait EndpointHandler: Send + Sync + 'static {
+    fn id(&self) -> ProtocolEndpoint;
+    fn capabilities(&self) -> &'static EndpointCapabilities;
+
+    /// The protocol suite this handler belongs to.  Derived from `id()` by default.
+    fn protocol(&self) -> Protocol {
+        self.id().protocol
+    }
 
     fn make_decoder(&self) -> Box<dyn IngressDecoder + Send>;
     fn make_encoder(&self) -> Box<dyn EgressEncoder + Send>;
@@ -36,3 +41,6 @@ pub trait ProtocolHandler: Send + Sync + 'static {
     fn make_stream_parser(&self) -> Box<dyn StreamParser>;
     fn make_stream_formatter(&self) -> Box<dyn StreamFormatter>;
 }
+
+/// Backward-compat alias — prefer `EndpointHandler`.
+pub use EndpointHandler as ProtocolHandler;

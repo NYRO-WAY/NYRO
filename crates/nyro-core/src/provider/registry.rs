@@ -4,19 +4,19 @@
 //!
 //! * [`VendorRegistration`] — full vendors that implement [`Vendor`].
 //!   One per vendor module (no duplicate registration needed).
-//! * [`ExtensionRegistration`] — channel-scoped or family-scoped extensions
+//! * [`ExtensionRegistration`] — channel-scoped or vendor-scoped extensions
 //!   that implement only [`VendorExtension`] (e.g. `claude-code`, `codex`,
-//!   and family fallbacks).
+//!   and protocol-default vendor fallbacks).
 //!
 //! The combined [`VendorRegistry`] exposes two resolution strategies:
 //! * `get_vendor(vendor_id)` — vendor-id lookup for the proxy pipeline.
-//! * `resolve(provider, protocol_id)` — three-tier Channel → Vendor → Family
+//! * `resolve(provider, protocol_id)` — three-tier Channel → Vendor → ProtocolDefault
 //!   resolution used by admin/auth paths.
 
 use std::sync::{Arc, OnceLock};
 
 use crate::db::models::Provider;
-use crate::protocol::ids::{ProtocolFamily, ProtocolId};
+use crate::protocol::ids::{Protocol, ProtocolEndpoint};
 use crate::provider::metadata::VendorMetadata;
 use crate::provider::vendor::Vendor;
 use crate::provider::vendor_ext::{VendorAsExt, VendorExtension};
@@ -24,10 +24,9 @@ use crate::provider::vendor_ext::{VendorAsExt, VendorExtension};
 // ── VendorScope ───────────────────────────────────────────────────────────────
 
 /// Selector for extension/vendor matching. Resolution order:
-/// `Channel` → `Vendor` → `Family`.
+/// `Channel` → `Vendor` → `ProtocolDefault`.
 #[derive(Debug, Clone, Copy)]
 pub enum VendorScope {
-    Family(ProtocolFamily),
     Vendor {
         vendor_id: &'static str,
     },
@@ -37,12 +36,21 @@ pub enum VendorScope {
     },
 }
 
+/// Returns the canonical default vendor for a given protocol suite.
+///
+/// Used in tier-3 resolution to apply the right family-level extension when a
+/// provider has no explicit `vendor` field but its protocol implies a default vendor.
+pub fn protocol_default_vendor(protocol: Protocol) -> &'static str {
+    match protocol {
+        Protocol::OpenAICompatible | Protocol::OpenAIResponses => "openai",
+        Protocol::AnthropicMessages => "anthropic",
+        Protocol::GoogleGenerativeAI => "google",
+    }
+}
+
 // ── VendorRegistration ────────────────────────────────────────────────────────
 
 /// `inventory` registration record for a full [`Vendor`] implementation.
-///
-/// Replace the old pair of `VendorRegistration` + `ProviderAdapterRegistration`
-/// with a single `inventory::submit!`.
 pub struct VendorRegistration {
     pub make: fn() -> Box<dyn Vendor>,
 }
@@ -51,9 +59,9 @@ inventory::collect!(VendorRegistration);
 
 // ── ExtensionRegistration ─────────────────────────────────────────────────────
 
-/// `inventory` registration record for a channel-scoped or family-scoped
+/// `inventory` registration record for a channel-scoped or vendor-scoped
 /// [`VendorExtension`] that does NOT implement the full [`Vendor`] trait
-/// (e.g. `AnthropicClaudeCodeChannel`, `OpenAIFamilyExt`).
+/// (e.g. `AnthropicClaudeCodeChannel`, `OpenAIVendorExt`).
 pub struct ExtensionRegistration {
     pub make: fn() -> Box<dyn VendorExtension>,
 }
@@ -69,7 +77,7 @@ pub struct VendorRegistry {
     /// Pre-built `VendorAsExt` wrappers for each vendor entry, so
     /// `resolve()` can return `Arc<dyn VendorExtension>` without allocating.
     vendor_as_ext: Vec<Arc<dyn VendorExtension>>,
-    /// Extension-only entries (channel-scoped or family-scoped).
+    /// Extension-only entries (channel-scoped or vendor-scoped).
     extensions: Vec<Arc<dyn VendorExtension>>,
 }
 
@@ -106,14 +114,18 @@ impl VendorRegistry {
             .find(|v| v.vendor_id().eq_ignore_ascii_case(vendor_id))
     }
 
-    /// Three-tier resolution: Channel → Vendor → Family.
+    /// Three-tier resolution: Channel → Vendor → ProtocolDefault.
     ///
     /// Returns `Arc<dyn VendorExtension>` for use by admin and auth paths
     /// that only need sync hooks (`auth_headers`, `build_url`, `metadata`).
+    ///
+    /// Tier 3 uses the protocol's canonical default vendor (`protocol_default_vendor`)
+    /// to look up a vendor-scoped extension that serves as a fallback when the
+    /// provider has no explicit `vendor` field.
     pub fn resolve(
         &self,
         provider: &Provider,
-        protocol_id: ProtocolId,
+        protocol_id: ProtocolEndpoint,
     ) -> Option<&Arc<dyn VendorExtension>> {
         let vendor_id = provider
             .vendor
@@ -157,20 +169,23 @@ impl VendorRegistry {
             }
         }
 
-        // 3. Family-scoped.
-        for ext in &self.extensions {
-            if let VendorScope::Family(family) = ext.scope()
-                && family == protocol_id.family
-            {
-                return Some(ext);
-            }
-        }
-        // Check vendor-level entries for Family scope (unlikely but possible).
+        // 3. Protocol-default vendor fallback.
+        //
+        // For providers with no explicit vendor, use the default vendor for the
+        // protocol suite (e.g. OpenAI-compatible → "openai", Anthropic → "anthropic").
+        let default_vendor = protocol_default_vendor(protocol_id.protocol);
         for (i, vendor) in self.vendors.iter().enumerate() {
-            if let VendorScope::Family(family) = vendor.scope()
-                && family == protocol_id.family
+            if let VendorScope::Vendor { vendor_id: vk } = vendor.scope()
+                && vk.eq_ignore_ascii_case(default_vendor)
             {
                 return Some(&self.vendor_as_ext[i]);
+            }
+        }
+        for ext in &self.extensions {
+            if let VendorScope::Vendor { vendor_id: vk } = ext.scope()
+                && vk.eq_ignore_ascii_case(default_vendor)
+            {
+                return Some(ext);
             }
         }
 

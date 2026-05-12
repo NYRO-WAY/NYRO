@@ -1,9 +1,10 @@
-//! Wire-level codec implementations. Each submodule owns a single API
-//! family's request/response/stream codecs **and** the thin
-//! `ProtocolHandler` registration shell for that dialect.
+//! Wire-level codec implementations. Each submodule owns a single Protocol's
+//! request/response/stream codecs **and** the thin `EndpointHandler`
+//! registration shell for every endpoint.
 
-pub mod openai;
-pub mod anthropic;
-pub mod google;
+pub mod openai_compatible;
+pub mod openai_responses;
+pub mod anthropic_messages;
+pub mod google_generative;
 pub mod reasoning;
 pub mod tool_correlation;

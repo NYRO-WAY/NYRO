@@ -9,7 +9,7 @@
 
 use nyro_core::protocol::ids::{
     ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GENERATE_V1BETA, OPENAI_CHAT_V1, OPENAI_EMBEDDINGS_V1,
-    OPENAI_RESPONSES_V1, ProtocolFamily, ProtocolId,
+    OPENAI_RESPONSES_V1, Protocol, ProtocolId,
 };
 use nyro_core::protocol::registry::ProtocolRegistry;
 use nyro_core::protocol::types::Role;
@@ -33,11 +33,12 @@ fn registers_all_handlers_with_correct_ids() {
 }
 
 #[test]
-fn list_by_family_segments() {
+fn list_by_protocol_segments() {
     let reg = ProtocolRegistry::global();
-    assert_eq!(reg.list_by_family(ProtocolFamily::OpenAI).len(), 3);
-    assert_eq!(reg.list_by_family(ProtocolFamily::Anthropic).len(), 1);
-    assert_eq!(reg.list_by_family(ProtocolFamily::Google).len(), 1);
+    assert_eq!(reg.list_by_protocol(Protocol::OpenAICompatible).len(), 2);
+    assert_eq!(reg.list_by_protocol(Protocol::OpenAIResponses).len(), 1);
+    assert_eq!(reg.list_by_protocol(Protocol::AnthropicMessages).len(), 1);
+    assert_eq!(reg.list_by_protocol(Protocol::GoogleGenerativeAI).len(), 1);
 }
 
 #[test]

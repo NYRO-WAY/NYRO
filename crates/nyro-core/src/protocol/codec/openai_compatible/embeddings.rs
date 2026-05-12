@@ -31,8 +31,8 @@ use std::collections::HashMap;
 use reqwest::header::HeaderMap;
 use serde_json::Value;
 
-use crate::protocol::ids::{OPENAI_EMBEDDINGS_V1, ProtocolCapabilities, ProtocolId};
-use crate::protocol::registry::ProtocolRegistration;
+use crate::protocol::ids::{OPENAI_EMBEDDINGS_V1, EndpointCapabilities, ProtocolEndpoint};
+use crate::protocol::registry::EndpointRegistration;
 use crate::protocol::traits::*;
 use crate::protocol::types::{InternalRequest, InternalResponse, StreamDelta, TokenUsage};
 use crate::protocol::SseEvent;
@@ -50,7 +50,7 @@ const KNOWN_EMBEDDINGS_FIELDS: &[&str] = &[
     "user",
 ];
 
-const CAPS: ProtocolCapabilities = ProtocolCapabilities {
+const CAPS: EndpointCapabilities = EndpointCapabilities {
     streaming: false,
     tools: false,
     reasoning: false,
@@ -74,11 +74,11 @@ const CAPS: ProtocolCapabilities = ProtocolCapabilities {
 
 pub struct OpenAIEmbeddingsV1;
 
-impl ProtocolHandler for OpenAIEmbeddingsV1 {
-    fn id(&self) -> ProtocolId {
+impl EndpointHandler for OpenAIEmbeddingsV1 {
+    fn id(&self) -> ProtocolEndpoint {
         OPENAI_EMBEDDINGS_V1
     }
-    fn capabilities(&self) -> &'static ProtocolCapabilities {
+    fn capabilities(&self) -> &'static EndpointCapabilities {
         &CAPS
     }
     fn make_decoder(&self) -> Box<dyn IngressDecoder + Send> {
@@ -102,7 +102,7 @@ impl ProtocolHandler for OpenAIEmbeddingsV1 {
 }
 
 inventory::submit! {
-    ProtocolRegistration { make: || Box::new(OpenAIEmbeddingsV1) }
+    EndpointRegistration { make: || Box::new(OpenAIEmbeddingsV1) }
 }
 
 // ── Decoder ───────────────────────────────────────────────────────────────────

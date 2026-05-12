@@ -3,4 +3,4 @@ pub mod encoder;
 pub mod formatter;
 pub mod parser;
 pub mod stream;
-pub mod handler;
+pub mod responses;

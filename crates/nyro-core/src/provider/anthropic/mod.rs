@@ -7,7 +7,7 @@ use reqwest::header::{HeaderMap, HeaderValue};
 use serde_json::Value;
 
 use crate::error::GatewayError;
-use crate::protocol::ids::{ProtocolFamily, ProtocolId};
+use crate::protocol::ids::ProtocolId;
 use crate::protocol::types::{InternalRequest, InternalResponse};
 use crate::provider::common::pipeline;
 use crate::provider::inbound::InboundResponse;
@@ -123,7 +123,7 @@ inventory::submit! { VendorRegistration { make: || Box::new(AnthropicVendor) } }
 pub struct AnthropicFamilyExt;
 
 impl VendorExtension for AnthropicFamilyExt {
-    fn scope(&self) -> VendorScope { VendorScope::Family(ProtocolFamily::Anthropic) }
+    fn scope(&self) -> VendorScope { VendorScope::Vendor { vendor_id: "anthropic" } }
     fn metadata(&self) -> Option<&'static VendorMetadata> { None }
     fn auth_headers(&self, ctx: &VendorCtx<'_>) -> HeaderMap {
         let mut h = HeaderMap::new();

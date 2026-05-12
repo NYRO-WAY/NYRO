@@ -93,7 +93,7 @@ where
     // real Anthropic API key. Rewriting it here would forward the Bearer
     // as a fake `x-api-key` and break the OAuth handshake.
     if !ctx.disable_default_auth
-        && ctx.protocol.family == crate::protocol::ids::ProtocolFamily::Anthropic
+        && ctx.protocol.protocol == crate::protocol::ids::Protocol::AnthropicMessages
         && !headers.contains_key("x-api-key")
     {
         headers.remove(reqwest::header::AUTHORIZATION);
@@ -186,7 +186,7 @@ pub async fn passthrough_run(
 
     // Anthropic-family egress: rewrite Bearer → x-api-key (mirrors build_request).
     if !ctx.disable_default_auth
-        && ctx.protocol.family == crate::protocol::ids::ProtocolFamily::Anthropic
+        && ctx.protocol.protocol == crate::protocol::ids::Protocol::AnthropicMessages
         && !headers.contains_key("x-api-key")
     {
         headers.remove(reqwest::header::AUTHORIZATION);

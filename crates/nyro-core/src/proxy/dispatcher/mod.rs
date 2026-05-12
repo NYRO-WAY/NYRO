@@ -681,12 +681,12 @@ async fn handle_non_stream(
     // When true: Native protocol + no response mutations → skip IR round-trip.
     passthrough_resp: bool,
 ) -> Response {
-    let make_extras = |response_body: Option<String>| LogExtras {
+    let make_extras = |response_body: Option<String>, resp_headers: Option<String>| LogExtras {
         method: Some(ingress_method.to_string()),
         path: Some(ingress_path.to_string()),
         request_headers: request_headers_str.clone(),
         request_body: request_body_str.clone(),
-        response_headers: None,
+        response_headers: resp_headers,
         response_body,
     };
 
@@ -699,13 +699,14 @@ async fn handle_non_stream(
                 TokenUsage::default(), false, false, Some(e.to_string()), None,
                 make_extras(Some(
                     serde_json::json!({ "error": { "message": format!("upstream error: {e}") } }).to_string(),
-                )),
+                ), None),
             );
             return error_response(502, &format!("upstream error: {e}"));
         }
     };
 
-    let (resp, status) = call_result;
+    let (resp, status, upstream_headers) = call_result;
+    let upstream_hdrs_str = headers_to_json(&upstream_headers);
 
     if status >= 400 {
         let body_str = serde_json::to_string(&resp).ok();
@@ -714,7 +715,7 @@ async fn handle_non_stream(
             &gw, ingress_str, egress_str, request_model, actual_model,
             api_key_id, &provider.name, status as i32, start.elapsed().as_millis() as f64,
             TokenUsage::default(), false, false, preview, None,
-            make_extras(body_str),
+            make_extras(body_str, upstream_hdrs_str.clone()),
         );
         return (
             StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
@@ -725,14 +726,14 @@ async fn handle_non_stream(
 
     // Embeddings: passthrough response (parse_response is not implemented for codec).
     if egress.handler().capabilities().embeddings {
-        let usage = crate::protocol::codec::openai::embeddings::parse_usage(&resp);
+        let usage = crate::protocol::codec::openai_compatible::embeddings::parse_usage(&resp);
         let resp_str = serde_json::to_string(&resp).ok();
         let preview = resp_str.as_ref().map(|s| s.chars().take(500).collect());
         emit_log(
             &gw, ingress_str, egress_str, request_model, actual_model,
             api_key_id, &provider.name, status as i32, start.elapsed().as_millis() as f64,
             usage, false, false, None, preview,
-            make_extras(resp_str),
+            make_extras(resp_str, upstream_hdrs_str.clone()),
         );
         return (StatusCode::from_u16(status).unwrap_or(StatusCode::OK), Json(resp)).into_response();
     }
@@ -747,7 +748,7 @@ async fn handle_non_stream(
             &gw, ingress_str, egress_str, request_model, actual_model,
             api_key_id, &provider.name, status as i32, start.elapsed().as_millis() as f64,
             TokenUsage::default(), false, false, None, preview,
-            make_extras(resp_str),
+            make_extras(resp_str, upstream_hdrs_str.clone()),
         );
         return (StatusCode::from_u16(status).unwrap_or(StatusCode::OK), Json(resp)).into_response();
     }
@@ -764,7 +765,7 @@ async fn handle_non_stream(
                 Some(format!("parse error: {e}")), None,
                 make_extras(Some(
                     serde_json::json!({ "error": { "message": format!("parse error: {e}") } }).to_string(),
-                )),
+                ), upstream_hdrs_str.clone()),
             );
             return error_response(500, &format!("parse error: {e}"));
         }
@@ -786,7 +787,7 @@ async fn handle_non_stream(
         &gw, ingress_str, egress_str, request_model, actual_model,
         api_key_id, &provider.name, status as i32, start.elapsed().as_millis() as f64,
         usage.clone(), false, is_tool, None, response_preview,
-        make_extras(response_body_full),
+        make_extras(response_body_full, upstream_hdrs_str),
     );
 
     let mut response = (
@@ -872,6 +873,7 @@ async fn handle_non_stream_via_upstream_stream(
     };
 
     let (resp, status) = call_result;
+    let upstream_hdrs_str = headers_to_json(resp.headers());
 
     if status >= 400 {
         let err_body: Value = resp
@@ -882,7 +884,11 @@ async fn handle_non_stream_via_upstream_stream(
             &gw, ingress_str, egress_str, request_model, actual_model,
             api_key_id, &provider.name, status as i32, start.elapsed().as_millis() as f64,
             TokenUsage::default(), false, false, Some(err_body.to_string()), None,
-            LogExtras::default(),
+            LogExtras {
+                response_headers: upstream_hdrs_str,
+                response_body: serde_json::to_string(&err_body).ok(),
+                ..LogExtras::default()
+            },
         );
         return (StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY), Json(err_body)).into_response();
     }
@@ -939,7 +945,11 @@ async fn handle_non_stream_via_upstream_stream(
         &gw, ingress_str, egress_str, request_model, actual_model,
         api_key_id, &provider.name, status as i32, start.elapsed().as_millis() as f64,
         usage.clone(), false, is_tool, None, response_preview,
-        LogExtras::default(),
+        LogExtras {
+            response_headers: upstream_hdrs_str,
+            response_body: serde_json::to_string(&output).ok(),
+            ..LogExtras::default()
+        },
     );
 
     let mut response = (
@@ -1022,12 +1032,12 @@ async fn handle_stream(
         let path_s = ingress_path.to_string();
         let rh = request_headers_str.clone();
         let rb = request_body_str.clone();
-        move |response_body: Option<String>| LogExtras {
+        move |response_body: Option<String>, resp_headers: Option<String>| LogExtras {
             method: Some(method.clone()),
             path: Some(path_s.clone()),
             request_headers: rh.clone(),
             request_body: rb.clone(),
-            response_headers: None,
+            response_headers: resp_headers,
             response_body,
         }
     };
@@ -1040,13 +1050,14 @@ async fn handle_stream(
                 TokenUsage::default(), true, false, Some(e.to_string()), None,
                 make_extras_owned(Some(
                     serde_json::json!({ "error": { "message": format!("upstream error: {e}") } }).to_string(),
-                )),
+                ), None),
             );
             return error_response(502, &format!("upstream error: {e}"));
         }
     };
 
     let (resp, status) = call_result;
+    let upstream_hdrs_str = headers_to_json(resp.headers());
 
     if status >= 400 {
         let err_body: Value = resp
@@ -1058,7 +1069,7 @@ async fn handle_stream(
             &gw, ingress_str, egress_str, request_model, actual_model,
             api_key_id, &provider.name, status as i32, start.elapsed().as_millis() as f64,
             TokenUsage::default(), true, false, Some(err_body.to_string()), None,
-            make_extras_owned(err_body_str),
+            make_extras_owned(err_body_str, upstream_hdrs_str.clone()),
         );
         return (
             StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
@@ -1087,6 +1098,7 @@ async fn handle_stream(
         let ingress_path_pt = ingress_path.to_string();
         let request_headers_pt = request_headers_str.clone();
         let request_body_pt = request_body_str.clone();
+        let upstream_hdrs_pt = upstream_hdrs_str.clone();
 
         tokio::spawn(async move {
             let mut log_buf: Vec<u8> = Vec::new();
@@ -1150,7 +1162,7 @@ async fn handle_stream(
                     path: Some(ingress_path_pt.clone()),
                     request_headers: request_headers_pt.clone(),
                     request_body: request_body_pt.clone(),
-                    response_headers: None,
+                    response_headers: upstream_hdrs_pt,
                     response_body: aggregated_body_str,
                 },
             );
@@ -1196,6 +1208,7 @@ async fn handle_stream(
     let ingress_path_owned = ingress_path.to_string();
     let request_headers_owned = request_headers_str.clone();
     let request_body_owned = request_body_str.clone();
+    let upstream_hdrs_owned = upstream_hdrs_str;
 
     tokio::spawn(async move {
         let mut accumulator = StreamResponseAccumulator::default();
@@ -1266,7 +1279,7 @@ async fn handle_stream(
                 path: Some(ingress_path_owned.clone()),
                 request_headers: request_headers_owned.clone(),
                 request_body: request_body_owned.clone(),
-                response_headers: None,
+                response_headers: upstream_hdrs_owned,
                 response_body: aggregated_body_str,
             },
         );
@@ -1781,7 +1794,7 @@ async fn compute_embedding(gw: &Gateway, text: &str) -> anyhow::Result<Vec<f32>>
         };
         let request_body = serde_json::json!({ "model": actual_model, "input": text });
         match client.call_non_stream(&upstream_url, request_headers, request_body).await {
-            Ok((payload, status)) if status < 400 => {
+            Ok((payload, status, _)) if status < 400 => {
                 if let Some(vector) = parse_embedding_vector(&payload) {
                     return Ok(vector);
                 }

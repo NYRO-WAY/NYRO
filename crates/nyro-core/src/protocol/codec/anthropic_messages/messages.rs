@@ -3,14 +3,13 @@
 //! Wire version is the schema date `2023-06-01` (the `anthropic-version` header
 //! the API requires), not the URL prefix `v1`.
 
-use crate::protocol::codec::anthropic;
-use crate::protocol::ids::{ANTHROPIC_MESSAGES_2023_06_01, ProtocolCapabilities, ProtocolId};
-use crate::protocol::registry::ProtocolRegistration;
+use crate::protocol::ids::{EndpointCapabilities, ANTHROPIC_MESSAGES_2023_06_01, ProtocolEndpoint};
+use crate::protocol::registry::EndpointRegistration;
 use crate::protocol::traits::*;
 
 pub struct AnthropicMessages2023;
 
-const CAPS: ProtocolCapabilities = ProtocolCapabilities {
+const CAPS: EndpointCapabilities = EndpointCapabilities {
     streaming: true,
     tools: true,
     reasoning: true,
@@ -19,36 +18,36 @@ const CAPS: ProtocolCapabilities = ProtocolCapabilities {
     override_model_in_body: false,
     ingress_routes: &[("POST", "/v1/messages"), ("POST", "/messages")],
     extended_reasoning: true,
-    ..ProtocolCapabilities::CHAT_STANDARD
+    ..EndpointCapabilities::CHAT_STANDARD
 };
 
-impl ProtocolHandler for AnthropicMessages2023 {
-    fn id(&self) -> ProtocolId {
+impl EndpointHandler for AnthropicMessages2023 {
+    fn id(&self) -> ProtocolEndpoint {
         ANTHROPIC_MESSAGES_2023_06_01
     }
-    fn capabilities(&self) -> &'static ProtocolCapabilities {
+    fn capabilities(&self) -> &'static EndpointCapabilities {
         &CAPS
     }
     fn make_decoder(&self) -> Box<dyn IngressDecoder + Send> {
-        Box::new(anthropic::decoder::AnthropicDecoder)
+        Box::new(super::decoder::AnthropicDecoder)
     }
     fn make_encoder(&self) -> Box<dyn EgressEncoder + Send> {
-        Box::new(anthropic::encoder::AnthropicEncoder)
+        Box::new(super::encoder::AnthropicEncoder)
     }
     fn make_response_parser(&self) -> Box<dyn ResponseParser> {
-        Box::new(anthropic::stream::AnthropicResponseParser)
+        Box::new(super::stream::AnthropicResponseParser)
     }
     fn make_response_formatter(&self) -> Box<dyn ResponseFormatter> {
-        Box::new(anthropic::stream::AnthropicResponseFormatter)
+        Box::new(super::stream::AnthropicResponseFormatter)
     }
     fn make_stream_parser(&self) -> Box<dyn StreamParser> {
-        Box::new(anthropic::stream::AnthropicStreamParser::new())
+        Box::new(super::stream::AnthropicStreamParser::new())
     }
     fn make_stream_formatter(&self) -> Box<dyn StreamFormatter> {
-        Box::new(anthropic::stream::AnthropicStreamFormatter::new())
+        Box::new(super::stream::AnthropicStreamFormatter::new())
     }
 }
 
 inventory::submit! {
-    ProtocolRegistration { make: || Box::new(AnthropicMessages2023) }
+    EndpointRegistration { make: || Box::new(AnthropicMessages2023) }
 }

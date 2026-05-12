@@ -25,11 +25,12 @@ impl ProxyClient {
         url: &str,
         headers: HeaderMap,
         body: Value,
-    ) -> Result<(Value, u16)> {
+    ) -> Result<(Value, u16, HeaderMap)> {
         let resp = self.http.post(url).headers(headers).json(&body).send().await?;
         let status = resp.status().as_u16();
+        let resp_headers = resp.headers().clone();
         let json: Value = resp.json().await?;
-        Ok((json, status))
+        Ok((json, status, resp_headers))
     }
 
     pub async fn call_stream(

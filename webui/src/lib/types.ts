@@ -154,10 +154,10 @@ export interface ModelCapabilities {
 }
 
 export type ProviderProtocol =
-  | "openai"
-  | "openai_responses"
-  | "anthropic"
-  | "gemini";
+  | "openai-compat"
+  | "openai-resps"
+  | "anthropic-msgs"
+  | "google-genai";
 
 export interface ProviderChannelPreset {
   id: string;
@@ -166,7 +166,7 @@ export interface ProviderChannelPreset {
     en: string;
   };
   authMode?: "apikey" | "oauth";
-  baseUrls: Partial<Record<ProviderProtocol, string>>;
+  baseUrls: Record<string, string>;
   modelsSource?: string;
   capabilitiesSource?: string;
   apiKey?: string;
@@ -181,7 +181,7 @@ export interface ProviderPreset {
     en: string;
   };
   icon?: string;
-  defaultProtocol: ProviderProtocol;
+  defaultProtocol: string;
   channels?: ProviderChannelPreset[];
 }
 

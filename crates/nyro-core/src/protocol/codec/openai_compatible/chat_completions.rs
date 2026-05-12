@@ -1,0 +1,55 @@
+//! OpenAI Chat Completions API (`POST /v1/chat/completions`).
+//!
+//! `EndpointHandler` registration shell — wraps
+//! [`super::decoder`], [`super::encoder`], and [`super::stream`] codecs.
+
+use crate::protocol::ids::{EndpointCapabilities, OPENAI_CHAT_COMPLETIONS_V1, ProtocolEndpoint};
+use crate::protocol::registry::EndpointRegistration;
+use crate::protocol::traits::*;
+
+pub struct OpenAIChatCompletionsV1;
+
+const CAPS: EndpointCapabilities = EndpointCapabilities {
+    streaming: true,
+    tools: true,
+    reasoning: true,
+    embeddings: false,
+    force_upstream_stream: false,
+    override_model_in_body: false,
+    ingress_routes: &[
+        ("POST", "/v1/chat/completions"),
+        ("POST", "/chat/completions"),
+    ],
+    ..EndpointCapabilities::CHAT_STANDARD
+};
+
+impl EndpointHandler for OpenAIChatCompletionsV1 {
+    fn id(&self) -> ProtocolEndpoint {
+        OPENAI_CHAT_COMPLETIONS_V1
+    }
+    fn capabilities(&self) -> &'static EndpointCapabilities {
+        &CAPS
+    }
+    fn make_decoder(&self) -> Box<dyn IngressDecoder + Send> {
+        Box::new(super::decoder::OpenAIDecoder)
+    }
+    fn make_encoder(&self) -> Box<dyn EgressEncoder + Send> {
+        Box::new(super::encoder::OpenAIEncoder)
+    }
+    fn make_response_parser(&self) -> Box<dyn ResponseParser> {
+        Box::new(super::stream::OpenAIResponseParser)
+    }
+    fn make_response_formatter(&self) -> Box<dyn ResponseFormatter> {
+        Box::new(super::stream::OpenAIResponseFormatter)
+    }
+    fn make_stream_parser(&self) -> Box<dyn StreamParser> {
+        Box::new(super::stream::OpenAIStreamParser::new())
+    }
+    fn make_stream_formatter(&self) -> Box<dyn StreamFormatter> {
+        Box::new(super::stream::OpenAIStreamFormatter::new())
+    }
+}
+
+inventory::submit! {
+    EndpointRegistration { make: || Box::new(OpenAIChatCompletionsV1) }
+}

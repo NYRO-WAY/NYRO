@@ -6,7 +6,7 @@ use axum::response::Response;
 use axum::Json;
 use serde_json::Value;
 
-use crate::protocol::codec::google::decoder::GoogleDecoder;
+use crate::protocol::codec::google_generative::decoder::GoogleDecoder;
 use crate::protocol::ids::GOOGLE_GENERATE_V1BETA;
 use crate::protocol::ir::{AiRequest, RawEnvelope};
 use crate::proxy::context::RequestContext;
