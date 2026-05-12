@@ -4,6 +4,16 @@ All notable changes to Nyro will be documented in this file.
 
 ---
 
+## v1.7.2
+
+> Released on 2026-05-12
+
+#### Fixes
+
+- **musl static build: eliminate OpenSSL dependency** (#125): move `keyring = "3"` from unconditional `[dependencies]` to `[target.'cfg(not(target_env = "musl"))'.dependencies]` so that the entire keyring/dbus/openssl-sys transitive dependency chain is excluded when compiling for `*-unknown-linux-musl` targets; the `#[cfg(target_env = "musl")]` code path in `crypto/mod.rs` was already in place — this completes the fix at the Cargo level
+
+---
+
 ## v1.7.1
 
 > Released on 2026-05-12

@@ -4,6 +4,16 @@ Nyro 的所有重要变更均记录在此文件中。
 
 ---
 
+## v1.7.2
+
+> 发布于 2026-05-12
+
+#### 修复
+
+- **musl 静态构建：消除 OpenSSL 依赖** (#125)：将 `keyring = "3"` 从无条件的 `[dependencies]` 移至 `[target.'cfg(not(target_env = "musl"))'.dependencies]`，使 `keyring` → `dbus` → `openssl-sys` 整条传递依赖链在编译 `*-unknown-linux-musl` target 时完全不参与构建；`crypto/mod.rs` 中的 `#[cfg(target_env = "musl")]` 代码路径已在 v1.7.1 就位，本次补全 Cargo 层面的对称修复
+
+---
+
 ## v1.7.1
 
 > 发布于 2026-05-12
