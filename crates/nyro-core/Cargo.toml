@@ -38,8 +38,6 @@ sha2 = "0.10"
 dashmap = "6"
 inventory = "0.3"
 arc-swap = "1"
-
-[target.'cfg(not(target_env = "musl"))'.dependencies]
 keyring = "3"
 
 [dev-dependencies]
