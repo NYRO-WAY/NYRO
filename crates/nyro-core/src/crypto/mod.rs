@@ -3,7 +3,9 @@ use aes_gcm::{Aes256Gcm, Nonce};
 use base64::Engine;
 use std::sync::OnceLock;
 
+#[cfg(not(target_env = "musl"))]
 const KEYRING_SERVICE: &str = "nyro-gateway";
+#[cfg(not(target_env = "musl"))]
 const KEYRING_USER: &str = "master-key";
 const NONCE_LEN: usize = 12;
 static MASTER_KEY_CACHE: OnceLock<[u8; 32]> = OnceLock::new();
