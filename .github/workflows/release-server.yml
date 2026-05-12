@@ -16,9 +16,17 @@ jobs:
           - os: ubuntu-latest
             artifact_name: nyro-server-linux-x86_64
             binary_name: nyro-server
+          - os: ubuntu-latest
+            artifact_name: nyro-server-linux-x86_64-musl
+            binary_name: nyro-server
+            target: x86_64-unknown-linux-musl
           - os: ubuntu-24.04-arm
             artifact_name: nyro-server-linux-aarch64
             binary_name: nyro-server
+          - os: ubuntu-24.04-arm
+            artifact_name: nyro-server-linux-aarch64-musl
+            binary_name: nyro-server
+            target: aarch64-unknown-linux-musl
           - os: macos-15-intel
             artifact_name: nyro-server-macos-x86_64
             binary_name: nyro-server
@@ -39,6 +47,14 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Add musl target
+        if: matrix.target != ''
+        run: rustup target add ${{ matrix.target }}
+
+      - name: Install musl-tools
+        if: matrix.target != '' && runner.os == 'Linux'
+        run: sudo apt-get install -y musl-tools
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -56,13 +72,14 @@ jobs:
         run: pnpm -C webui build
 
       - name: Build nyro-server
-        run: cargo build -p nyro-server --release
+        run: cargo build -p nyro-server --release ${{ matrix.target != '' && format('--target {0}', matrix.target) || '' }}
 
       - name: Package binary (Unix)
         if: runner.os != 'Windows'
         run: |
           mkdir -p dist
-          cp "target/release/${{ matrix.binary_name }}" "dist/${{ matrix.artifact_name }}"
+          BIN_PATH=${{ matrix.target != '' && format('target/{0}/release/{1}', matrix.target, matrix.binary_name) || format('target/release/{0}', matrix.binary_name) }}
+          cp "$BIN_PATH" "dist/${{ matrix.artifact_name }}"
 
       - name: Package binary (Windows)
         if: runner.os == 'Windows'

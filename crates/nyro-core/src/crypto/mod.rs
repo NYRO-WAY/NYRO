@@ -13,6 +13,20 @@ fn get_or_create_master_key() -> anyhow::Result<[u8; 32]> {
         return Ok(*key);
     }
 
+    #[cfg(not(target_env = "musl"))]
+    let key = get_key_from_keyring()?;
+
+    #[cfg(target_env = "musl")]
+    let key = get_key_from_env_or_file()?;
+
+    let _ = MASTER_KEY_CACHE.set(key);
+    Ok(key)
+}
+
+/// 通过系统 keyring（Secret Service / Keychain / Credential Manager）存取主密钥。
+/// 仅在非 musl 构建下编译，因为 Linux Secret Service 依赖 dbus 动态库，无法静态链接。
+#[cfg(not(target_env = "musl"))]
+fn get_key_from_keyring() -> anyhow::Result<[u8; 32]> {
     let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER)?;
 
     let key = match entry.get_password() {
@@ -36,8 +50,78 @@ fn get_or_create_master_key() -> anyhow::Result<[u8; 32]> {
         }
     };
 
-    let _ = MASTER_KEY_CACHE.set(key);
     Ok(key)
+}
+
+/// musl 静态构建下的主密钥获取策略（不依赖任何系统动态库）：
+///
+/// 1. 环境变量 `NYRO_MASTER_KEY`（base64, >= 32 bytes）—— 推荐用于容器/K8s
+/// 2. 文件 `~/.local/share/nyro/master.key`（首次运行自动生成）—— 适合裸机部署
+/// 3. 进程内随机 key（降级兜底，重启后密文不可用，启动时打印警告）
+#[cfg(target_env = "musl")]
+fn get_key_from_env_or_file() -> anyhow::Result<[u8; 32]> {
+    if let Ok(val) = std::env::var("NYRO_MASTER_KEY") {
+        let bytes = base64::engine::general_purpose::STANDARD.decode(val.trim())?;
+        if bytes.len() < 32 {
+            anyhow::bail!("NYRO_MASTER_KEY must decode to at least 32 bytes");
+        }
+        let mut key = [0u8; 32];
+        key.copy_from_slice(&bytes[..32]);
+        return Ok(key);
+    }
+
+    if let Some(key) = try_load_or_create_key_file() {
+        return Ok(key);
+    }
+
+    tracing::warn!(
+        "No persistent master key found (set NYRO_MASTER_KEY or ensure ~/.local/share/nyro is writable). \
+         Using a per-process random key — encrypted values will not survive restarts."
+    );
+    let raw = Aes256Gcm::generate_key(OsRng);
+    let mut key = [0u8; 32];
+    key.copy_from_slice(raw.as_slice());
+    Ok(key)
+}
+
+#[cfg(target_env = "musl")]
+fn try_load_or_create_key_file() -> Option<[u8; 32]> {
+    use std::io::{Read, Write};
+
+    let dir = dirs::data_local_dir()?.join("nyro");
+    let path = dir.join("master.key");
+
+    if path.exists() {
+        let mut f = std::fs::File::open(&path).ok()?;
+        let mut buf = String::new();
+        f.read_to_string(&mut buf).ok()?;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(buf.trim())
+            .ok()?;
+        if bytes.len() < 32 {
+            return None;
+        }
+        let mut key = [0u8; 32];
+        key.copy_from_slice(&bytes[..32]);
+        return Some(key);
+    }
+
+    std::fs::create_dir_all(&dir).ok()?;
+    let raw = Aes256Gcm::generate_key(OsRng);
+    let b64 = base64::engine::general_purpose::STANDARD.encode(raw.as_slice());
+    let mut f = std::fs::File::create(&path).ok()?;
+    f.write_all(b64.as_bytes()).ok()?;
+
+    // 权限设为 0600，仅所有者可读
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
+
+    let mut key = [0u8; 32];
+    key.copy_from_slice(raw.as_slice());
+    Some(key)
 }
 
 pub fn encrypt(plaintext: &str) -> String {
