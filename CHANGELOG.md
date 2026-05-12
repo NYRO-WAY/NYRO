@@ -10,7 +10,7 @@ All notable changes to Nyro will be documented in this file.
 
 #### Fixes
 
-- **musl static build: eliminate OpenSSL dependency** (#125): move `keyring = "3"` from unconditional `[dependencies]` to `[target.'cfg(not(target_env = "musl"))'.dependencies]` so that the entire keyring/dbus/openssl-sys transitive dependency chain is excluded when compiling for `*-unknown-linux-musl` targets; the `#[cfg(target_env = "musl")]` code path in `crypto/mod.rs` was already in place — this completes the fix at the Cargo level
+- **musl static build: eliminate OpenSSL dependency** (#125): add `default-features = false` to the workspace `reqwest` dependency and switch to `rustls-tls-native-roots`; this removes the `default-tls` feature that was silently pulling `native-tls` → `openssl-sys` into the build graph, which caused the `*-unknown-linux-musl` CI jobs to fail; `http2`, `charset`, and `macos-system-configuration` are retained explicitly to avoid regressions; TLS engine remains `rustls` on all platforms while native certificate stores (Windows Cert Store / macOS Keychain / Linux `/etc/ssl/certs`) continue to be used on non-musl targets
 
 ---
 

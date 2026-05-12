@@ -10,7 +10,7 @@ Nyro 的所有重要变更均记录在此文件中。
 
 #### 修复
 
-- **musl 静态构建：消除 OpenSSL 依赖** (#125)：将 `keyring = "3"` 从无条件的 `[dependencies]` 移至 `[target.'cfg(not(target_env = "musl"))'.dependencies]`，使 `keyring` → `dbus` → `openssl-sys` 整条传递依赖链在编译 `*-unknown-linux-musl` target 时完全不参与构建；`crypto/mod.rs` 中的 `#[cfg(target_env = "musl")]` 代码路径已在 v1.7.1 就位，本次补全 Cargo 层面的对称修复
+- **musl 静态构建：消除 OpenSSL 依赖** (#125)：为工作区 `reqwest` 依赖添加 `default-features = false` 并切换至 `rustls-tls-native-roots`；根本原因是 `default-tls`（reqwest 默认 feature）会静默引入 `native-tls` → `openssl-sys` 依赖链，导致 `*-unknown-linux-musl` CI 构建失败；同时显式保留 `http2`、`charset`、`macos-system-configuration` 避免功能回归；所有平台的 TLS 引擎均保持 `rustls`，非 musl 目标继续使用系统原生证书库（Windows 证书库 / macOS Keychain / Linux `/etc/ssl/certs`），musl 静态二进制自动回退至打包的 Mozilla 根证书
 
 ---
 
