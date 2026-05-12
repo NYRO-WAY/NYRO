@@ -4,6 +4,24 @@ All notable changes to Nyro will be documented in this file.
 
 ---
 
+## v1.7.1
+
+> Released on 2026-05-12
+
+#### Features
+
+- **musl static build for Linux** (#123): add `x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl` release targets; switch sqlx to `tls-rustls` to eliminate the OpenSSL runtime dependency; add `cfg(target_env = "musl")` branch in `crypto/mod.rs` for master-key resolution via env var / file path fallback (avoids dbus/libsecret static-link issue)
+
+#### Fixes
+
+- **ARM Linux sqlite-vec extension ABI** (#121): use platform-native `c_char` / `c_int` types in the `sqlite3_auto_extension` registration call so the symbol signature matches libsqlite3-sys on aarch64 Linux
+
+#### Internal
+
+- Apply `rustfmt` across the entire codebase; add `make fmt` / `make fmt-check` targets to `Makefile` (#124)
+
+---
+
 ## v1.7.0
 
 > Released on 2026-05-12

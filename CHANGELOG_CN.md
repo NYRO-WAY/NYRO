@@ -4,6 +4,24 @@ Nyro 的所有重要变更均记录在此文件中。
 
 ---
 
+## v1.7.1
+
+> 发布于 2026-05-12
+
+#### 功能
+
+- **Linux musl 静态构建支持** (#123)：新增 `x86_64-unknown-linux-musl` 和 `aarch64-unknown-linux-musl` 发布目标；将 sqlx 切换为 `tls-rustls` feature，彻底消除对 OpenSSL 运行时的依赖；在 `crypto/mod.rs` 中新增 `cfg(target_env = "musl")` 分支，通过环境变量 / 文件路径回退的方式解析主密钥（规避 musl 静态链接 dbus/libsecret 的问题）
+
+#### 修复
+
+- **ARM Linux sqlite-vec 扩展 ABI 修复** (#121)：在 `sqlite3_auto_extension` 注册调用中改用平台原生的 `c_char` / `c_int` 类型，确保符号签名与 aarch64 Linux 上的 libsqlite3-sys ABI 匹配
+
+#### 内部
+
+- 对整个代码库执行 `rustfmt` 统一格式化；在 `Makefile` 中新增 `make fmt` / `make fmt-check` 目标 (#124)
+
+---
+
 ## v1.7.0
 
 > 发布于 2026-05-12
