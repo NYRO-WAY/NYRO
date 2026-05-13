@@ -52,7 +52,7 @@ const CAPS: EndpointCapabilities = EndpointCapabilities {
     embeddings: true,
     force_upstream_stream: false,
     override_model_in_body: false,
-    ingress_routes: &[("POST", "/v1/embeddings"), ("POST", "/embeddings")],
+    ingress_routes: &[("POST", "/v1/embeddings")],
     multimodal: false,
     structured_output: false,
     function_calling: false,

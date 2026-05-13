@@ -8,8 +8,8 @@
 //!   request pipeline still bypasses its codec)
 
 use nyro_core::protocol::ids::{
-    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GENERATE_V1BETA, OPENAI_CHAT_V1, OPENAI_EMBEDDINGS_V1,
-    OPENAI_RESPONSES_V1, Protocol, ProtocolId,
+    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GENERATE_CONTENT_V1BETA, OPENAI_CHAT_COMPLETIONS_V1,
+    OPENAI_EMBEDDINGS_V1, OPENAI_RESPONSES_V1, Protocol, ProtocolId,
 };
 use nyro_core::protocol::registry::ProtocolRegistry;
 use nyro_core::protocol::types::Role;
@@ -21,11 +21,11 @@ fn registers_all_handlers_with_correct_ids() {
     assert_eq!(reg.list().len(), 5);
 
     for id in [
-        OPENAI_CHAT_V1,
+        OPENAI_CHAT_COMPLETIONS_V1,
         OPENAI_RESPONSES_V1,
         OPENAI_EMBEDDINGS_V1,
         ANTHROPIC_MESSAGES_2023_06_01,
-        GOOGLE_GENERATE_V1BETA,
+        GOOGLE_GENERATE_CONTENT_V1BETA,
     ] {
         let h = reg.get(&id).unwrap_or_else(|| panic!("missing {id}"));
         assert_eq!(h.id(), id);
@@ -46,18 +46,14 @@ fn ingress_routes_match_axum_router() {
     let reg = ProtocolRegistry::global();
 
     let cases: &[(&str, &str, ProtocolId)] = &[
-        ("POST", "/v1/chat/completions", OPENAI_CHAT_V1),
-        ("POST", "/chat/completions", OPENAI_CHAT_V1),
+        ("POST", "/v1/chat/completions", OPENAI_CHAT_COMPLETIONS_V1),
         ("POST", "/v1/responses", OPENAI_RESPONSES_V1),
-        ("POST", "/responses", OPENAI_RESPONSES_V1),
         ("POST", "/v1/messages", ANTHROPIC_MESSAGES_2023_06_01),
-        ("POST", "/messages", ANTHROPIC_MESSAGES_2023_06_01),
         (
             "POST",
             "/v1beta/models/:model_action",
-            GOOGLE_GENERATE_V1BETA,
+            GOOGLE_GENERATE_CONTENT_V1BETA,
         ),
-        ("POST", "/models/:model_action", GOOGLE_GENERATE_V1BETA),
     ];
 
     for (method, path, expected) in cases {
@@ -79,13 +75,13 @@ fn capabilities_match_dialect_special_cases() {
         "Responses must force upstream streaming"
     );
     assert!(
-        !reg.get(&OPENAI_CHAT_V1)
+        !reg.get(&OPENAI_CHAT_COMPLETIONS_V1)
             .unwrap()
             .capabilities()
             .force_upstream_stream
     );
     assert!(
-        reg.get(&GOOGLE_GENERATE_V1BETA)
+        reg.get(&GOOGLE_GENERATE_CONTENT_V1BETA)
             .unwrap()
             .capabilities()
             .override_model_in_body,
@@ -96,7 +92,7 @@ fn capabilities_match_dialect_special_cases() {
 // ── Decoder / encoder smoke ──
 
 fn sample_body(id: ProtocolId) -> serde_json::Value {
-    if id == OPENAI_CHAT_V1 {
+    if id == OPENAI_CHAT_COMPLETIONS_V1 {
         json!({
             "model": "gpt-4o-mini",
             "messages": [
@@ -126,7 +122,7 @@ fn sample_body(id: ProtocolId) -> serde_json::Value {
             "max_tokens": 256,
             "stream": false
         })
-    } else if id == GOOGLE_GENERATE_V1BETA {
+    } else if id == GOOGLE_GENERATE_CONTENT_V1BETA {
         json!({
             "system_instruction": {"parts": [{"text": "be helpful"}]},
             "contents": [
@@ -142,10 +138,10 @@ fn sample_body(id: ProtocolId) -> serde_json::Value {
 fn decoder_preserves_role_sequence_and_source_protocol() {
     let reg = ProtocolRegistry::global();
     for id in [
-        OPENAI_CHAT_V1,
+        OPENAI_CHAT_COMPLETIONS_V1,
         OPENAI_RESPONSES_V1,
         ANTHROPIC_MESSAGES_2023_06_01,
-        GOOGLE_GENERATE_V1BETA,
+        GOOGLE_GENERATE_CONTENT_V1BETA,
     ] {
         let body = sample_body(id);
         let req = reg
@@ -165,10 +161,10 @@ fn decoder_preserves_role_sequence_and_source_protocol() {
 fn encoder_round_trips_body_for_every_handler() {
     let reg = ProtocolRegistry::global();
     for id in [
-        OPENAI_CHAT_V1,
+        OPENAI_CHAT_COMPLETIONS_V1,
         OPENAI_RESPONSES_V1,
         ANTHROPIC_MESSAGES_2023_06_01,
-        GOOGLE_GENERATE_V1BETA,
+        GOOGLE_GENERATE_CONTENT_V1BETA,
     ] {
         let body = sample_body(id);
         let h = reg.get(&id).unwrap();
@@ -193,10 +189,10 @@ fn encoder_round_trips_body_for_every_handler() {
 fn parser_and_formatter_factories_construct() {
     let reg = ProtocolRegistry::global();
     for id in [
-        OPENAI_CHAT_V1,
+        OPENAI_CHAT_COMPLETIONS_V1,
         OPENAI_RESPONSES_V1,
         ANTHROPIC_MESSAGES_2023_06_01,
-        GOOGLE_GENERATE_V1BETA,
+        GOOGLE_GENERATE_CONTENT_V1BETA,
     ] {
         let h = reg.get(&id).unwrap();
         let _ = h.make_response_parser();
@@ -222,7 +218,7 @@ fn embeddings_handler_advertises_passthrough_capabilities() {
 #[test]
 fn embeddings_routes_resolve_to_handler() {
     let reg = ProtocolRegistry::global();
-    for path in ["/v1/embeddings", "/embeddings"] {
+    for path in ["/v1/embeddings"] {
         let h = reg
             .find_by_ingress_route("POST", path)
             .unwrap_or_else(|| panic!("no handler for POST {path}"));

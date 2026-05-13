@@ -230,7 +230,9 @@ mod tests {
     use crate::GatewayConfig;
     use crate::db::models::Provider;
     use crate::error::GatewayError;
-    use crate::protocol::ids::{ANTHROPIC_MESSAGES_2023_06_01, OPENAI_CHAT_V1, ProtocolId};
+    use crate::protocol::ids::{
+        ANTHROPIC_MESSAGES_2023_06_01, OPENAI_CHAT_COMPLETIONS_V1, ProtocolId,
+    };
     use crate::protocol::types::{
         InternalMessage, InternalRequest, InternalResponse, MessageContent, Role,
     };
@@ -272,7 +274,7 @@ mod tests {
             "fake-test"
         }
         fn supported_protocols(&self) -> &'static [ProtocolId] {
-            &[OPENAI_CHAT_V1]
+            &[OPENAI_CHAT_COMPLETIONS_V1]
         }
         async fn build_request(
             &self,
@@ -322,7 +324,7 @@ mod tests {
             "fake-bearer"
         }
         fn supported_protocols(&self) -> &'static [ProtocolId] {
-            &[OPENAI_CHAT_V1]
+            &[OPENAI_CHAT_COMPLETIONS_V1]
         }
         async fn build_request(
             &self,
@@ -387,7 +389,7 @@ mod tests {
             top_p: None,
             tools: None,
             tool_choice: None,
-            source_protocol: OPENAI_CHAT_V1,
+            source_protocol: OPENAI_CHAT_COMPLETIONS_V1,
             extra: HashMap::new(),
         }
     }
@@ -407,7 +409,7 @@ mod tests {
         let mut req = minimal_chat_request();
         let ctx = ProviderCtx {
             provider: &provider,
-            protocol: OPENAI_CHAT_V1,
+            protocol: OPENAI_CHAT_COMPLETIONS_V1,
             egress_base_url: "https://upstream.local",
             api_key: &provider.api_key,
             actual_model: "gpt-test",
@@ -432,7 +434,7 @@ mod tests {
         let mut req = minimal_chat_request();
         let ctx = ProviderCtx {
             provider: &provider,
-            protocol: OPENAI_CHAT_V1,
+            protocol: OPENAI_CHAT_COMPLETIONS_V1,
             egress_base_url: "https://upstream.local",
             api_key: &provider.api_key,
             actual_model: "gpt-test",

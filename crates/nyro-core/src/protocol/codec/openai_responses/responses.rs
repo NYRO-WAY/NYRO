@@ -16,7 +16,7 @@ const CAPS: EndpointCapabilities = EndpointCapabilities {
     embeddings: false,
     force_upstream_stream: true,
     override_model_in_body: false,
-    ingress_routes: &[("POST", "/v1/responses"), ("POST", "/responses")],
+    ingress_routes: &[("POST", "/v1/responses")],
     ..EndpointCapabilities::CHAT_STANDARD
 };
 

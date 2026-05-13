@@ -14,43 +14,25 @@ pub fn create_router(gateway: Gateway) -> Router {
     let router = Router::new()
         .route(
             "/v1/chat/completions",
-            post(ingress::openai_chat::openai_chat),
+            post(ingress::openai_compatible::chat_completions::handler),
         )
-        .route("/chat/completions", post(ingress::openai_chat::openai_chat))
         .route(
             "/v1/responses",
-            post(ingress::openai_responses::openai_responses),
-        )
-        .route(
-            "/responses",
-            post(ingress::openai_responses::openai_responses),
+            post(ingress::openai_responses::responses::handler),
         )
         .route(
             "/v1/messages",
-            post(ingress::anthropic_messages::anthropic_messages),
-        )
-        .route(
-            "/messages",
-            post(ingress::anthropic_messages::anthropic_messages),
+            post(ingress::anthropic_messages::messages::handler),
         )
         .route(
             "/v1/embeddings",
-            post(ingress::openai_embeddings::openai_embeddings),
-        )
-        .route(
-            "/embeddings",
-            post(ingress::openai_embeddings::openai_embeddings),
+            post(ingress::openai_compatible::embeddings::handler),
         )
         .route(
             "/v1beta/models/:model_action",
-            post(ingress::google_generate::google_generate),
-        )
-        .route(
-            "/models/:model_action",
-            post(ingress::google_generate::google_generate),
+            post(ingress::google_generative::generate_content::handler),
         )
         .route("/v1/models", get(handler::models_list))
-        .route("/models", get(handler::models_list))
         .route("/health", get(health))
         .route("/", get(health));
 

@@ -49,7 +49,7 @@ use crate::cache::key::{build_cache_key, build_semantic_partition};
 use crate::db::models::{Provider, Route};
 use crate::error::{AuthFailure, GatewayError};
 use crate::protocol::ProviderProtocols;
-use crate::protocol::ids::{OPENAI_CHAT_V1, OPENAI_EMBEDDINGS_V1, ProtocolId};
+use crate::protocol::ids::{OPENAI_CHAT_COMPLETIONS_V1, OPENAI_EMBEDDINGS_V1, ProtocolId};
 use crate::protocol::ir::{AiRequest, RawEnvelope};
 use crate::protocol::types::{InternalRequest, InternalResponse, StreamDelta, TokenUsage};
 use crate::provider::inbound::InboundResponse;
@@ -2295,10 +2295,10 @@ fn parse_embedding_vector(payload: &Value) -> Option<Vec<f32>> {
 
 fn resolve_openai_base_url(provider: &Provider) -> Option<String> {
     let protocols = ProviderProtocols::from_provider(provider);
-    if !protocols.supports(OPENAI_CHAT_V1) {
+    if !protocols.supports(OPENAI_CHAT_COMPLETIONS_V1) {
         return None;
     }
-    let resolved = protocols.resolve_egress(OPENAI_CHAT_V1);
+    let resolved = protocols.resolve_egress(OPENAI_CHAT_COMPLETIONS_V1);
     let trimmed = resolved.base_url.trim();
     if trimmed.is_empty() {
         None

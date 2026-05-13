@@ -16,10 +16,7 @@ const CAPS: EndpointCapabilities = EndpointCapabilities {
     embeddings: false,
     force_upstream_stream: false,
     override_model_in_body: false,
-    ingress_routes: &[
-        ("POST", "/v1/chat/completions"),
-        ("POST", "/chat/completions"),
-    ],
+    ingress_routes: &[("POST", "/v1/chat/completions")],
     ..EndpointCapabilities::CHAT_STANDARD
 };
 

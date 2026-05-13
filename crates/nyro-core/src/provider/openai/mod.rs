@@ -104,8 +104,14 @@ impl Vendor for OpenAiVendor {
         "openai"
     }
     fn supported_protocols(&self) -> &'static [ProtocolId] {
-        use crate::protocol::ids::{OPENAI_CHAT_V1, OPENAI_EMBEDDINGS_V1, OPENAI_RESPONSES_V1};
-        &[OPENAI_CHAT_V1, OPENAI_RESPONSES_V1, OPENAI_EMBEDDINGS_V1]
+        use crate::protocol::ids::{
+            OPENAI_CHAT_COMPLETIONS_V1, OPENAI_EMBEDDINGS_V1, OPENAI_RESPONSES_V1,
+        };
+        &[
+            OPENAI_CHAT_COMPLETIONS_V1,
+            OPENAI_RESPONSES_V1,
+            OPENAI_EMBEDDINGS_V1,
+        ]
     }
     fn declared_request_mutations(&self) -> bool {
         false

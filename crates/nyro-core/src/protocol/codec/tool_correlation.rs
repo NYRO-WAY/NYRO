@@ -129,7 +129,7 @@ fn extract_tool_result_hint(content: &MessageContent) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::ids::OPENAI_CHAT_V1;
+    use crate::protocol::ids::OPENAI_CHAT_COMPLETIONS_V1;
     use crate::protocol::types::MessageContent;
 
     fn make_req(messages: Vec<InternalMessage>) -> InternalRequest {
@@ -142,7 +142,7 @@ mod tests {
             top_p: None,
             tools: None,
             tool_choice: None,
-            source_protocol: OPENAI_CHAT_V1,
+            source_protocol: OPENAI_CHAT_COMPLETIONS_V1,
             extra: Default::default(),
         }
     }

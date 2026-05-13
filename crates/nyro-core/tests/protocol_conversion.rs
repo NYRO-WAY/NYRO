@@ -14,7 +14,8 @@ use nyro_core::protocol::codec::openai_responses::parser::{
 use nyro_core::protocol::codec::reasoning::normalize_response_reasoning;
 use nyro_core::protocol::codec::tool_correlation::normalize_request_tool_results;
 use nyro_core::protocol::ids::{
-    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GENERATE_V1BETA, OPENAI_CHAT_V1, OPENAI_RESPONSES_V1,
+    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GENERATE_CONTENT_V1BETA, OPENAI_CHAT_COMPLETIONS_V1,
+    OPENAI_RESPONSES_V1,
 };
 use nyro_core::protocol::ir::AiRequest;
 use nyro_core::protocol::types::{
@@ -300,7 +301,7 @@ fn gemini_tool_result_correlation_success() {
         top_p: None,
         tools: None,
         tool_choice: None,
-        source_protocol: GOOGLE_GENERATE_V1BETA,
+        source_protocol: GOOGLE_GENERATE_CONTENT_V1BETA,
         extra: Default::default(),
     };
 
@@ -362,7 +363,7 @@ fn gemini_tool_result_id_hint_matches_out_of_order_calls() {
         top_p: None,
         tools: None,
         tool_choice: None,
-        source_protocol: GOOGLE_GENERATE_V1BETA,
+        source_protocol: GOOGLE_GENERATE_CONTENT_V1BETA,
         extra: Default::default(),
     };
 
@@ -1013,7 +1014,7 @@ fn anthropic_encoder_normalizes_tool_use_ids_for_tool_and_result() {
             parameters: serde_json::json!({"type":"object","properties":{}}),
         }]),
         tool_choice: None,
-        source_protocol: GOOGLE_GENERATE_V1BETA,
+        source_protocol: GOOGLE_GENERATE_CONTENT_V1BETA,
         extra: Default::default(),
     };
 
@@ -1115,7 +1116,7 @@ fn openai_encoder_remaps_reused_tool_result_id_with_synthetic_adjacent_call() {
             parameters: serde_json::json!({"type":"object","properties":{}}),
         }]),
         tool_choice: None,
-        source_protocol: OPENAI_CHAT_V1,
+        source_protocol: OPENAI_CHAT_COMPLETIONS_V1,
         extra: Default::default(),
     };
 
@@ -1303,7 +1304,7 @@ fn openai_encoder_preserves_reasoning_content_across_parallel_tool_calls() {
             parameters: serde_json::json!({"type":"object","properties":{"location":{"type":"string"}}}),
         }]),
         tool_choice: None,
-        source_protocol: OPENAI_CHAT_V1,
+        source_protocol: OPENAI_CHAT_COMPLETIONS_V1,
         extra: Default::default(),
     };
 
@@ -1406,7 +1407,7 @@ fn openai_encoder_drops_orphan_assistant_tool_calls_without_results() {
             parameters: serde_json::json!({"type":"object","properties":{}}),
         }]),
         tool_choice: None,
-        source_protocol: GOOGLE_GENERATE_V1BETA,
+        source_protocol: GOOGLE_GENERATE_CONTENT_V1BETA,
         extra: Default::default(),
     };
 
@@ -1576,7 +1577,7 @@ fn gemini_encoder_sanitizes_unsupported_json_schema_fields() {
             }),
         }]),
         tool_choice: None,
-        source_protocol: OPENAI_CHAT_V1,
+        source_protocol: OPENAI_CHAT_COMPLETIONS_V1,
         extra: Default::default(),
     };
 

@@ -8,8 +8,8 @@
 use nyro_core::auth::types::StoredCredential;
 use nyro_core::db::models::Provider;
 use nyro_core::protocol::ids::{
-    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GENERATE_V1BETA, OPENAI_CHAT_V1, OPENAI_RESPONSES_V1,
-    ProtocolId,
+    ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GENERATE_CONTENT_V1BETA, OPENAI_CHAT_COMPLETIONS_V1,
+    OPENAI_RESPONSES_V1, ProtocolId,
 };
 use nyro_core::provider::{VendorCtx, VendorRegistry, VendorScope};
 use serde_json::Value;
@@ -77,7 +77,9 @@ fn resolve_channel_scope_takes_priority() {
 fn resolve_falls_back_to_vendor_when_channel_unknown() {
     let reg = VendorRegistry::global();
     let p = make_provider(Some("openai"), Some("unknown-channel"));
-    let ext = reg.resolve(&p, OPENAI_CHAT_V1).expect("openai vendor ext");
+    let ext = reg
+        .resolve(&p, OPENAI_CHAT_COMPLETIONS_V1)
+        .expect("openai vendor ext");
     assert!(matches!(
         ext.scope(),
         VendorScope::Vendor {
@@ -91,13 +93,13 @@ fn resolve_falls_back_to_protocol_default_vendor_when_vendor_unknown() {
     let reg = VendorRegistry::global();
     let p = make_provider(Some("unmapped-vendor"), None);
     let openai = reg
-        .resolve(&p, OPENAI_CHAT_V1)
+        .resolve(&p, OPENAI_CHAT_COMPLETIONS_V1)
         .expect("openai protocol default");
     let anthropic = reg
         .resolve(&p, ANTHROPIC_MESSAGES_2023_06_01)
         .expect("anthropic protocol default");
     let google = reg
-        .resolve(&p, GOOGLE_GENERATE_V1BETA)
+        .resolve(&p, GOOGLE_GENERATE_CONTENT_V1BETA)
         .expect("google protocol default");
 
     // Resolves to the default vendor for each protocol suite
@@ -140,7 +142,9 @@ fn resolve_uses_protocol_default_vendor_when_vendor_field_blank() {
 fn ollama_vendor_resolves_even_without_channel() {
     let reg = VendorRegistry::global();
     let p = make_provider(Some("ollama"), None);
-    let ext = reg.resolve(&p, OPENAI_CHAT_V1).expect("ollama vendor");
+    let ext = reg
+        .resolve(&p, OPENAI_CHAT_COMPLETIONS_V1)
+        .expect("ollama vendor");
     assert!(matches!(
         ext.scope(),
         VendorScope::Vendor {
@@ -155,8 +159,14 @@ fn ollama_vendor_resolves_even_without_channel() {
 fn openai_family_default_emits_bearer() {
     let reg = VendorRegistry::global();
     let p = make_provider(None, None);
-    let ext = reg.resolve(&p, OPENAI_CHAT_V1).unwrap();
-    let h = ext.auth_headers(&ctx(&p, OPENAI_CHAT_V1, "sk-abc", "gpt-4", None));
+    let ext = reg.resolve(&p, OPENAI_CHAT_COMPLETIONS_V1).unwrap();
+    let h = ext.auth_headers(&ctx(
+        &p,
+        OPENAI_CHAT_COMPLETIONS_V1,
+        "sk-abc",
+        "gpt-4",
+        None,
+    ));
     assert_eq!(h.get("Authorization").unwrap(), "Bearer sk-abc");
 }
 
@@ -180,8 +190,14 @@ fn anthropic_family_default_emits_x_api_key_and_version() {
 fn google_family_default_appends_key_query_param() {
     let reg = VendorRegistry::global();
     let p = make_provider(None, None);
-    let ext = reg.resolve(&p, GOOGLE_GENERATE_V1BETA).unwrap();
-    let c = ctx(&p, GOOGLE_GENERATE_V1BETA, "AIzaXYZ", "gemini-1.5", None);
+    let ext = reg.resolve(&p, GOOGLE_GENERATE_CONTENT_V1BETA).unwrap();
+    let c = ctx(
+        &p,
+        GOOGLE_GENERATE_CONTENT_V1BETA,
+        "AIzaXYZ",
+        "gemini-1.5",
+        None,
+    );
 
     let url1 = ext.build_url(
         &c,
@@ -208,8 +224,8 @@ fn google_family_default_appends_key_query_param() {
 fn openai_compat_strips_v1_when_base_already_has_path() {
     let reg = VendorRegistry::global();
     let p = make_provider(None, None);
-    let ext = reg.resolve(&p, OPENAI_CHAT_V1).unwrap();
-    let c = ctx(&p, OPENAI_CHAT_V1, "k", "m", None);
+    let ext = reg.resolve(&p, OPENAI_CHAT_COMPLETIONS_V1).unwrap();
+    let c = ctx(&p, OPENAI_CHAT_COMPLETIONS_V1, "k", "m", None);
 
     let stripped = ext.build_url(&c, "https://api.deepseek.com/v1", "/v1/chat/completions");
     assert_eq!(stripped, "https://api.deepseek.com/v1/chat/completions");

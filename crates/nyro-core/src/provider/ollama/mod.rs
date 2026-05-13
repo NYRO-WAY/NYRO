@@ -112,8 +112,8 @@ impl Vendor for OllamaVendor {
         "ollama"
     }
     fn supported_protocols(&self) -> &'static [ProtocolId] {
-        use crate::protocol::ids::OPENAI_CHAT_V1;
-        &[OPENAI_CHAT_V1]
+        use crate::protocol::ids::OPENAI_CHAT_COMPLETIONS_V1;
+        &[OPENAI_CHAT_COMPLETIONS_V1]
     }
     async fn build_request(
         &self,

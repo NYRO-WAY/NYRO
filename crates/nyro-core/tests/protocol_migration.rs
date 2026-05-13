@@ -13,7 +13,7 @@
 //!    by snapshotting the row state before and after.
 
 use nyro_core::db::{init_pool, migrate};
-use nyro_core::protocol::ids::OPENAI_CHAT_V1;
+use nyro_core::protocol::ids::OPENAI_CHAT_COMPLETIONS_V1;
 use sqlx::Row;
 
 #[tokio::test]
@@ -48,7 +48,7 @@ async fn migration_normalizes_legacy_protocol_keys_then_idempotent() {
     let endpoints: serde_json::Value = serde_json::from_str(&endpoints_raw).unwrap();
     let obj = endpoints.as_object().unwrap();
 
-    assert_eq!(default_protocol, OPENAI_CHAT_V1.to_string());
+    assert_eq!(default_protocol, OPENAI_CHAT_COMPLETIONS_V1.to_string());
     // After normalization keys are protocol short names, not endpoint canonical strings.
     assert!(
         obj.contains_key("openai-compat"),

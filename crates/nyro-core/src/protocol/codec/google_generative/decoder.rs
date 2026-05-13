@@ -2,7 +2,7 @@ use anyhow::Result;
 use serde_json::Value;
 
 use crate::protocol::IngressDecoder;
-use crate::protocol::ids::GOOGLE_GENERATE_V1BETA;
+use crate::protocol::ids::GOOGLE_GENERATE_CONTENT_V1BETA;
 use crate::protocol::types::*;
 
 use super::types::*;
@@ -164,7 +164,7 @@ impl GoogleDecoder {
             top_p,
             tools,
             tool_choice: None,
-            source_protocol: GOOGLE_GENERATE_V1BETA,
+            source_protocol: GOOGLE_GENERATE_CONTENT_V1BETA,
             extra,
         })
     }

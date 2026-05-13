@@ -134,7 +134,7 @@ impl From<AiRequest> for InternalRequest {
         let source_protocol = new
             .meta
             .source_protocol
-            .unwrap_or(crate::protocol::ids::OPENAI_CHAT_V1);
+            .unwrap_or(crate::protocol::ids::OPENAI_CHAT_COMPLETIONS_V1);
         let mut extra = std::collections::HashMap::new();
         for (k, v) in new.meta.vendor.ingress {
             extra.insert(k, v);
@@ -308,7 +308,7 @@ impl From<AiResponse> for InternalResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::ids::OPENAI_CHAT_V1;
+    use crate::protocol::ids::OPENAI_CHAT_COMPLETIONS_V1;
 
     fn sample_old_request() -> InternalRequest {
         InternalRequest {
@@ -326,7 +326,7 @@ mod tests {
             top_p: None,
             tools: None,
             tool_choice: None,
-            source_protocol: OPENAI_CHAT_V1,
+            source_protocol: OPENAI_CHAT_COMPLETIONS_V1,
             extra: Default::default(),
         }
     }

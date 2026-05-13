@@ -201,7 +201,7 @@ mod tests {
     use super::*;
     use crate::db::models::ProtocolEndpointEntry;
     use crate::protocol::ids::{
-        ANTHROPIC_MESSAGES_2023_06_01, OPENAI_CHAT_V1, OPENAI_RESPONSES_V1,
+        ANTHROPIC_MESSAGES_2023_06_01, OPENAI_CHAT_COMPLETIONS_V1, OPENAI_RESPONSES_V1,
     };
     use std::time::Duration;
 
@@ -219,45 +219,48 @@ mod tests {
             })
             .collect();
         ProviderProtocols {
-            default: pairs.first().map(|(id, _)| *id).unwrap_or(OPENAI_CHAT_V1),
+            default: pairs
+                .first()
+                .map(|(id, _)| *id)
+                .unwrap_or(OPENAI_CHAT_COMPLETIONS_V1),
             endpoints,
         }
     }
 
     fn ctx() -> RequestContext {
-        RequestContext::new(OPENAI_CHAT_V1, Duration::from_secs(30))
+        RequestContext::new(OPENAI_CHAT_COMPLETIONS_V1, Duration::from_secs(30))
     }
 
     #[test]
     fn native_when_ingress_exact_match() {
-        let decl = make_decl(&[(OPENAI_CHAT_V1, "https://api.openai.com")]);
+        let decl = make_decl(&[(OPENAI_CHAT_COMPLETIONS_V1, "https://api.openai.com")]);
         let mut c = ctx();
-        let plan = negotiate(OPENAI_CHAT_V1, None, Some(&decl), &mut c).unwrap();
+        let plan = negotiate(OPENAI_CHAT_COMPLETIONS_V1, None, Some(&decl), &mut c).unwrap();
         assert_eq!(plan.mode, ProtocolMode::Native);
-        assert_eq!(plan.egress, OPENAI_CHAT_V1);
+        assert_eq!(plan.egress, OPENAI_CHAT_COMPLETIONS_V1);
         assert!(!plan.needs_conversion);
     }
 
     #[test]
     fn transform_when_same_family_fallback() {
         // Provider only declares chat; ingress is responses.
-        let decl = make_decl(&[(OPENAI_CHAT_V1, "https://api.openai.com")]);
+        let decl = make_decl(&[(OPENAI_CHAT_COMPLETIONS_V1, "https://api.openai.com")]);
         let mut c = ctx();
         let plan = negotiate(OPENAI_RESPONSES_V1, None, Some(&decl), &mut c).unwrap();
         assert_eq!(plan.mode, ProtocolMode::Transform);
-        assert_eq!(plan.egress, OPENAI_CHAT_V1);
+        assert_eq!(plan.egress, OPENAI_CHAT_COMPLETIONS_V1);
         assert!(plan.needs_conversion);
     }
 
     #[test]
     fn route_pref_wins_over_ingress_match() {
         let decl = make_decl(&[
-            (OPENAI_CHAT_V1, "https://api.openai.com"),
+            (OPENAI_CHAT_COMPLETIONS_V1, "https://api.openai.com"),
             (ANTHROPIC_MESSAGES_2023_06_01, "https://api.anthropic.com"),
         ]);
         let mut c = ctx();
         let plan = negotiate(
-            OPENAI_CHAT_V1,
+            OPENAI_CHAT_COMPLETIONS_V1,
             Some(ANTHROPIC_MESSAGES_2023_06_01),
             Some(&decl),
             &mut c,
@@ -269,9 +272,9 @@ mod tests {
     #[test]
     fn no_decl_returns_native() {
         let mut c = ctx();
-        let plan = negotiate(OPENAI_CHAT_V1, None, None, &mut c).unwrap();
+        let plan = negotiate(OPENAI_CHAT_COMPLETIONS_V1, None, None, &mut c).unwrap();
         assert_eq!(plan.mode, ProtocolMode::Native);
-        assert_eq!(plan.egress, OPENAI_CHAT_V1);
+        assert_eq!(plan.egress, OPENAI_CHAT_COMPLETIONS_V1);
     }
 
     #[test]
@@ -279,14 +282,14 @@ mod tests {
         // The first same-protocol entry in Vec order is always chosen.
         let decl = make_decl(&[
             (OPENAI_RESPONSES_V1, "https://responses.openai.com"),
-            (OPENAI_CHAT_V1, "https://chat.openai.com"),
+            (OPENAI_CHAT_COMPLETIONS_V1, "https://chat.openai.com"),
         ]);
         let mut c = ctx();
         // Ingress is embeddings (OpenAICompatible — no exact match).
         use crate::protocol::ids::OPENAI_EMBEDDINGS_V1;
         let plan = negotiate(OPENAI_EMBEDDINGS_V1, None, Some(&decl), &mut c).unwrap();
         // OPENAI_RESPONSES_V1 is OpenAIResponses (different protocol) — Tier 2 skips it.
-        // OPENAI_CHAT_V1 is OpenAICompatible (same protocol as embeddings) — first match wins.
-        assert_eq!(plan.egress, OPENAI_CHAT_V1);
+        // OPENAI_CHAT_COMPLETIONS_V1 is OpenAICompatible (same protocol as embeddings) — first match wins.
+        assert_eq!(plan.egress, OPENAI_CHAT_COMPLETIONS_V1);
     }
 }
