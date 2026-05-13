@@ -12,7 +12,9 @@ use crate::provider::common::openai::{
 };
 use crate::provider::common::pipeline;
 use crate::provider::inbound::InboundResponse;
-use crate::provider::metadata::{AuthMode, ChannelDef, Label, ProtocolBaseUrl, VendorMetadata};
+use crate::provider::metadata::{
+    AuthMode, CapabilitiesSource, ChannelDef, Label, ProtocolBaseUrl, VendorMetadata,
+};
 use crate::provider::outbound::OutboundRequest;
 use crate::provider::registry::{VendorRegistration, VendorScope};
 use crate::provider::stream::ProviderStreamParser;
@@ -46,7 +48,7 @@ const METADATA: VendorMetadata = VendorMetadata {
             ],
             api_key: None,
             models_source: Some("https://api.z.ai/api/paas/v4/models"),
-            capabilities_source: Some("ai://models.dev/zai"),
+            capabilities_source: CapabilitiesSource::ModelsDev("zai"),
             static_models: &[],
             auth_mode: AuthMode::ApiKey,
             oauth: None,
@@ -70,7 +72,7 @@ const METADATA: VendorMetadata = VendorMetadata {
             ],
             api_key: None,
             models_source: Some("https://api.z.ai/api/coding/paas/v4/models"),
-            capabilities_source: Some("ai://models.dev/zai"),
+            capabilities_source: CapabilitiesSource::ModelsDev("zai"),
             static_models: &[],
             auth_mode: AuthMode::ApiKey,
             oauth: None,

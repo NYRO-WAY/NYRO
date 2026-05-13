@@ -16,7 +16,9 @@ use crate::provider::common::openai::{
 };
 use crate::provider::common::pipeline;
 use crate::provider::inbound::InboundResponse;
-use crate::provider::metadata::{AuthMode, ChannelDef, Label, ProtocolBaseUrl, VendorMetadata};
+use crate::provider::metadata::{
+    AuthMode, CapabilitiesSource, ChannelDef, Label, ProtocolBaseUrl, VendorMetadata,
+};
 use crate::provider::outbound::OutboundRequest;
 use crate::provider::registry::{VendorRegistration, VendorScope};
 use crate::provider::stream::ProviderStreamParser;
@@ -49,7 +51,7 @@ const METADATA: VendorMetadata = VendorMetadata {
         ],
         api_key: Some("sk-ollama"),
         models_source: Some("http://127.0.0.1:11434/v1/models"),
-        capabilities_source: Some("http://127.0.0.1:11434/api/show"),
+        capabilities_source: CapabilitiesSource::Http("http://127.0.0.1:11434/api/show"),
         static_models: &[],
         auth_mode: AuthMode::ApiKey,
         oauth: None,

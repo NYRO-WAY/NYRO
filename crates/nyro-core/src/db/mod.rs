@@ -52,7 +52,7 @@ pub async fn migrate(pool: &SqlitePool, vector_dimensions: usize) -> anyhow::Res
     ensure_provider_column(pool, "preset_key", "TEXT").await?;
     ensure_provider_column(pool, "channel", "TEXT").await?;
     ensure_provider_column(pool, "models_source", "TEXT").await?;
-    ensure_provider_column(pool, "capabilities_source", "TEXT").await?;
+    drop_provider_column_if_exists(pool, "capabilities_source").await?;
     ensure_provider_column(pool, "static_models", "TEXT").await?;
     ensure_provider_column(pool, "last_test_success", "INTEGER").await?;
     ensure_provider_column(pool, "last_test_at", "TEXT").await?;
@@ -246,6 +246,18 @@ async fn ensure_provider_column(
         sqlx::query(&sql).execute(pool).await?;
     }
 
+    Ok(())
+}
+
+/// Drop a providers column that is no longer part of the schema (SQLite 3.35+).
+async fn drop_provider_column_if_exists(
+    pool: &SqlitePool,
+    column_name: &str,
+) -> anyhow::Result<()> {
+    if column_exists(pool, "providers", column_name).await? {
+        let sql = format!("ALTER TABLE providers DROP COLUMN {column_name}");
+        sqlx::query(&sql).execute(pool).await?;
+    }
     Ok(())
 }
 
@@ -589,7 +601,6 @@ CREATE TABLE IF NOT EXISTS providers (
     preset_key  TEXT,
     channel     TEXT,
     models_source TEXT,
-    capabilities_source TEXT,
     static_models TEXT,
     api_key     TEXT NOT NULL,
     auth_mode   TEXT NOT NULL DEFAULT 'apikey' CHECK (auth_mode IN ('apikey', 'oauth')),

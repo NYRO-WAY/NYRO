@@ -300,7 +300,7 @@ impl AuthDriver for ClaudeOAuthDriver {
 
     fn bind_runtime(
         &self,
-        provider: &Provider,
+        _provider: &Provider,
         credential: &StoredCredential,
     ) -> Result<RuntimeBinding> {
         let config = Self::claude_code_config()?;
@@ -345,11 +345,6 @@ impl AuthDriver for ClaudeOAuthDriver {
         } else {
             Some(config.static_models.iter().map(|s| s.to_string()).collect())
         };
-        let capabilities_source_override = provider
-            .capabilities_source
-            .clone()
-            .filter(|value| !value.trim().is_empty())
-            .or_else(|| Some("ai://models.dev/anthropic".to_string()));
         let models_source_override = Some("ai://models.dev/anthropic".to_string());
 
         Ok(RuntimeBinding {
@@ -357,7 +352,6 @@ impl AuthDriver for ClaudeOAuthDriver {
             extra_headers,
             model_aliases: HashMap::new(),
             models_source_override,
-            capabilities_source_override,
             disable_default_auth: true,
             static_models_override,
         })
@@ -380,7 +374,6 @@ mod tests {
             preset_key: Some("anthropic".into()),
             channel: Some("claude-code".into()),
             models_source: None,
-            capabilities_source: None,
             static_models: None,
             api_key: String::new(),
             auth_mode: "oauth".into(),

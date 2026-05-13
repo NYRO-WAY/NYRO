@@ -6,6 +6,21 @@
 
 use serde::Serialize;
 
+/// Where to fetch model capability data for a provider channel.
+///
+/// This is a compile-time preset concern — not user-configurable. The admin
+/// layer reads this from the vendor preset to decide how to resolve capabilities
+/// without consulting a DB column.
+#[derive(Debug, Clone, Copy)]
+pub enum CapabilitiesSource {
+    /// Query models.dev for the given vendor key (empty string = all vendors).
+    ModelsDev(&'static str),
+    /// Query an HTTP endpoint (e.g. Ollama `/api/show`, OpenRouter `/v1/models`).
+    Http(&'static str),
+    /// Fuzzy-match the model name against all of models.dev.
+    Auto,
+}
+
 /// Bilingual label.
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct Label {
@@ -65,8 +80,9 @@ pub struct ChannelDef {
     pub api_key: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub models_source: Option<&'static str>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub capabilities_source: Option<&'static str>,
+    /// Internal preset capability strategy — never serialized to the wire API.
+    #[serde(skip)]
+    pub capabilities_source: CapabilitiesSource,
     #[serde(skip_serializing_if = "<[&str]>::is_empty")]
     pub static_models: &'static [&'static str],
     pub auth_mode: AuthMode,

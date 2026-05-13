@@ -300,7 +300,7 @@ impl AuthDriver for OpenAIOAuthDriver {
 
     fn bind_runtime(
         &self,
-        provider: &Provider,
+        _provider: &Provider,
         credential: &StoredCredential,
     ) -> Result<RuntimeBinding> {
         let config = Self::codex_config()?;
@@ -316,17 +316,12 @@ impl AuthDriver for OpenAIOAuthDriver {
             .or_else(|| Some(config.runtime.api_base_url.to_string()));
 
         let models_source_override = Some(Self::codex_models_source(config.runtime));
-        let capabilities_source_override = provider
-            .capabilities_source
-            .clone()
-            .filter(|value| !value.trim().is_empty());
 
         Ok(RuntimeBinding {
             base_url_override,
             extra_headers,
             model_aliases: HashMap::new(),
             models_source_override,
-            capabilities_source_override,
             disable_default_auth: false,
             static_models_override: None,
         })

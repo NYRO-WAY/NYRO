@@ -86,7 +86,6 @@ pub struct YamlProvider {
     pub api_key: String,
     pub use_proxy: bool,
     pub models_source: Option<String>,
-    pub capabilities_source: Option<String>,
     pub static_models: Option<Vec<String>>,
 }
 
@@ -109,8 +108,6 @@ struct YamlProviderRaw {
     pub use_proxy: bool,
     #[serde(default)]
     pub models_source: Option<String>,
-    #[serde(default)]
-    pub capabilities_source: Option<String>,
     #[serde(default)]
     pub static_models: Option<Vec<String>>,
 }
@@ -149,7 +146,6 @@ impl TryFrom<YamlProviderRaw> for YamlProvider {
             api_key,
             use_proxy: r.use_proxy,
             models_source: r.models_source,
-            capabilities_source: r.capabilities_source,
             static_models: r.static_models,
         })
     }
@@ -371,7 +367,6 @@ pub fn build_providers(yaml: &YamlConfig) -> Vec<Provider> {
                 preset_key: None,
                 channel: None,
                 models_source: yp.models_source.clone(),
-                capabilities_source: yp.capabilities_source.clone(),
                 static_models: yp.static_models.as_ref().map(|v| v.join("\n")),
                 api_key: yp.api_key.clone(),
                 auth_mode: "apikey".to_string(),

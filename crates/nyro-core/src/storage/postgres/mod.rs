@@ -397,7 +397,7 @@ impl ProviderStore for PostgresProviderStore {
             anyhow::bail!("unsupported provider auth_mode: {}", input.auth_mode);
         }
         sqlx::query(
-            "INSERT INTO providers (id, name, vendor, protocol, base_url, default_protocol, protocol_endpoints, preset_key, channel, models_source, capabilities_source, static_models, api_key, auth_mode, use_proxy) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)",
+            "INSERT INTO providers (id, name, vendor, protocol, base_url, default_protocol, protocol_endpoints, preset_key, channel, models_source, static_models, api_key, auth_mode, use_proxy) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
         )
         .bind(&id)
         .bind(input.name.trim())
@@ -409,7 +409,6 @@ impl ProviderStore for PostgresProviderStore {
         .bind(input.preset_key)
         .bind(input.channel)
         .bind(models_source)
-        .bind(input.capabilities_source)
         .bind(input.static_models)
         .bind(input.api_key)
         .bind(input.auth_mode)
@@ -442,7 +441,6 @@ impl ProviderStore for PostgresProviderStore {
             .unwrap_or(current.protocol_endpoints);
         let preset_key = input.preset_key.or(current.preset_key);
         let channel = input.channel.or(current.channel);
-        let capabilities_source = input.capabilities_source.or(current.capabilities_source);
         let static_models = input.static_models.or(current.static_models);
         let api_key = input.api_key.unwrap_or(current.api_key);
         let auth_mode = input.auth_mode.unwrap_or(current.auth_mode);
@@ -453,7 +451,7 @@ impl ProviderStore for PostgresProviderStore {
         let is_enabled = input.is_enabled.unwrap_or(current.is_enabled);
 
         sqlx::query(
-            "UPDATE providers SET name=$1, vendor=$2, protocol=$3, base_url=$4, default_protocol=$5, protocol_endpoints=$6, preset_key=$7, channel=$8, models_source=$9, capabilities_source=$10, static_models=$11, api_key=$12, auth_mode=$13, use_proxy=$14, is_enabled=$15, updated_at=CURRENT_TIMESTAMP WHERE id=$16",
+            "UPDATE providers SET name=$1, vendor=$2, protocol=$3, base_url=$4, default_protocol=$5, protocol_endpoints=$6, preset_key=$7, channel=$8, models_source=$9, static_models=$10, api_key=$11, auth_mode=$12, use_proxy=$13, is_enabled=$14, updated_at=CURRENT_TIMESTAMP WHERE id=$15",
         )
         .bind(name.trim())
         .bind(vendor)
@@ -464,7 +462,6 @@ impl ProviderStore for PostgresProviderStore {
         .bind(preset_key)
         .bind(channel)
         .bind(models_source)
-        .bind(capabilities_source)
         .bind(static_models)
         .bind(api_key)
         .bind(auth_mode)
@@ -1515,7 +1512,7 @@ fn is_pg_permission_error(error: &anyhow::Error) -> bool {
 
 fn provider_select(suffix: Option<&str>) -> String {
     let mut sql = String::from(
-        "SELECT id, name, vendor, protocol, base_url, COALESCE(default_protocol, protocol) AS default_protocol, COALESCE(protocol_endpoints, '{}') AS protocol_endpoints, preset_key, channel, models_source, capabilities_source, static_models, api_key, COALESCE(auth_mode, 'apikey') AS auth_mode, COALESCE(use_proxy, FALSE) AS use_proxy, last_test_success, to_char(last_test_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS last_test_at, COALESCE(is_enabled, TRUE) AS is_enabled, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS updated_at FROM providers",
+        "SELECT id, name, vendor, protocol, base_url, COALESCE(default_protocol, protocol) AS default_protocol, COALESCE(protocol_endpoints, '{}') AS protocol_endpoints, preset_key, channel, models_source, static_models, api_key, COALESCE(auth_mode, 'apikey') AS auth_mode, COALESCE(use_proxy, FALSE) AS use_proxy, last_test_success, to_char(last_test_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS last_test_at, COALESCE(is_enabled, TRUE) AS is_enabled, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS updated_at FROM providers",
     );
     if let Some(suffix) = suffix {
         sql.push(' ');
@@ -1628,7 +1625,6 @@ CREATE TABLE IF NOT EXISTS providers (
     preset_key TEXT,
     channel TEXT,
     models_source TEXT,
-    capabilities_source TEXT,
     static_models TEXT,
     api_key TEXT NOT NULL,
     auth_mode TEXT NOT NULL DEFAULT 'apikey' CHECK (auth_mode IN ('apikey', 'oauth')),
