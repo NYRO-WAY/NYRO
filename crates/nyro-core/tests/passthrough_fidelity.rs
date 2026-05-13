@@ -59,28 +59,24 @@ fn all_four_decl() -> ProviderProtocols {
             OPENAI_CHAT_COMPLETIONS_V1,
             ProtocolEndpointEntry {
                 base_url: "https://chat.example.com".into(),
-                endpoints: None,
             },
         ),
         (
             OPENAI_RESPONSES_V1,
             ProtocolEndpointEntry {
                 base_url: "https://responses.example.com".into(),
-                endpoints: None,
             },
         ),
         (
             ANTHROPIC_MESSAGES_2023_06_01,
             ProtocolEndpointEntry {
                 base_url: "https://messages.example.com".into(),
-                endpoints: None,
             },
         ),
         (
             GOOGLE_GENERATE_CONTENT_V1BETA,
             ProtocolEndpointEntry {
                 base_url: "https://generate.example.com".into(),
-                endpoints: None,
             },
         ),
     ];
@@ -95,7 +91,6 @@ fn single_decl(proto: ProtocolId, url: &str) -> ProviderProtocols {
         proto,
         ProtocolEndpointEntry {
             base_url: url.to_string(),
-            endpoints: None,
         },
     )];
     ProviderProtocols {

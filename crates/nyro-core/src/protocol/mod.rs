@@ -145,8 +145,8 @@ impl ProviderProtocols {
     /// Handles both old endpoint-keyed format and new protocol-keyed format:
     /// - **Old** `{"openai-compat/chat-completions/v1": {"base_url": "..."}}` —
     ///   each key resolves directly to a `ProtocolEndpoint`.
-    /// - **New** `{"openai-compat": {"base_url": "...", "endpoints": [...]}}` —
-    ///   key resolves to a `Protocol`; expands to all (or declared subset of) its endpoints.
+    /// - **New** `{"openai-compat": {"base_url": "..."}}` —
+    ///   key resolves to a `Protocol`; expands to all its endpoints.
     ///
     /// The `endpoints` Vec preserves the iteration order of the JSON map
     /// (serde_json preserves insertion order).
@@ -159,23 +159,13 @@ impl ProviderProtocols {
         for (key, entry) in &raw_map {
             // First try protocol-keyed format (new)
             if let Some(protocol) = reg.parse_protocol(key) {
-                let all_handlers = reg.list_by_protocol(protocol);
-                let supported_names: Option<&Vec<String>> = entry.endpoints.as_ref();
-
-                for handler in all_handlers {
+                for handler in reg.list_by_protocol(protocol) {
                     let id = handler.id();
-                    // If entry.endpoints is Some, only include declared names
-                    if let Some(names) = supported_names {
-                        if !names.iter().any(|n| n == id.name) {
-                            continue;
-                        }
-                    }
                     if seen.insert(id) {
                         endpoints.push((
                             id,
                             ProtocolEndpointEntry {
                                 base_url: entry.base_url.clone(),
-                                endpoints: None,
                             },
                         ));
                     }
@@ -191,7 +181,6 @@ impl ProviderProtocols {
                     id,
                     ProtocolEndpointEntry {
                         base_url: entry.base_url.clone(),
-                        endpoints: None,
                     },
                 ));
             }

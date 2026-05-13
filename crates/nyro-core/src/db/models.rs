@@ -124,10 +124,6 @@ pub struct Route {
     pub target_model: String,
     pub access_control: bool,
     #[serde(default)]
-    #[serde(alias = "type")]
-    #[sqlx(default)]
-    pub route_type: String,
-    #[serde(default)]
     #[sqlx(default)]
     pub cache_exact_ttl: Option<i64>,
     #[serde(default)]
@@ -299,8 +295,6 @@ pub struct UpdateRoute {
     #[serde(default)]
     pub targets: Option<Vec<UpsertRouteTarget>>,
     pub access_control: Option<bool>,
-    #[serde(alias = "type")]
-    pub route_type: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache: Option<RouteCacheConfig>,
     #[serde(skip)]
@@ -323,8 +317,6 @@ pub struct CreateRoute {
     #[serde(default)]
     pub targets: Vec<CreateRouteTarget>,
     pub access_control: Option<bool>,
-    #[serde(alias = "type")]
-    pub route_type: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cache: Option<RouteCacheConfig>,
     #[serde(skip)]
@@ -565,7 +557,6 @@ impl Provider {
                 self.protocol.trim().to_string(),
                 ProtocolEndpointEntry {
                     base_url: self.base_url.trim().to_string(),
-                    endpoints: None,
                 },
             );
         }
@@ -573,27 +564,9 @@ impl Provider {
     }
 }
 
-impl Route {
-    pub fn normalized_route_type(&self) -> &str {
-        if self.route_type.trim().eq_ignore_ascii_case("embedding") {
-            "embedding"
-        } else {
-            "chat"
-        }
-    }
-
-    pub fn is_embedding_route(&self) -> bool {
-        self.normalized_route_type() == "embedding"
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProtocolEndpointEntry {
     pub base_url: String,
-    /// Subset of endpoint names supported by this provider under this protocol.
-    /// `None` means all endpoints declared by the protocol are supported.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub endpoints: Option<Vec<String>>,
 }
 
 impl CreateProvider {

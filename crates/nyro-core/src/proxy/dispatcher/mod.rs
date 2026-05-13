@@ -96,7 +96,6 @@ pub async fn dispatch_pipeline(
     let start = Instant::now();
     let request_model = internal.model.clone();
     let is_stream = internal.stream;
-    let is_embedding_request = ingress.handler().capabilities().embeddings;
     let ingress_str = ingress.to_string();
 
     // ── Route lookup ─────────────────────────────────────────────────────────
@@ -138,76 +137,6 @@ pub async fn dispatch_pipeline(
             return error_response(404, &msg);
         }
     };
-
-    // Gate: embedding routes may only be accessed via the embeddings endpoint
-    // and chat routes may not be accessed via embeddings.
-    if is_embedding_request && !route.is_embedding_route() {
-        let msg = format!(
-            "route '{}' is type='{}', embeddings endpoint requires type='embedding'",
-            route.virtual_model,
-            route.normalized_route_type()
-        );
-        emit_log(
-            &gw,
-            &ingress_str,
-            &ingress_str,
-            &request_model,
-            "",
-            None,
-            "",
-            400,
-            start.elapsed().as_millis() as f64,
-            TokenUsage::default(),
-            false,
-            false,
-            Some(msg.clone()),
-            None,
-            LogExtras {
-                method: Some(method_owned.clone()),
-                path: Some(path_owned.clone()),
-                request_headers: request_headers_str.clone(),
-                request_body: request_body_str.clone(),
-                response_headers: None,
-                response_body: Some(
-                    serde_json::json!({ "error": { "message": msg.clone() } }).to_string(),
-                ),
-            },
-        );
-        return error_response(400, &msg);
-    }
-    if !is_embedding_request && route.is_embedding_route() {
-        let msg = format!(
-            "route '{}' is type='embedding', use /v1/embeddings",
-            route.virtual_model
-        );
-        emit_log(
-            &gw,
-            &ingress_str,
-            &ingress_str,
-            &request_model,
-            "",
-            None,
-            "",
-            400,
-            start.elapsed().as_millis() as f64,
-            TokenUsage::default(),
-            is_stream,
-            false,
-            Some(msg.clone()),
-            None,
-            LogExtras {
-                method: Some(method_owned.clone()),
-                path: Some(path_owned.clone()),
-                request_headers: request_headers_str.clone(),
-                request_body: request_body_str.clone(),
-                response_headers: None,
-                response_body: Some(
-                    serde_json::json!({ "error": { "message": msg.clone() } }).to_string(),
-                ),
-            },
-        );
-        return error_response(400, &msg);
-    }
 
     // ── Auth ─────────────────────────────────────────────────────────────────
 
@@ -2195,9 +2124,6 @@ async fn compute_embedding(gw: &Gateway, text: &str) -> anyhow::Result<Vec<f32>>
         cache.match_route(embedding_route).cloned()
     }
     .ok_or_else(|| anyhow::anyhow!("embedding route not found: {embedding_route}"))?;
-    if !route.is_embedding_route() {
-        anyhow::bail!("embedding route must be type='embedding': {embedding_route}");
-    }
 
     let targets = load_route_targets(gw, &route).await;
     if targets.is_empty() {

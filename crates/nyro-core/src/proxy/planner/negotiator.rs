@@ -213,7 +213,6 @@ mod tests {
                     *id,
                     ProtocolEndpointEntry {
                         base_url: url.to_string(),
-                        endpoints: None,
                     },
                 )
             })
