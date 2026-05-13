@@ -1410,7 +1410,7 @@ export default function ProvidersPage() {
                       className="provider-preset-card h-auto w-full flex-col gap-3 px-4 py-5"
                       aria-label={presetLabel(preset, isZh)}
                     >
-                      {preset.icon === "nyro" ? (
+                      {preset.icon === "nyro" || preset.icon === "custom" ? (
                         <>
                           <NyroIcon
                             size={26}
@@ -1982,7 +1982,7 @@ export default function ProvidersPage() {
                           className="provider-preset-card h-auto w-full flex-col gap-3 px-4 py-5 disabled:cursor-not-allowed disabled:opacity-50"
                           aria-label={presetLabel(preset, isZh)}
                         >
-                          {preset.icon === "nyro" ? (
+                          {preset.icon === "nyro" || preset.icon === "custom" ? (
                             <>
                               <NyroIcon
                                 size={26}
