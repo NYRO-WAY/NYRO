@@ -23,7 +23,7 @@ const METADATA: VendorMetadata = VendorMetadata {
         zh: "自定义",
         en: "Custom",
     },
-    icon: "custom",
+    icon: "nyro",
     default_protocol: "openai",
     channels: &[ChannelDef {
         id: "default",
