@@ -15,7 +15,8 @@ use crate::provider::common::openai::{
 use crate::provider::common::pipeline;
 use crate::provider::inbound::InboundResponse;
 use crate::provider::metadata::{
-    AuthMode, ChannelDef, Label, OAuthConfig, ProtocolBaseUrl, RuntimeConfig, VendorMetadata,
+    AuthMode, CapabilitiesSource, ChannelDef, Label, OAuthConfig, ProtocolBaseUrl, RuntimeConfig,
+    VendorMetadata,
 };
 use crate::provider::outbound::OutboundRequest;
 use crate::provider::registry::{ExtensionRegistration, VendorRegistration, VendorScope};
@@ -44,7 +45,7 @@ const METADATA: VendorMetadata = VendorMetadata {
             }],
             api_key: None,
             models_source: Some("https://api.openai.com/v1/models"),
-            capabilities_source: Some("ai://models.dev/openai"),
+            capabilities_source: CapabilitiesSource::ModelsDev("openai"),
             static_models: &[],
             auth_mode: AuthMode::ApiKey,
             oauth: None,
@@ -62,7 +63,7 @@ const METADATA: VendorMetadata = VendorMetadata {
             }],
             api_key: None,
             models_source: Some("https://chatgpt.com/backend-api/codex/models"),
-            capabilities_source: Some("ai://models.dev/openai"),
+            capabilities_source: CapabilitiesSource::ModelsDev("openai"),
             static_models: &[],
             auth_mode: AuthMode::OAuth,
             oauth: Some(OAuthConfig {

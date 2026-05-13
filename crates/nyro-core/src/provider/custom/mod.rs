@@ -10,7 +10,7 @@ use crate::protocol::types::{InternalRequest, InternalResponse};
 use crate::provider::common::openai::{GenericOpenAICompatibleAdapter, openai_map_error};
 use crate::provider::common::pipeline;
 use crate::provider::inbound::InboundResponse;
-use crate::provider::metadata::{AuthMode, ChannelDef, Label, VendorMetadata};
+use crate::provider::metadata::{AuthMode, CapabilitiesSource, ChannelDef, Label, VendorMetadata};
 use crate::provider::outbound::OutboundRequest;
 use crate::provider::registry::{VendorRegistration, VendorScope};
 use crate::provider::stream::ProviderStreamParser;
@@ -34,7 +34,7 @@ const METADATA: VendorMetadata = VendorMetadata {
         base_urls: &[],
         api_key: None,
         models_source: None,
-        capabilities_source: Some("ai://models.dev/"),
+        capabilities_source: CapabilitiesSource::Auto,
         static_models: &[],
         auth_mode: AuthMode::ApiKey,
         oauth: None,

@@ -12,7 +12,7 @@ use crate::protocol::types::{InternalRequest, InternalResponse};
 use crate::provider::common::pipeline;
 use crate::provider::inbound::InboundResponse;
 use crate::provider::metadata::{
-    AuthMode, ChannelDef, Label, OAuthConfig, ProtocolBaseUrl, VendorMetadata,
+    AuthMode, CapabilitiesSource, ChannelDef, Label, OAuthConfig, ProtocolBaseUrl, VendorMetadata,
 };
 use crate::provider::outbound::OutboundRequest;
 use crate::provider::registry::{ExtensionRegistration, VendorRegistration, VendorScope};
@@ -41,7 +41,7 @@ const METADATA: VendorMetadata = VendorMetadata {
             }],
             api_key: None,
             models_source: Some("https://api.anthropic.com/v1/models"),
-            capabilities_source: Some("ai://models.dev/anthropic"),
+            capabilities_source: CapabilitiesSource::ModelsDev("anthropic"),
             static_models: &[],
             auth_mode: AuthMode::ApiKey,
             oauth: None,
@@ -59,7 +59,7 @@ const METADATA: VendorMetadata = VendorMetadata {
             }],
             api_key: None,
             models_source: Some("ai://models.dev/anthropic"),
-            capabilities_source: Some("ai://models.dev/anthropic"),
+            capabilities_source: CapabilitiesSource::ModelsDev("anthropic"),
             static_models: &[
                 "claude-opus-4-6",
                 "claude-sonnet-4-6",

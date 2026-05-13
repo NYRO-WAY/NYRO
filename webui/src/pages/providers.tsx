@@ -75,7 +75,6 @@ const emptyCreate: CreateProvider = {
   preset_key: "",
   channel: "",
   models_source: "",
-  capabilities_source: "",
   static_models: "",
   api_key: "",
 };
@@ -355,14 +354,12 @@ function resolvePresetConfig(
   const rawBaseUrl = sourceBaseUrls[protocol];
   const baseUrl = rawBaseUrl ? toGatewayBaseUrl(rawBaseUrl) : "";
   const modelsSource = channel?.modelsSource ?? channel?.modelsEndpoint ?? "";
-  const capabilitiesSource = channel?.capabilitiesSource ?? "";
   const apiKey = channel?.apiKey ?? "";
   const staticModels = joinStaticModels(channel?.staticModels);
 
   return {
     baseUrl,
     modelsSource,
-    capabilitiesSource,
     apiKey,
     staticModels,
     channel,
@@ -529,7 +526,6 @@ export default function ProvidersPage() {
     preset_key: "",
     channel: "",
     models_source: "",
-    capabilities_source: "",
     static_models: "",
     api_key: "",
     auth_mode: "apikey",
@@ -1178,7 +1174,6 @@ export default function ProvidersPage() {
       preset_key: p.preset_key || DEFAULT_PRESET_ID,
       channel,
       models_source: p.models_source ?? "",
-      capabilities_source: p.capabilities_source ?? "",
       static_models: p.static_models ?? "",
       api_key: p.api_key ?? "",
       auth_mode: normalizeAuthMode(p.auth_mode),
@@ -1209,7 +1204,6 @@ export default function ProvidersPage() {
       preset_key: preset.id,
       channel: nextChannelId,
       models_source: config.modelsSource,
-      capabilities_source: config.capabilitiesSource,
       static_models: config.staticModels,
       api_key: config.apiKey || "",
       name: "",
@@ -1234,7 +1228,6 @@ export default function ProvidersPage() {
       auth_mode: presetChannelAuthMode(selectedPreset, nextChannelId),
       base_url: nextBaseUrl,
       models_source: config.modelsSource,
-      capabilities_source: config.capabilitiesSource,
       static_models: config.staticModels,
       api_key: config.apiKey || prev.api_key,
     }));
@@ -1278,7 +1271,6 @@ export default function ProvidersPage() {
               protocol: nextProtocol,
               base_url: nextBaseUrl,
               models_source: config.modelsSource,
-              capabilities_source: config.capabilitiesSource,
               static_models: config.staticModels,
               api_key: config.apiKey || prev.api_key,
             };
@@ -1686,7 +1678,6 @@ export default function ProvidersPage() {
                       : {
                           baseUrl: protocolUrl(nextProtocol),
                           modelsSource: defaultModelsEndpoint(protocolUrl(nextProtocol), nextProtocol),
-                          capabilitiesSource: "",
                           staticModels: form.static_models ?? "",
                         };
                     const nextBaseUrl =
@@ -1698,7 +1689,6 @@ export default function ProvidersPage() {
                       protocol: nextProtocol,
                       base_url: nextBaseUrl,
                       models_source: form.models_source,
-                      capabilities_source: config.capabilitiesSource,
                       static_models: config.staticModels,
                     });
                     setCreateEndpointRows((prev) => {
@@ -1833,22 +1823,6 @@ export default function ProvidersPage() {
                   placeholder={isZh ? "可选，支持 https:// 或 ai://models.dev/..." : "Optional, supports https:// or ai://models.dev/..."}
                   value={form.models_source ?? ""}
                   onChange={(e) => setForm({ ...form, models_source: e.target.value })}
-                />
-              </div>
-              <div className="space-y-2">
-                <FieldLabel
-                  info={
-                    isZh
-                      ? "用于识别模型能力，自动处理请求转发与 CLI 配置生成"
-                      : "Used to identify model capabilities and auto-handle forwarding and CLI config generation"
-                  }
-                >
-                  {isZh ? "能力发现源" : "Capability Discovery Source"}
-                </FieldLabel>
-                <Input
-                  placeholder={isZh ? "可选，支持 https:// 或 ai://models.dev/..." : "Optional, supports https:// or ai://models.dev/..."}
-                  value={form.capabilities_source ?? ""}
-                  onChange={(e) => setForm({ ...form, capabilities_source: e.target.value })}
                 />
               </div>
               </>
@@ -2049,7 +2023,6 @@ export default function ProvidersPage() {
                             protocol: resolvedProtocol,
                             base_url: resolveDefaultBaseUrl(endpointRows, resolvedProtocol, config.baseUrl),
                             models_source: config.modelsSource,
-                            capabilities_source: config.capabilitiesSource,
                             static_models: config.staticModels,
                           });
                           setEditEndpointRows(endpointRows);
@@ -2292,7 +2265,6 @@ export default function ProvidersPage() {
                             : {
                                 baseUrl: protocolUrl(nextProtocol),
                                 modelsSource: defaultModelsEndpoint(protocolUrl(nextProtocol), nextProtocol),
-                                capabilitiesSource: "",
                                 staticModels: editForm.static_models ?? "",
                               };
                           const nextBaseUrl =
@@ -2303,10 +2275,7 @@ export default function ProvidersPage() {
                             ...editForm,
                             protocol: nextProtocol,
                             base_url: nextBaseUrl,
-                            // Keep user/preset selected model discovery source stable
-                            // when protocol changes.
                             models_source: editForm.models_source,
-                            capabilities_source: config.capabilitiesSource,
                             static_models: config.staticModels,
                           });
                           setEditEndpointRows((prev) => {
@@ -2416,22 +2385,6 @@ export default function ProvidersPage() {
                         onChange={(e) => setEditForm({ ...editForm, models_source: e.target.value })}
                       />
                     </div>
-                    <div className="space-y-2">
-                      <FieldLabel
-                        info={
-                          isZh
-                            ? "用于识别模型能力，自动处理请求转发与 CLI 配置生成"
-                            : "Used to identify model capabilities and auto-handle forwarding and CLI config generation"
-                        }
-                      >
-                        {isZh ? "能力发现源" : "Capability Discovery Source"}
-                      </FieldLabel>
-                      <Input
-                        placeholder={isZh ? "可选，支持 https:// 或 ai://models.dev/..." : "Optional, supports https:// or ai://models.dev/..."}
-                        value={editForm.capabilities_source ?? ""}
-                        onChange={(e) => setEditForm({ ...editForm, capabilities_source: e.target.value })}
-                      />
-                    </div>
                   </div>
                   <div className="flex gap-3">
                     <Button
@@ -2456,7 +2409,6 @@ export default function ProvidersPage() {
                           preset_key: editForm.preset_key || undefined,
                           channel: editForm.channel || undefined,
                           models_source: editForm.models_source || undefined,
-                          capabilities_source: editForm.capabilities_source || undefined,
                           static_models: editForm.static_models || undefined,
                           api_key: editForm.api_key || undefined,
                         };

@@ -8,7 +8,9 @@ use crate::protocol::ids::ProtocolId;
 use crate::protocol::types::{InternalRequest, InternalResponse};
 use crate::provider::common::pipeline;
 use crate::provider::inbound::InboundResponse;
-use crate::provider::metadata::{AuthMode, ChannelDef, Label, ProtocolBaseUrl, VendorMetadata};
+use crate::provider::metadata::{
+    AuthMode, CapabilitiesSource, ChannelDef, Label, ProtocolBaseUrl, VendorMetadata,
+};
 use crate::provider::outbound::OutboundRequest;
 use crate::provider::registry::{ExtensionRegistration, VendorRegistration, VendorScope};
 use crate::provider::stream::ProviderStreamParser;
@@ -41,7 +43,7 @@ const METADATA: VendorMetadata = VendorMetadata {
         ],
         api_key: None,
         models_source: Some("https://generativelanguage.googleapis.com/v1beta/openai/models"),
-        capabilities_source: Some("ai://models.dev/google"),
+        capabilities_source: CapabilitiesSource::ModelsDev("google"),
         static_models: &[],
         auth_mode: AuthMode::ApiKey,
         oauth: None,

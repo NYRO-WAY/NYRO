@@ -36,7 +36,6 @@ fn provider_with_endpoints(default_protocol: &str, endpoints: serde_json::Value)
         preset_key: None,
         channel: None,
         models_source: None,
-        capabilities_source: None,
         static_models: None,
         api_key: String::new(),
         auth_mode: "api_key".to_string(),

@@ -173,7 +173,6 @@ fn fake_provider(api_key: &str) -> Provider {
         preset_key: None,
         channel: Some("default".into()),
         models_source: None,
-        capabilities_source: None,
         static_models: None,
         api_key: api_key.into(),
         auth_mode: "apikey".into(),

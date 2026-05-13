@@ -138,7 +138,6 @@ pub struct RuntimeBinding {
     pub extra_headers: HashMap<String, String>,
     pub model_aliases: HashMap<String, String>,
     pub models_source_override: Option<String>,
-    pub capabilities_source_override: Option<String>,
     pub disable_default_auth: bool,
     /// When `Some`, the admin model-discovery paths return this exact
     /// list and skip every URL/HTTP fallback. OAuth drivers (Claude

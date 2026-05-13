@@ -19,6 +19,7 @@ use crate::db::models::*;
 use crate::protocol::ProviderProtocols;
 use crate::protocol::ids::OPENAI_CHAT_COMPLETIONS_V1;
 use crate::protocol::ids::OPENAI_EMBEDDINGS_V1;
+use crate::provider::metadata::CapabilitiesSource;
 use crate::provider::{VendorCtx, VendorRegistry};
 use crate::proxy::client::ProxyClient;
 use crate::router::TargetSelector;
@@ -569,7 +570,6 @@ impl AdminService {
                 preset_key: input.preset_key,
                 channel: input.channel,
                 models_source: input.models_source,
-                capabilities_source: input.capabilities_source,
                 static_models: input.static_models,
                 api_key,
                 auth_mode,
@@ -600,7 +600,6 @@ impl AdminService {
         let base_url = input.base_url.unwrap_or(current.base_url);
         let preset_key = input.preset_key.or(current.preset_key);
         let channel = input.channel.or(current.channel);
-        let capabilities_source = input.capabilities_source.or(current.capabilities_source);
         let static_models = input.static_models.or(current.static_models);
         let api_key = input.api_key.unwrap_or(current.api_key);
         let auth_mode = resolve_preset_channel_auth_mode(preset_key.as_deref(), channel.as_deref())
@@ -633,7 +632,6 @@ impl AdminService {
                     preset_key,
                     channel,
                     models_source,
-                    capabilities_source,
                     static_models,
                     api_key,
                     auth_mode: Some(auth_mode),
@@ -1003,29 +1001,22 @@ impl AdminService {
         provider: &Provider,
         model: &str,
     ) -> anyhow::Result<ModelCapabilities> {
-        let source = provider
-            .capabilities_source
-            .as_deref()
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-            .unwrap_or("");
-
-        match parse_source(source) {
-            ResolvedSource::ModelsDev(vendor_key) => {
+        match preset_capabilities_source(provider) {
+            CapabilitiesSource::ModelsDev(vendor_key) => {
                 let matched =
                     lookup_models_dev_capability(&self.gw.config.data_dir, vendor_key, model);
                 matched.ok_or_else(|| {
                     anyhow::anyhow!("no matched model capabilities found in models.dev")
                 })
             }
-            ResolvedSource::Http(url) => {
+            CapabilitiesSource::Http(url) => {
                 if is_ollama_show_endpoint(url) {
                     self.query_ollama_show_capability(url, model).await
                 } else {
                     self.query_http_capability(provider, url, model).await
                 }
             }
-            ResolvedSource::Auto => Ok(fuzzy_match_models_dev(&self.gw.config.data_dir, model)
+            CapabilitiesSource::Auto => Ok(fuzzy_match_models_dev(&self.gw.config.data_dir, model)
                 .ok_or_else(|| {
                     anyhow::anyhow!("no matched model capabilities found in auto mode")
                 })?),
@@ -1455,7 +1446,6 @@ impl AdminService {
                     preset_key: p.preset_key,
                     channel: p.channel,
                     models_source: p.models_source,
-                    capabilities_source: p.capabilities_source,
                     static_models: p.static_models,
                     api_key: p.api_key,
                     auth_mode: p.auth_mode,
@@ -1513,7 +1503,6 @@ impl AdminService {
                         preset_key: p.preset_key.clone(),
                         channel: p.channel.clone(),
                         models_source: p.models_source.clone(),
-                        capabilities_source: p.capabilities_source.clone(),
                         static_models: p.static_models.clone(),
                         api_key: p.api_key.clone(),
                         auth_mode: p.auth_mode.clone(),
@@ -1958,11 +1947,6 @@ impl AdminService {
             .clone()
             .filter(|value| !value.trim().is_empty())
             .or_else(|| provider.models_source.clone());
-        let capabilities_source = binding
-            .capabilities_source_override
-            .clone()
-            .filter(|value| !value.trim().is_empty())
-            .or_else(|| provider.capabilities_source.clone());
         let protocol_endpoints = Some(sync_runtime_protocol_endpoints(provider, &base_url)?);
 
         self.gw
@@ -1974,7 +1958,6 @@ impl AdminService {
                     base_url: Some(base_url),
                     protocol_endpoints,
                     models_source,
-                    capabilities_source,
                     api_key: Some(String::new()),
                     auth_mode: Some("oauth".to_string()),
                     ..Default::default()
@@ -2771,24 +2754,20 @@ fn parse_static_models(raw: Option<&str>) -> Vec<String> {
     models
 }
 
-#[derive(Debug, Clone, Copy)]
-enum ResolvedSource<'a> {
-    Http(&'a str),
-    ModelsDev(&'a str),
-    Auto,
-}
-
-fn parse_source(uri: &str) -> ResolvedSource<'_> {
-    let trimmed = uri.trim();
-    if trimmed.is_empty() {
-        ResolvedSource::Auto
-    } else if trimmed.eq_ignore_ascii_case("ai://models.dev") {
-        ResolvedSource::ModelsDev("")
-    } else if let Some(key) = trimmed.strip_prefix("ai://models.dev/") {
-        ResolvedSource::ModelsDev(key)
-    } else {
-        ResolvedSource::Http(trimmed)
-    }
+/// Resolve the `CapabilitiesSource` strategy for a provider from its preset channel.
+/// Falls back to `Auto` when no matching preset/channel is found.
+fn preset_capabilities_source(provider: &Provider) -> CapabilitiesSource {
+    let Some(ref preset_key) = provider.preset_key else {
+        return CapabilitiesSource::Auto;
+    };
+    let Some(meta) = VendorRegistry::global().metadata(preset_key) else {
+        return CapabilitiesSource::Auto;
+    };
+    let channel_id = provider.channel.as_deref().unwrap_or("default");
+    let Some(ch) = meta.channels.iter().find(|c| c.id == channel_id) else {
+        return CapabilitiesSource::Auto;
+    };
+    ch.capabilities_source
 }
 
 fn is_ollama_show_endpoint(url: &str) -> bool {
@@ -2956,7 +2935,15 @@ fn parse_models_dev_data(data_dir: &Path) -> anyhow::Result<HashMap<String, Mode
 }
 
 fn lookup_models_dev_models(data_dir: &Path, source: &str) -> anyhow::Result<Option<Vec<String>>> {
-    let ResolvedSource::ModelsDev(vendor_key) = parse_source(source) else {
+    let trimmed = source.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    let vendor_key = if trimmed.eq_ignore_ascii_case("ai://models.dev") {
+        ""
+    } else if let Some(key) = trimmed.strip_prefix("ai://models.dev/") {
+        key
+    } else {
         return Ok(None);
     };
     let data = parse_models_dev_data(data_dir)?;
@@ -3518,7 +3505,6 @@ mod tests {
             preset_key: Some("openai".to_string()),
             channel: Some("codex".to_string()),
             models_source: None,
-            capabilities_source: Some("ai://models.dev/openai".to_string()),
             static_models: None,
             api_key: String::new(),
             auth_mode: "oauth".to_string(),

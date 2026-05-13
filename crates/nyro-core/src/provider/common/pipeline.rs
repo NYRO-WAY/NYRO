@@ -360,7 +360,6 @@ mod tests {
             preset_key: Some("fake-test".into()),
             channel: Some("default".into()),
             models_source: None,
-            capabilities_source: None,
             static_models: None,
             api_key: api_key.into(),
             auth_mode: "apikey".into(),

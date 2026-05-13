@@ -16,7 +16,6 @@ export interface Provider {
   preset_key?: string | null;
   channel?: string | null;
   models_source?: string | null;
-  capabilities_source?: string | null;
   static_models?: string | null;
   is_enabled: boolean;
   created_at: string;
@@ -168,7 +167,6 @@ export interface ProviderChannelPreset {
   authMode?: "apikey" | "oauth";
   baseUrls: Record<string, string>;
   modelsSource?: string;
-  capabilitiesSource?: string;
   apiKey?: string;
   modelsEndpoint?: string;
   staticModels?: string[];
@@ -197,7 +195,6 @@ export interface CreateProvider {
   preset_key?: string;
   channel?: string;
   models_source?: string;
-  capabilities_source?: string;
   static_models?: string;
   api_key: string;
 }
@@ -214,7 +211,6 @@ export interface UpdateProvider {
   preset_key?: string;
   channel?: string;
   models_source?: string;
-  capabilities_source?: string;
   static_models?: string;
   api_key?: string;
   is_enabled?: boolean;
@@ -341,7 +337,6 @@ export interface ExportProvider {
   preset_key?: string | null;
   channel?: string | null;
   models_source?: string | null;
-  capabilities_source?: string | null;
   static_models?: string | null;
   api_key: string;
   is_enabled: boolean;

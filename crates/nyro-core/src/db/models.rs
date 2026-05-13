@@ -67,8 +67,6 @@ pub struct Provider {
     pub channel: Option<String>,
     #[serde(alias = "modelsEndpoint")]
     pub models_source: Option<String>,
-    #[serde(alias = "capabilitiesSource")]
-    pub capabilities_source: Option<String>,
     pub static_models: Option<String>,
     pub api_key: String,
     #[serde(default = "default_provider_auth_mode")]
@@ -263,8 +261,6 @@ pub struct CreateProvider {
     pub channel: Option<String>,
     #[serde(alias = "modelsSource")]
     pub models_source: Option<String>,
-    #[serde(alias = "capabilitiesSource")]
-    pub capabilities_source: Option<String>,
     pub static_models: Option<String>,
     pub api_key: String,
     #[serde(default = "default_provider_auth_mode")]
@@ -285,8 +281,6 @@ pub struct UpdateProvider {
     pub channel: Option<String>,
     #[serde(alias = "modelsSource")]
     pub models_source: Option<String>,
-    #[serde(alias = "capabilitiesSource")]
-    pub capabilities_source: Option<String>,
     pub static_models: Option<String>,
     pub api_key: Option<String>,
     pub auth_mode: Option<String>,
@@ -498,8 +492,6 @@ pub struct ExportProvider {
     pub channel: Option<String>,
     #[serde(alias = "modelsEndpoint")]
     pub models_source: Option<String>,
-    #[serde(alias = "capabilitiesSource")]
-    pub capabilities_source: Option<String>,
     pub static_models: Option<String>,
     pub api_key: String,
     #[serde(default = "default_provider_auth_mode")]
