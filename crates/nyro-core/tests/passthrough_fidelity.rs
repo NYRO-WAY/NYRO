@@ -55,34 +55,10 @@ async fn build_test_gateway() -> Gateway {
 
 fn all_four_decl() -> ProviderProtocols {
     let endpoints = vec![
-        (
-            OPENAI_CHAT_COMPLETIONS_V1,
-            ProtocolEndpointEntry {
-                base_url: "https://chat.example.com".into(),
-                endpoints: None,
-            },
-        ),
-        (
-            OPENAI_RESPONSES_V1,
-            ProtocolEndpointEntry {
-                base_url: "https://responses.example.com".into(),
-                endpoints: None,
-            },
-        ),
-        (
-            ANTHROPIC_MESSAGES_2023_06_01,
-            ProtocolEndpointEntry {
-                base_url: "https://messages.example.com".into(),
-                endpoints: None,
-            },
-        ),
-        (
-            GOOGLE_GENERATE_CONTENT_V1BETA,
-            ProtocolEndpointEntry {
-                base_url: "https://generate.example.com".into(),
-                endpoints: None,
-            },
-        ),
+        (OPENAI_CHAT_COMPLETIONS_V1, ProtocolEndpointEntry { base_url: "https://chat.example.com".into() }),
+        (OPENAI_RESPONSES_V1, ProtocolEndpointEntry { base_url: "https://responses.example.com".into() }),
+        (ANTHROPIC_MESSAGES_2023_06_01, ProtocolEndpointEntry { base_url: "https://messages.example.com".into() }),
+        (GOOGLE_GENERATE_CONTENT_V1BETA, ProtocolEndpointEntry { base_url: "https://generate.example.com".into() }),
     ];
     ProviderProtocols {
         default: OPENAI_CHAT_COMPLETIONS_V1,
@@ -91,13 +67,7 @@ fn all_four_decl() -> ProviderProtocols {
 }
 
 fn single_decl(proto: ProtocolId, url: &str) -> ProviderProtocols {
-    let endpoints = vec![(
-        proto,
-        ProtocolEndpointEntry {
-            base_url: url.to_string(),
-            endpoints: None,
-        },
-    )];
+    let endpoints = vec![(proto, ProtocolEndpointEntry { base_url: url.to_string() })];
     ProviderProtocols {
         default: proto,
         endpoints,

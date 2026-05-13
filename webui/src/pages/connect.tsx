@@ -94,18 +94,8 @@ function protocolApiPath(protocol: CodeProtocol) {
   return "/v1beta/models/{model}:generateContent";
 }
 
-function protocolApiPathForRoute(protocol: CodeProtocol, routeType: RouteKind) {
-  if (routeType === "embedding") return "/v1/embeddings";
+function protocolApiPathForRoute(protocol: CodeProtocol, _routeType: RouteKind) {
   return protocolApiPath(protocol);
-}
-
-function normalizeRouteType(routeType?: string): RouteKind {
-  return routeType === "embedding" ? "embedding" : "chat";
-}
-
-function routeTypeLabel(routeType: RouteKind, isZh: boolean) {
-  if (routeType === "embedding") return isZh ? "向量路由" : "Embedding";
-  return isZh ? "对话路由" : "Chat";
 }
 
 function jsonText(input: unknown) {
@@ -499,10 +489,7 @@ export default function ConnectPage() {
     [],
   );
 
-  const codeRoutes = useMemo(() => {
-    if (selectedCodeProtocol === "openai-compat") return routes;
-    return routes.filter((route) => normalizeRouteType(route.route_type) === "chat");
-  }, [routes, selectedCodeProtocol]);
+  const codeRoutes = routes;
 
   useEffect(() => {
     if (selectedCodeRouteId && !codeRoutes.some((route) => route.id === selectedCodeRouteId)) {
@@ -541,15 +528,12 @@ export default function ConnectPage() {
   const hasProxyPort = typeof proxyPort === "number" && Number.isFinite(proxyPort) && proxyPort > 0;
   const host = hasProxyPort ? `http://localhost:${proxyPort}` : "http://localhost:<proxy-port>";
   const codeModel = selectedRoute?.virtual_model ?? "gpt-4o";
-  const codeRouteType: RouteKind = normalizeRouteType(selectedRoute?.route_type);
+  const codeRouteType: RouteKind = "chat";
   const codeProtocol = selectedCodeProtocol;
   const selectedCliTool =
     CLI_TOOLS.find((tool) => tool.id === selectedCliToolId) ?? CLI_TOOLS.find((tool) => tool.id === "claude-code")!;
   const selectedCliReady = IS_TAURI ? Boolean(cliReadyStatus[selectedCliTool.id]) : true;
-  const cliRoutes = useMemo(
-    () => routes.filter((route) => normalizeRouteType(route.route_type) === "chat"),
-    [routes],
-  );
+  const cliRoutes = routes;
   const selectedCliRoute = useMemo(
     () => cliRoutes.find((route) => route.id === selectedCliRouteId) ?? null,
     [cliRoutes, selectedCliRouteId],
@@ -849,12 +833,12 @@ export default function ConnectPage() {
                       }}
                     options={cliRoutes.map((route) => ({
                       value: route.id,
-                      label: `${route.name} · ${route.virtual_model} · ${routeTypeLabel(normalizeRouteType(route.route_type), isZh)}`,
+                      label: `${route.name} · ${route.virtual_model}`,
                     }))}
                     placeholder={
                       cliRoutes.length > 0
                         ? (isZh ? "选择路由" : "Select route")
-                        : (isZh ? "请先创建对话路由" : "Create a chat route first")
+                        : (isZh ? "请先创建路由" : "Create a route first")
                     }
                     searchPlaceholder={isZh ? "搜索路由..." : "Search routes..."}
                     emptyText={isZh ? "暂无可选路由" : "No routes available"}
@@ -1081,14 +1065,12 @@ export default function ConnectPage() {
                     onValueChange={setSelectedCodeRouteId}
                     options={codeRoutes.map((route) => ({
                       value: route.id,
-                      label: `${route.name} · ${route.virtual_model} · ${routeTypeLabel(normalizeRouteType(route.route_type), isZh)}`,
+                      label: `${route.name} · ${route.virtual_model}`,
                     }))}
                     placeholder={
                       codeRoutes.length > 0
                         ? (isZh ? "选择路由" : "Select route")
-                        : selectedCodeProtocol === "openai-compat"
-                          ? (isZh ? "请先创建路由" : "Create route first")
-                          : (isZh ? "请先创建对话路由" : "Create a chat route first")
+                        : (isZh ? "请先创建路由" : "Create a route first")
                     }
                     searchPlaceholder={isZh ? "搜索路由..." : "Search routes..."}
                     emptyText={isZh ? "暂无可选路由" : "No routes available"}

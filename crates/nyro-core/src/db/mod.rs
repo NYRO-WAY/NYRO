@@ -63,7 +63,6 @@ pub async fn migrate(pool: &SqlitePool, vector_dimensions: usize) -> anyhow::Res
     ensure_route_column(pool, "virtual_model", "TEXT").await?;
     ensure_route_column(pool, "strategy", "TEXT DEFAULT 'weighted'").await?;
     ensure_route_column(pool, "access_control", "INTEGER DEFAULT 0").await?;
-    ensure_route_column(pool, "route_type", "TEXT DEFAULT 'chat'").await?;
     ensure_route_column(pool, "cache_exact_ttl", "INTEGER").await?;
     ensure_route_column(pool, "cache_semantic_ttl", "INTEGER").await?;
     ensure_route_column(pool, "cache_semantic_threshold", "REAL").await?;
@@ -256,6 +255,17 @@ async fn drop_provider_column_if_exists(
 ) -> anyhow::Result<()> {
     if column_exists(pool, "providers", column_name).await? {
         let sql = format!("ALTER TABLE providers DROP COLUMN {column_name}");
+        sqlx::query(&sql).execute(pool).await?;
+    }
+    Ok(())
+}
+
+async fn drop_route_column_if_exists(
+    pool: &SqlitePool,
+    column_name: &str,
+) -> anyhow::Result<()> {
+    if column_exists(pool, "routes", column_name).await? {
+        let sql = format!("ALTER TABLE routes DROP COLUMN {column_name}");
         sqlx::query(&sql).execute(pool).await?;
     }
     Ok(())
@@ -480,13 +490,7 @@ async fn backfill_route_fields(pool: &SqlitePool) -> anyhow::Result<()> {
         .execute(pool)
         .await?;
     }
-    if column_exists(pool, "routes", "route_type").await? {
-        sqlx::query(
-            "UPDATE routes SET route_type = 'chat' WHERE route_type IS NULL OR trim(route_type) = ''",
-        )
-        .execute(pool)
-        .await?;
-    }
+    drop_route_column_if_exists(pool, "route_type").await?;
     if column_exists(pool, "routes", "cache_ttl").await? {
         sqlx::query(
             "UPDATE routes SET cache_exact_ttl = cache_ttl WHERE cache_exact_ttl IS NULL AND cache_ttl IS NOT NULL",
@@ -621,7 +625,6 @@ CREATE TABLE IF NOT EXISTS routes (
     name              TEXT NOT NULL,
     virtual_model     TEXT,
     strategy          TEXT DEFAULT 'weighted',
-    route_type        TEXT DEFAULT 'chat',
     target_provider   TEXT NOT NULL REFERENCES providers(id),
     target_model      TEXT NOT NULL,
     cache_exact_ttl   INTEGER,

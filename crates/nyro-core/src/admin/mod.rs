@@ -914,10 +914,6 @@ impl AdminService {
             cache.match_route(route_name).cloned()
         }
         .ok_or_else(|| anyhow::anyhow!("embedding route not found: {route_name}"))?;
-        if !route.is_embedding_route() {
-            anyhow::bail!("embedding route must be type=embedding: {route_name}");
-        }
-
         let targets = load_route_targets_for_probe(&self.gw, &route).await;
         if targets.is_empty() {
             anyhow::bail!("embedding route has no targets: {route_name}");
@@ -1115,15 +1111,8 @@ impl AdminService {
         ensure_virtual_model(&input.virtual_model)?;
         self.ensure_route_unique(None, &input.virtual_model).await?;
         let strategy = normalize_route_strategy(input.strategy.as_deref())?;
-        let route_type = normalize_route_type(input.route_type.as_deref(), "chat")?;
         let targets = normalize_create_route_targets(&input)?;
         ensure_route_targets_valid(&targets)?;
-        if route_type == "embedding" {
-            self.ensure_embedding_route_targets_openai(&targets).await?;
-            if has_route_cache_overrides(input.cache.as_ref()) {
-                anyhow::bail!("embedding routes do not support route cache configuration");
-            }
-        }
         let primary_target = targets
             .first()
             .ok_or_else(|| anyhow::anyhow!("at least one route target is required"))?;
@@ -1142,7 +1131,6 @@ impl AdminService {
                 target_model: primary_target.model.clone(),
                 targets: vec![],
                 access_control: input.access_control,
-                route_type: Some(route_type),
                 cache: None,
                 cache_exact_ttl,
                 cache_semantic_ttl,
@@ -1170,29 +1158,15 @@ impl AdminService {
             .unwrap_or_else(|| current.virtual_model.clone());
         let strategy =
             normalize_route_strategy(input.strategy.as_deref().or(Some(&current.strategy)))?;
-        let route_type = normalize_optional_route_type(input.route_type.as_deref())?;
-        let effective_route_type = if let Some(value) = route_type.as_deref() {
-            normalize_route_type(Some(value), "chat")?
-        } else {
-            current.normalized_route_type().to_string()
-        };
         let targets = normalize_update_route_targets(&current, &input)?;
         ensure_route_targets_valid(&targets)?;
-        if effective_route_type == "embedding" {
-            self.ensure_embedding_route_targets_openai(&targets).await?;
-        }
         let primary_target = targets
             .first()
             .ok_or_else(|| anyhow::anyhow!("at least one route target is required"))?;
         let access_control = input.access_control.unwrap_or(current.access_control);
         let is_enabled = input.is_enabled.unwrap_or(current.is_enabled);
         let (cache_exact_ttl, cache_semantic_ttl, cache_semantic_threshold) =
-            if effective_route_type == "embedding" {
-                if has_route_cache_overrides(input.cache.as_ref()) {
-                    anyhow::bail!("embedding routes do not support route cache configuration");
-                }
-                (None, None, None)
-            } else if let Some(cache) = input.cache.as_ref() {
+            if let Some(cache) = input.cache.as_ref() {
                 flatten_route_cache_columns(Some(cache))
             } else {
                 (
@@ -1217,7 +1191,6 @@ impl AdminService {
                     target_model: Some(primary_target.model.clone()),
                     targets: None,
                     access_control: Some(access_control),
-                    route_type,
                     cache: None,
                     cache_exact_ttl,
                     cache_semantic_ttl,
@@ -1542,7 +1515,6 @@ impl AdminService {
                         target_model: r.target_model.clone(),
                         targets: vec![],
                         access_control: Some(r.access_control),
-                        route_type: Some("chat".to_string()),
                         cache: None,
                         cache_exact_ttl: None,
                         cache_semantic_ttl: None,
@@ -2090,27 +2062,6 @@ impl AdminService {
         Ok(before.saturating_sub(sessions.len()))
     }
 
-    async fn ensure_embedding_route_targets_openai(
-        &self,
-        targets: &[CreateRouteTarget],
-    ) -> anyhow::Result<()> {
-        for target in targets {
-            let provider = self
-                .gw
-                .storage
-                .providers()
-                .get(&target.provider_id)
-                .await?
-                .ok_or_else(|| anyhow::anyhow!("provider not found: {}", target.provider_id))?;
-            if !provider_supports_openai_endpoint(&provider) {
-                anyhow::bail!(
-                    "embedding route target provider '{}' does not expose an openai endpoint",
-                    provider.name
-                );
-            }
-        }
-        Ok(())
-    }
 }
 
 fn parse_auth_session_bundle(session: &AuthSession) -> anyhow::Result<CredentialBundle> {
@@ -2348,9 +2299,6 @@ fn flatten_route_cache_columns(
 }
 
 fn resolve_route_cache(route: &Route) -> Option<RouteCacheConfig> {
-    if route.is_embedding_route() {
-        return None;
-    }
     let exact = route.cache_exact_ttl.map(|ttl| RouteExactCacheConfig {
         ttl: if ttl > 0 { Some(ttl) } else { None },
     });
@@ -2365,13 +2313,6 @@ fn resolve_route_cache(route: &Route) -> Option<RouteCacheConfig> {
     } else {
         Some(RouteCacheConfig { exact, semantic })
     }
-}
-
-fn has_route_cache_overrides(cache: Option<&RouteCacheConfig>) -> bool {
-    let Some(cache) = cache else {
-        return false;
-    };
-    cache.exact.is_some() || cache.semantic.is_some()
 }
 
 fn format_connectivity_error(error: &reqwest::Error) -> String {
@@ -2407,24 +2348,6 @@ fn normalize_route_strategy(strategy: Option<&str>) -> anyhow::Result<String> {
     match normalized.as_str() {
         "weighted" | "priority" => Ok(normalized),
         _ => anyhow::bail!("unsupported route strategy: {normalized}"),
-    }
-}
-
-fn normalize_route_type(route_type: Option<&str>, default_value: &str) -> anyhow::Result<String> {
-    let normalized = route_type
-        .unwrap_or(default_value)
-        .trim()
-        .to_ascii_lowercase();
-    match normalized.as_str() {
-        "chat" | "embedding" => Ok(normalized),
-        _ => anyhow::bail!("unsupported route type: {normalized}"),
-    }
-}
-
-fn normalize_optional_route_type(route_type: Option<&str>) -> anyhow::Result<Option<String>> {
-    match route_type {
-        Some(value) => Ok(Some(normalize_route_type(Some(value), "chat")?)),
-        None => Ok(None),
     }
 }
 
@@ -2570,10 +2493,6 @@ fn resolve_models_endpoint(provider: &Provider) -> Option<String> {
     }
 }
 
-fn provider_supports_openai_endpoint(provider: &Provider) -> bool {
-    resolve_openai_base_url(provider).is_some()
-}
-
 fn resolve_openai_base_url(provider: &Provider) -> Option<String> {
     let protocols = ProviderProtocols::from_provider(provider);
     if !protocols.supports(OPENAI_CHAT_COMPLETIONS_V1) {
@@ -2632,10 +2551,7 @@ fn sync_runtime_protocol_endpoints(provider: &Provider, base_url: &str) -> anyho
         endpoints
             .entry(default_protocol)
             .and_modify(|entry| entry.base_url = runtime_base_url.to_string())
-            .or_insert_with(|| ProtocolEndpointEntry {
-                base_url: runtime_base_url.to_string(),
-                endpoints: None,
-            });
+            .or_insert_with(|| ProtocolEndpointEntry { base_url: runtime_base_url.to_string() });
     }
 
     Ok(serde_json::to_string(&endpoints)?)

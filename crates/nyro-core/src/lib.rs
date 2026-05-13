@@ -285,16 +285,13 @@ impl Gateway {
                     next.semantic.enabled = false;
                     None
                 } else {
-                    let route_valid = {
+                    let route_found = {
                         let route_cache = self.route_cache.read().await;
-                        route_cache
-                            .match_route(embedding_route)
-                            .map(|route| route.is_embedding_route())
-                            .unwrap_or(false)
+                        route_cache.match_route(embedding_route).is_some()
                     };
-                    if !route_valid {
+                    if !route_found {
                         tracing::warn!(
-                            "semantic cache embedding route '{}' not found or not type=embedding; semantic cache disabled",
+                            "semantic cache embedding route '{}' not found; semantic cache disabled",
                             embedding_route
                         );
                         next.semantic.enabled = false;

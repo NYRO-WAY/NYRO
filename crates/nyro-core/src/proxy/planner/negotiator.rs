@@ -211,10 +211,7 @@ mod tests {
             .map(|(id, url)| {
                 (
                     *id,
-                    ProtocolEndpointEntry {
-                        base_url: url.to_string(),
-                        endpoints: None,
-                    },
+                    ProtocolEndpointEntry { base_url: url.to_string() },
                 )
             })
             .collect();

@@ -544,13 +544,8 @@ impl RouteStore for PostgresRouteStore {
     async fn create(&self, input: CreateRoute) -> anyhow::Result<Route> {
         let id = uuid::Uuid::new_v4().to_string();
         let virtual_model = input.virtual_model.trim().to_string();
-        let route_type = input
-            .route_type
-            .unwrap_or_else(|| "chat".to_string())
-            .trim()
-            .to_string();
         sqlx::query(
-            "INSERT INTO routes (id, name, virtual_model, strategy, target_provider, target_model, access_control, route_type, cache_exact_ttl, cache_semantic_ttl, cache_semantic_threshold) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
+            "INSERT INTO routes (id, name, virtual_model, strategy, target_provider, target_model, access_control, cache_exact_ttl, cache_semantic_ttl, cache_semantic_threshold) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
         )
         .bind(&id)
         .bind(input.name.trim())
@@ -559,7 +554,6 @@ impl RouteStore for PostgresRouteStore {
         .bind(input.target_provider.trim())
         .bind(input.target_model.trim())
         .bind(input.access_control.unwrap_or(false))
-        .bind(route_type)
         .bind(input.cache_exact_ttl)
         .bind(input.cache_semantic_ttl)
         .bind(input.cache_semantic_threshold)
@@ -580,18 +574,13 @@ impl RouteStore for PostgresRouteStore {
         let target_provider = input.target_provider.unwrap_or(current.target_provider);
         let target_model = input.target_model.unwrap_or(current.target_model);
         let access_control = input.access_control.unwrap_or(current.access_control);
-        let route_type = input
-            .route_type
-            .unwrap_or(current.route_type)
-            .trim()
-            .to_string();
         let cache_exact_ttl = input.cache_exact_ttl;
         let cache_semantic_ttl = input.cache_semantic_ttl;
         let cache_semantic_threshold = input.cache_semantic_threshold;
         let is_enabled = input.is_enabled.unwrap_or(current.is_enabled);
 
         sqlx::query(
-            "UPDATE routes SET name=$1, virtual_model=$2, strategy=$3, target_provider=$4, target_model=$5, access_control=$6, route_type=$7, cache_exact_ttl=$8, cache_semantic_ttl=$9, cache_semantic_threshold=$10, is_enabled=$11 WHERE id=$12",
+            "UPDATE routes SET name=$1, virtual_model=$2, strategy=$3, target_provider=$4, target_model=$5, access_control=$6, cache_exact_ttl=$7, cache_semantic_ttl=$8, cache_semantic_threshold=$9, is_enabled=$10 WHERE id=$11",
         )
         .bind(name.trim())
         .bind(&virtual_model)
@@ -599,7 +588,6 @@ impl RouteStore for PostgresRouteStore {
         .bind(target_provider.trim())
         .bind(target_model.trim())
         .bind(access_control)
-        .bind(route_type)
         .bind(cache_exact_ttl)
         .bind(cache_semantic_ttl)
         .bind(cache_semantic_threshold)
@@ -1202,9 +1190,6 @@ impl StorageBootstrap for PostgresBootstrap {
         sqlx::query("ALTER TABLE routes ADD COLUMN IF NOT EXISTS strategy TEXT DEFAULT 'weighted'")
             .execute(self.adapter.pool())
             .await?;
-        sqlx::query("ALTER TABLE routes ADD COLUMN IF NOT EXISTS route_type TEXT DEFAULT 'chat'")
-            .execute(self.adapter.pool())
-            .await?;
         sqlx::query("ALTER TABLE routes ADD COLUMN IF NOT EXISTS cache_exact_ttl BIGINT")
             .execute(self.adapter.pool())
             .await?;
@@ -1217,9 +1202,6 @@ impl StorageBootstrap for PostgresBootstrap {
         .execute(self.adapter.pool())
         .await?;
         sqlx::query("UPDATE routes SET strategy = 'weighted' WHERE strategy IS NULL OR btrim(strategy) = ''")
-            .execute(self.adapter.pool())
-            .await?;
-        sqlx::query("UPDATE routes SET route_type = 'chat' WHERE route_type IS NULL OR btrim(route_type) = ''")
             .execute(self.adapter.pool())
             .await?;
         sqlx::query(
@@ -1371,6 +1353,10 @@ END $$;"#,
         // PR4: rewrite provider protocol identifiers into canonical
         // `family/dialect/version` form. Idempotent.
         normalize_provider_protocols_pg(self.adapter.pool()).await?;
+        // Q2: drop route_type column (idempotent via IF EXISTS).
+        sqlx::query("ALTER TABLE routes DROP COLUMN IF EXISTS route_type")
+            .execute(self.adapter.pool())
+            .await?;
         Ok(())
     }
 
@@ -1525,7 +1511,7 @@ fn provider_select(suffix: Option<&str>) -> String {
 
 fn route_select(suffix: Option<&str>) -> String {
     let mut sql = String::from(
-        "SELECT id, name, virtual_model, COALESCE(strategy, 'weighted') AS strategy, target_provider, target_model, COALESCE(access_control, false) AS access_control, COALESCE(route_type, 'chat') AS route_type, cache_exact_ttl, cache_semantic_ttl, cache_semantic_threshold, COALESCE(is_enabled, TRUE) AS is_enabled, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at FROM routes",
+        "SELECT id, name, virtual_model, COALESCE(strategy, 'weighted') AS strategy, target_provider, target_model, COALESCE(access_control, false) AS access_control, cache_exact_ttl, cache_semantic_ttl, cache_semantic_threshold, COALESCE(is_enabled, TRUE) AS is_enabled, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at FROM routes",
     );
     if let Some(suffix) = suffix {
         sql.push(' ');
@@ -1645,7 +1631,6 @@ CREATE TABLE IF NOT EXISTS routes (
     name TEXT NOT NULL,
     virtual_model TEXT,
     strategy TEXT DEFAULT 'weighted',
-    route_type TEXT DEFAULT 'chat',
     target_provider TEXT NOT NULL REFERENCES providers(id),
     target_model TEXT NOT NULL,
     cache_exact_ttl BIGINT,

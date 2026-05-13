@@ -131,8 +131,7 @@ export default function SettingsPage() {
       expose_headers: true,
     },
   });
-  const embeddingRoutes = routes.filter((route) => route.route_type === "embedding");
-  const selectedEmbeddingRouteExists = embeddingRoutes.some(
+  const selectedEmbeddingRouteExists = routes.some(
     (route) => route.virtual_model === cacheForm.semantic.embedding_route,
   );
   const exactCacheDirty = cacheSettings
@@ -546,7 +545,7 @@ export default function SettingsPage() {
                     />
                   </SelectTrigger>
                   <SelectContent>
-                    {embeddingRoutes.map((route) => (
+                    {routes.map((route) => (
                       <SelectItem key={route.id} value={route.virtual_model}>
                         {route.name} · {route.virtual_model}
                       </SelectItem>
@@ -554,13 +553,13 @@ export default function SettingsPage() {
                     {!selectedEmbeddingRouteExists && cacheForm.semantic.embedding_route.trim() && (
                       <SelectItem value={cacheForm.semantic.embedding_route}>
                         {isZh
-                          ? `当前值（未匹配到 embedding 路由）: ${cacheForm.semantic.embedding_route}`
-                          : `Current value (not an embedding route): ${cacheForm.semantic.embedding_route}`}
+                          ? `当前值（路由不存在）: ${cacheForm.semantic.embedding_route}`
+                          : `Current value (route not found): ${cacheForm.semantic.embedding_route}`}
                       </SelectItem>
                     )}
-                    {embeddingRoutes.length === 0 && (
+                    {routes.length === 0 && (
                       <SelectItem value="__empty__" disabled>
-                        {isZh ? "暂无向量路由" : "No embedding routes"}
+                        {isZh ? "暂无路由" : "No routes configured"}
                       </SelectItem>
                     )}
                   </SelectContent>

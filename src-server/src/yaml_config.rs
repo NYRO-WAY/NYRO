@@ -174,8 +174,6 @@ pub struct YamlRoute {
     pub virtual_model: String,
     #[serde(default = "default_strategy")]
     pub strategy: String,
-    #[serde(default = "default_route_type", alias = "type")]
-    pub route_type: String,
     pub targets: Vec<YamlRouteTarget>,
     #[serde(default)]
     pub access_control: bool,
@@ -183,10 +181,6 @@ pub struct YamlRoute {
 
 fn default_strategy() -> String {
     "weighted".to_string()
-}
-
-fn default_route_type() -> String {
-    "chat".to_string()
 }
 
 #[derive(Debug, Deserialize)]
@@ -272,13 +266,6 @@ impl YamlConfig {
             if r.targets.is_empty() {
                 anyhow::bail!("routes[{i}] ({}): at least one target is required", r.name);
             }
-            parse_route_type(&r.route_type).map_err(|_| {
-                anyhow::anyhow!(
-                    "routes[{i}] ({}): unsupported route type '{}', expected chat|embedding",
-                    r.name,
-                    r.route_type
-                )
-            })?;
             for (j, t) in r.targets.iter().enumerate() {
                 if !provider_names.contains(&t.provider.as_str()) {
                     anyhow::bail!(
@@ -424,9 +411,6 @@ pub fn build_routes(yaml: &YamlConfig, providers: &[Provider]) -> Vec<Route> {
                 target_provider: primary.map(|t| t.provider_id.clone()).unwrap_or_default(),
                 target_model: primary.map(|t| t.model.clone()).unwrap_or_default(),
                 access_control: yr.access_control,
-                route_type: parse_route_type(&yr.route_type)
-                    .unwrap_or("chat")
-                    .to_string(),
                 cache_exact_ttl: None,
                 cache_semantic_ttl: None,
                 cache_semantic_threshold: None,
@@ -437,14 +421,6 @@ pub fn build_routes(yaml: &YamlConfig, providers: &[Provider]) -> Vec<Route> {
             }
         })
         .collect()
-}
-
-fn parse_route_type(raw: &str) -> anyhow::Result<&'static str> {
-    match raw.trim().to_ascii_lowercase().as_str() {
-        "chat" => Ok("chat"),
-        "embedding" => Ok("embedding"),
-        _ => anyhow::bail!("unsupported route type"),
-    }
 }
 
 #[cfg(test)]

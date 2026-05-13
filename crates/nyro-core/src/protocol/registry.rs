@@ -197,11 +197,10 @@ impl ProtocolRegistry {
     /// Rewrite a `protocol_endpoints`-shaped JSON object into protocol-keyed form.
     ///
     /// Handles three input shapes:
-    /// 1. **New protocol-keyed**: `{"openai-compat": {"base_url": "...", "endpoints": [...]}}` —
-    ///    keys are normalized to canonical short names, values are preserved.
+    /// 1. **New protocol-keyed**: `{"openai-compat": {"base_url": "..."}}` —
+    ///    keys are normalized to canonical short names, values preserved (only `base_url` kept).
     /// 2. **Old endpoint-keyed**: `{"openai-compat/chat-completions/v1": {"base_url": "..."}}` —
-    ///    merged under the protocol key; `base_url` is taken from the first endpoint for that
-    ///    protocol; conflicting base_urls emit a warning (best-effort: first wins).
+    ///    merged under the protocol key; `base_url` from the first entry for that protocol wins.
     /// 3. **Legacy keys**: `{"openai": {"base_url": "..."}}` — resolved to canonical protocol.
     ///
     /// Collisions within the same protocol are resolved first-writer-wins.
@@ -221,100 +220,78 @@ impl ProtocolRegistry {
             return raw.to_string();
         };
 
-        // Accumulator: protocol_canonical_short → serde_json::Value (the entry object)
+        // Accumulator: protocol_canonical_short → {"base_url": "..."}
         let mut next: serde_json::Map<String, serde_json::Value> =
             serde_json::Map::with_capacity(obj.len());
 
         for (key, val) in obj {
-            // First try to resolve as a ProtocolEndpoint (endpoint-keyed old format)
+            // Old endpoint-keyed format: resolve to its protocol
             if let Some(ep) = self.resolve_alias(key) {
                 let protocol_key = ep.protocol.as_str().to_string();
-
-                if next.contains_key(&protocol_key) {
-                    // Protocol entry already accumulated — check base_url consistency
-                    if let Some(obj_val) = next.get_mut(&protocol_key)
-                        && let Some(entry_obj) = obj_val.as_object_mut()
-                    {
-                        let existing_url = entry_obj
-                            .get("base_url")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
-                        let incoming_url = val
-                            .as_object()
-                            .and_then(|o| o.get("base_url"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
-                        if !existing_url.is_empty()
-                            && !incoming_url.is_empty()
-                            && existing_url != incoming_url
-                        {
-                            tracing::warn!(
-                                protocol = %protocol_key,
-                                existing = %existing_url,
-                                incoming = %incoming_url,
-                                "conflicting base_url for same protocol — keeping first"
-                            );
-                        }
-                        // Accumulate endpoint name in the endpoints array
-                        let endpoints = entry_obj
-                            .entry("endpoints")
-                            .or_insert(serde_json::Value::Array(vec![]));
-                        if let Some(arr) = endpoints.as_array_mut() {
-                            let ep_name = serde_json::Value::String(ep.name.to_string());
-                            if !arr.contains(&ep_name) {
-                                arr.push(ep_name);
-                            }
-                        }
-                    }
-                } else {
-                    // First time we see this protocol — create the entry
-                    let mut entry = if let Some(o) = val.as_object() {
-                        o.clone()
-                    } else {
-                        serde_json::Map::new()
-                    };
-                    // Add the endpoint name to an endpoints array (marks it as endpoint-keyed origin)
-                    let ep_name = serde_json::Value::String(ep.name.to_string());
-                    entry
-                        .entry("endpoints")
-                        .or_insert(serde_json::Value::Array(vec![ep_name.clone()]));
+                if !next.contains_key(&protocol_key) {
+                    // Extract only base_url from the entry
+                    let base_url = val
+                        .as_object()
+                        .and_then(|o| o.get("base_url"))
+                        .cloned()
+                        .unwrap_or(serde_json::Value::String(String::new()));
+                    let mut entry = serde_json::Map::new();
+                    entry.insert("base_url".to_string(), base_url);
                     next.insert(protocol_key, serde_json::Value::Object(entry));
+                } else {
+                    let existing_url = next
+                        .get(&protocol_key)
+                        .and_then(|v| v.as_object())
+                        .and_then(|o| o.get("base_url"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    let incoming_url = val
+                        .as_object()
+                        .and_then(|o| o.get("base_url"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
+                    if !existing_url.is_empty()
+                        && !incoming_url.is_empty()
+                        && existing_url != incoming_url
+                    {
+                        tracing::warn!(
+                            protocol = %protocol_key,
+                            existing = %existing_url,
+                            incoming = %incoming_url,
+                            "conflicting base_url for same protocol — keeping first"
+                        );
+                    }
                 }
                 continue;
             }
 
-            // Then try to resolve as a Protocol (protocol-keyed new format)
+            // New protocol-keyed format
             if let Some(protocol) = self.parse_protocol(key) {
                 let protocol_key = protocol.as_str().to_string();
-                next.entry(protocol_key).or_insert_with(|| val.clone());
+                if !next.contains_key(&protocol_key) {
+                    // Keep only base_url, strip legacy endpoints array if present
+                    let base_url = val
+                        .as_object()
+                        .and_then(|o| o.get("base_url"))
+                        .cloned()
+                        .unwrap_or_else(|| val.clone());
+                    let mut entry = serde_json::Map::new();
+                    if let Some(s) = base_url.as_str() {
+                        entry.insert("base_url".to_string(), serde_json::Value::String(s.to_string()));
+                    } else if let Some(o) = val.as_object() {
+                        // val itself is an object; keep base_url only
+                        if let Some(b) = o.get("base_url") {
+                            entry.insert("base_url".to_string(), b.clone());
+                        }
+                    }
+                    next.insert(protocol_key, serde_json::Value::Object(entry));
+                }
                 continue;
             }
 
             // Unknown key — pass through verbatim with a warning
             tracing::warn!(key = %key, "leaving unrecognized protocol_endpoints key unchanged");
             next.entry(key.clone()).or_insert_with(|| val.clone());
-        }
-
-        // Post-process: if a protocol was endpoint-keyed but ends up with all
-        // endpoints of its protocol, remove the explicit endpoints list (= "all supported")
-        for (protocol_key, entry_val) in next.iter_mut() {
-            if let Ok(protocol) = protocol_key.parse::<Protocol>()
-                && let Some(obj) = entry_val.as_object_mut()
-            {
-                if let Some(eps_val) = obj.get("endpoints").and_then(|v| v.as_array()) {
-                    let all_for_protocol: Vec<_> = self
-                        .list_by_protocol(protocol)
-                        .iter()
-                        .map(|h| h.id().name)
-                        .collect();
-                    let all_present = all_for_protocol
-                        .iter()
-                        .all(|n| eps_val.iter().any(|v| v.as_str() == Some(n)));
-                    if all_present && all_for_protocol.len() == eps_val.len() {
-                        obj.remove("endpoints");
-                    }
-                }
-            }
         }
 
         serde_json::Value::Object(next).to_string()
