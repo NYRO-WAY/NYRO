@@ -162,7 +162,12 @@ impl ProviderProtocols {
                 for handler in reg.list_by_protocol(protocol) {
                     let id = handler.id();
                     if seen.insert(id) {
-                        endpoints.push((id, ProtocolEndpointEntry { base_url: entry.base_url.clone() }));
+                        endpoints.push((
+                            id,
+                            ProtocolEndpointEntry {
+                                base_url: entry.base_url.clone(),
+                            },
+                        ));
                     }
                 }
                 continue;
@@ -172,7 +177,12 @@ impl ProviderProtocols {
             if let Some(id) = Self::parse_protocol_key(key)
                 && seen.insert(id)
             {
-                endpoints.push((id, ProtocolEndpointEntry { base_url: entry.base_url.clone() }));
+                endpoints.push((
+                    id,
+                    ProtocolEndpointEntry {
+                        base_url: entry.base_url.clone(),
+                    },
+                ));
             }
         }
 

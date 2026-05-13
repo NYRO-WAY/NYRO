@@ -277,7 +277,10 @@ impl ProtocolRegistry {
                         .unwrap_or_else(|| val.clone());
                     let mut entry = serde_json::Map::new();
                     if let Some(s) = base_url.as_str() {
-                        entry.insert("base_url".to_string(), serde_json::Value::String(s.to_string()));
+                        entry.insert(
+                            "base_url".to_string(),
+                            serde_json::Value::String(s.to_string()),
+                        );
                     } else if let Some(o) = val.as_object() {
                         // val itself is an object; keep base_url only
                         if let Some(b) = o.get("base_url") {

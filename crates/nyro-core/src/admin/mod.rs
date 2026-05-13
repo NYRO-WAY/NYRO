@@ -2061,7 +2061,6 @@ impl AdminService {
         });
         Ok(before.saturating_sub(sessions.len()))
     }
-
 }
 
 fn parse_auth_session_bundle(session: &AuthSession) -> anyhow::Result<CredentialBundle> {
@@ -2551,7 +2550,9 @@ fn sync_runtime_protocol_endpoints(provider: &Provider, base_url: &str) -> anyho
         endpoints
             .entry(default_protocol)
             .and_modify(|entry| entry.base_url = runtime_base_url.to_string())
-            .or_insert_with(|| ProtocolEndpointEntry { base_url: runtime_base_url.to_string() });
+            .or_insert_with(|| ProtocolEndpointEntry {
+                base_url: runtime_base_url.to_string(),
+            });
     }
 
     Ok(serde_json::to_string(&endpoints)?)

@@ -555,7 +555,9 @@ impl Provider {
         if !self.protocol.trim().is_empty() && !self.base_url.trim().is_empty() {
             map.insert(
                 self.protocol.trim().to_string(),
-                ProtocolEndpointEntry { base_url: self.base_url.trim().to_string() },
+                ProtocolEndpointEntry {
+                    base_url: self.base_url.trim().to_string(),
+                },
             );
         }
         map

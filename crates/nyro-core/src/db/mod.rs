@@ -260,10 +260,7 @@ async fn drop_provider_column_if_exists(
     Ok(())
 }
 
-async fn drop_route_column_if_exists(
-    pool: &SqlitePool,
-    column_name: &str,
-) -> anyhow::Result<()> {
+async fn drop_route_column_if_exists(pool: &SqlitePool, column_name: &str) -> anyhow::Result<()> {
     if column_exists(pool, "routes", column_name).await? {
         let sql = format!("ALTER TABLE routes DROP COLUMN {column_name}");
         sqlx::query(&sql).execute(pool).await?;
