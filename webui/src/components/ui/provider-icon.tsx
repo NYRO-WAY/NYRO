@@ -27,6 +27,7 @@ interface ProviderIconProps {
 }
 
 const ICON_ALIASES: Record<string, string> = {
+  custom: "nyro",
   claude: "anthropic",
   chatgpt: "openai",
   gpt: "openai",
