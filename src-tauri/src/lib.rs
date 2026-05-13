@@ -116,8 +116,22 @@ pub fn run() {
             commands::sync_cli_config,
             commands::restore_cli_config,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|app, event| {
+            if let tauri::RunEvent::Reopen {
+                has_visible_windows,
+                ..
+            } = event
+            {
+                if !has_visible_windows {
+                    if let Some(w) = app.get_webview_window("main") {
+                        let _ = w.show();
+                        let _ = w.set_focus();
+                    }
+                }
+            }
+        });
 }
 
 fn setup_tray(app: &tauri::App, proxy_port: u16) -> Result<TrayIcon, Box<dyn std::error::Error>> {
