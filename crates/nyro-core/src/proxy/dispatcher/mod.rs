@@ -599,86 +599,68 @@ pub async fn dispatch_pipeline(
         let egress_caps = egress.handler().capabilities();
         let upstream_forces_stream = egress_caps.force_upstream_stream;
 
+        // ── Build context structs (replaces the long flat argument lists) ──────
+        let call_ctx = CallCtx {
+            gw: gw.clone(),
+            provider: &provider,
+            egress,
+            ingress,
+            ingress_str: &ingress_str,
+            egress_str: &egress_str,
+            request_model: &request_model,
+            actual_model: &actual_model,
+            api_key_id: auth_key.id.as_deref(),
+            start,
+        };
+        let cache_ctx = CacheWriteCtx {
+            cache_key: request_cache_key.as_deref(),
+            allow_exact_store: exact_enabled_for_route,
+            exact_cache_ttl: Some(exact_ttl),
+            semantic: semantic_write_ctx.clone(),
+            expose_headers: miss_expose_headers,
+        };
+        let req_extras = RequestExtras {
+            method: method_owned.clone(),
+            path: path_owned.clone(),
+            headers: request_headers_str.clone(),
+            body: request_body_str.clone(),
+        };
+
         let response = if is_stream {
             handle_stream(
-                gw.clone(),
                 client,
                 &outbound.url,
                 outbound.headers,
-                &provider,
-                egress,
-                ingress,
                 outbound.body,
-                &ingress_str,
-                &egress_str,
-                &request_model,
-                &actual_model,
-                auth_key.id.as_deref(),
-                start,
-                request_cache_key.as_deref(),
-                exact_enabled_for_route,
-                Some(exact_ttl),
-                semantic_write_ctx.clone(),
+                &call_ctx,
+                &cache_ctx,
+                &req_extras,
                 singleflight_leader.as_ref().map(|(k, _)| k.as_str()),
                 singleflight_leader.as_ref().map(|(_, tx)| tx.clone()),
-                miss_expose_headers,
-                &method_owned,
-                &path_owned,
-                request_headers_str.clone(),
-                request_body_str.clone(),
                 passthrough_resp,
             )
             .await
         } else if upstream_forces_stream {
             handle_non_stream_via_upstream_stream(
-                gw.clone(),
                 client,
                 &outbound.url,
                 outbound.headers,
-                &provider,
-                egress,
-                ingress,
                 outbound.body,
-                &ingress_str,
-                &egress_str,
-                &request_model,
-                &actual_model,
-                auth_key.id.as_deref(),
-                start,
-                request_cache_key.as_deref(),
-                exact_enabled_for_route,
-                Some(exact_ttl),
-                semantic_write_ctx.clone(),
-                miss_expose_headers,
+                &call_ctx,
+                &cache_ctx,
             )
             .await
         } else {
             handle_non_stream(
-                gw.clone(),
                 client,
                 &outbound.url,
                 outbound.headers,
-                &provider,
+                outbound.body,
+                &call_ctx,
+                &cache_ctx,
+                &req_extras,
                 adapter.as_ref(),
                 &ctx,
-                egress,
-                ingress,
-                outbound.body,
-                &ingress_str,
-                &egress_str,
-                &request_model,
-                &actual_model,
-                auth_key.id.as_deref(),
-                start,
-                request_cache_key.as_deref(),
-                exact_enabled_for_route,
-                Some(exact_ttl),
-                semantic_write_ctx.clone(),
-                miss_expose_headers,
-                &method_owned,
-                &path_owned,
-                request_headers_str.clone(),
-                request_body_str.clone(),
                 passthrough_resp,
             )
             .await
@@ -795,43 +777,82 @@ pub async fn dispatch(
     dispatch_pipeline(gw, headers, envelope, request, ingress).await
 }
 
+// ── Handler context types ─────────────────────────────────────────────────────
+
+/// Core per-request dispatch context: routing identity, timing, and log
+/// metadata. Shared by all three HTTP-level handlers so they no longer need
+/// a long flat parameter list for the same information.
+struct CallCtx<'a> {
+    gw: Gateway,
+    provider: &'a Provider,
+    egress: ProtocolId,
+    ingress: ProtocolId,
+    ingress_str: &'a str,
+    egress_str: &'a str,
+    request_model: &'a str,
+    actual_model: &'a str,
+    api_key_id: Option<&'a str>,
+    start: Instant,
+}
+
+/// Cache write parameters for a single upstream call. Shared by all three
+/// HTTP-level handlers.
+struct CacheWriteCtx<'a> {
+    cache_key: Option<&'a str>,
+    allow_exact_store: bool,
+    exact_cache_ttl: Option<Duration>,
+    /// Semantic-cache write context; `None` when semantic cache is disabled.
+    semantic: Option<SemanticWriteContext>,
+    expose_headers: bool,
+}
+
+/// Owned request HTTP metadata kept for log entries. Used by the non-stream
+/// and stream handlers (not the force-stream handler which omits request
+/// details from its log path).
+struct RequestExtras {
+    method: String,
+    path: String,
+    headers: Option<String>,
+    body: Option<String>,
+}
+
 // ── Non-streaming response handler ───────────────────────────────────────────
 
-#[allow(clippy::too_many_arguments)]
 async fn handle_non_stream(
-    gw: Gateway,
     client: ProxyClient,
     url: &str,
     headers: ReqwestHeaderMap,
-    provider: &Provider,
-    adapter: &dyn crate::provider::vendor::Vendor,
-    ctx: &ProviderCtx<'_>,
-    egress: ProtocolId,
-    ingress: ProtocolId,
     body: Value,
-    ingress_str: &str,
-    egress_str: &str,
-    request_model: &str,
-    actual_model: &str,
-    api_key_id: Option<&str>,
-    start: Instant,
-    cache_key: Option<&str>,
-    allow_exact_store: bool,
-    exact_cache_ttl: Option<Duration>,
-    semantic_write_ctx: Option<SemanticWriteContext>,
-    expose_headers: bool,
-    ingress_method: &str,
-    ingress_path: &str,
-    request_headers_str: Option<String>,
-    request_body_str: Option<String>,
+    call_ctx: &CallCtx<'_>,
+    cache_ctx: &CacheWriteCtx<'_>,
+    req_extras: &RequestExtras,
+    adapter: &dyn crate::provider::vendor::Vendor,
+    // `ctx` is the vendor-level provider context used for codec operations.
+    ctx: &ProviderCtx<'_>,
     // When true: Native protocol + no response mutations → skip IR round-trip.
     passthrough_resp: bool,
 ) -> Response {
+    // ── Unpack context structs into local aliases (matches the old param names) ──
+    let gw = &call_ctx.gw;
+    let provider = call_ctx.provider;
+    let egress = call_ctx.egress;
+    let ingress = call_ctx.ingress;
+    let ingress_str = call_ctx.ingress_str;
+    let egress_str = call_ctx.egress_str;
+    let request_model = call_ctx.request_model;
+    let actual_model = call_ctx.actual_model;
+    let api_key_id = call_ctx.api_key_id;
+    let start = call_ctx.start;
+    let cache_key = cache_ctx.cache_key;
+    let allow_exact_store = cache_ctx.allow_exact_store;
+    let exact_cache_ttl = cache_ctx.exact_cache_ttl;
+    let semantic_write_ctx = cache_ctx.semantic.clone();
+    let expose_headers = cache_ctx.expose_headers;
     let make_extras = |response_body: Option<String>, resp_headers: Option<String>| LogExtras {
-        method: Some(ingress_method.to_string()),
-        path: Some(ingress_path.to_string()),
-        request_headers: request_headers_str.clone(),
-        request_body: request_body_str.clone(),
+        method: Some(req_extras.method.clone()),
+        path: Some(req_extras.path.clone()),
+        request_headers: req_extras.headers.clone(),
+        request_body: req_extras.body.clone(),
         response_headers: resp_headers,
         response_body,
     };
@@ -1057,28 +1078,30 @@ async fn handle_non_stream(
 /// Consume a streaming upstream response and return a non-streaming client
 /// response. Used when the egress protocol forces `stream: true` upstream
 /// (e.g. Responses API) but the ingress client requested non-stream.
-#[allow(clippy::too_many_arguments)]
 async fn handle_non_stream_via_upstream_stream(
-    gw: Gateway,
     client: ProxyClient,
     url: &str,
     headers: ReqwestHeaderMap,
-    provider: &Provider,
-    egress: ProtocolId,
-    ingress: ProtocolId,
     body: Value,
-    ingress_str: &str,
-    egress_str: &str,
-    request_model: &str,
-    actual_model: &str,
-    api_key_id: Option<&str>,
-    start: Instant,
-    cache_key: Option<&str>,
-    allow_exact_store: bool,
-    exact_cache_ttl: Option<Duration>,
-    semantic_write_ctx: Option<SemanticWriteContext>,
-    expose_headers: bool,
+    call_ctx: &CallCtx<'_>,
+    cache_ctx: &CacheWriteCtx<'_>,
 ) -> Response {
+    // ── Unpack context structs into local aliases (matches the old param names) ──
+    let gw = &call_ctx.gw;
+    let provider = call_ctx.provider;
+    let egress = call_ctx.egress;
+    let ingress = call_ctx.ingress;
+    let ingress_str = call_ctx.ingress_str;
+    let egress_str = call_ctx.egress_str;
+    let request_model = call_ctx.request_model;
+    let actual_model = call_ctx.actual_model;
+    let api_key_id = call_ctx.api_key_id;
+    let start = call_ctx.start;
+    let cache_key = cache_ctx.cache_key;
+    let allow_exact_store = cache_ctx.allow_exact_store;
+    let exact_cache_ttl = cache_ctx.exact_cache_ttl;
+    let semantic_write_ctx = cache_ctx.semantic.clone();
+    let expose_headers = cache_ctx.expose_headers;
     let call_result = match client.call_stream(url, headers, body.clone()).await {
         Ok(r) => r,
         Err(e) => {
@@ -1265,35 +1288,38 @@ async fn handle_non_stream_via_upstream_stream(
 
 // ── Streaming response handler ────────────────────────────────────────────────
 
-#[allow(clippy::too_many_arguments)]
 async fn handle_stream(
-    gw: Gateway,
     client: ProxyClient,
     url: &str,
     headers: ReqwestHeaderMap,
-    provider: &Provider,
-    egress: ProtocolId,
-    ingress: ProtocolId,
     body: Value,
-    ingress_str: &str,
-    egress_str: &str,
-    request_model: &str,
-    actual_model: &str,
-    api_key_id: Option<&str>,
-    start: Instant,
-    cache_key: Option<&str>,
-    allow_exact_store: bool,
-    exact_cache_ttl: Option<Duration>,
-    semantic_write_ctx: Option<SemanticWriteContext>,
+    call_ctx: &CallCtx<'_>,
+    cache_ctx: &CacheWriteCtx<'_>,
+    req_extras: &RequestExtras,
     singleflight_key: Option<&str>,
     singleflight_tx: Option<broadcast::Sender<Vec<u8>>>,
-    expose_headers: bool,
-    ingress_method: &str,
-    ingress_path: &str,
-    request_headers_str: Option<String>,
-    request_body_str: Option<String>,
     passthrough_resp: bool,
 ) -> Response {
+    // ── Unpack context structs into local aliases (matches the old param names) ──
+    let gw = &call_ctx.gw;
+    let provider = call_ctx.provider;
+    let egress = call_ctx.egress;
+    let ingress = call_ctx.ingress;
+    let ingress_str = call_ctx.ingress_str;
+    let egress_str = call_ctx.egress_str;
+    let request_model = call_ctx.request_model;
+    let actual_model = call_ctx.actual_model;
+    let api_key_id = call_ctx.api_key_id;
+    let start = call_ctx.start;
+    let cache_key = cache_ctx.cache_key;
+    let allow_exact_store = cache_ctx.allow_exact_store;
+    let exact_cache_ttl = cache_ctx.exact_cache_ttl;
+    let semantic_write_ctx = cache_ctx.semantic.clone();
+    let expose_headers = cache_ctx.expose_headers;
+    let ingress_method = req_extras.method.as_str();
+    let ingress_path = req_extras.path.as_str();
+    let request_headers_str = req_extras.headers.clone();
+    let request_body_str = req_extras.body.clone();
     let make_extras_owned = {
         let method = ingress_method.to_string();
         let path_s = ingress_path.to_string();
