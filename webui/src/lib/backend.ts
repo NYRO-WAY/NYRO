@@ -146,6 +146,8 @@ function resolveHTTP(cmd: string, args?: Record<string, unknown>): HTTPMapping {
       const qs = params.toString();
       return { method: "GET", url: `${base}/logs${qs ? "?" + qs : ""}` };
     }
+    case "get_log":
+      return { method: "GET", url: `${base}/logs/${args?.id}` };
 
     case "get_stats_overview": {
       const hours = args?.hours;
