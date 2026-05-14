@@ -399,7 +399,21 @@ impl StreamFormatter for ResponsesStreamFormatter {
                     }
                 }
                 StreamDelta::Usage(u) => {
-                    self.usage = u.clone();
+                    if u.input_tokens > 0 {
+                        self.usage.input_tokens = u.input_tokens;
+                    }
+                    if u.output_tokens > 0 {
+                        self.usage.output_tokens = u.output_tokens;
+                    }
+                    if u.cache_read_input_tokens.is_some() {
+                        self.usage.cache_read_input_tokens = u.cache_read_input_tokens;
+                    }
+                    if u.cache_creation_input_tokens.is_some() {
+                        self.usage.cache_creation_input_tokens = u.cache_creation_input_tokens;
+                    }
+                    if u.server_tool_use.is_some() {
+                        self.usage.server_tool_use = u.server_tool_use.clone();
+                    }
                 }
                 StreamDelta::RawEvent { .. } => {}
                 StreamDelta::Done { .. } => {
