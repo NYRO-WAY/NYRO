@@ -157,9 +157,15 @@ pub struct RouteTarget {
 #[serde(rename_all = "snake_case")]
 #[derive(Default)]
 pub enum RouteStrategy {
+    /// Weighted reservoir sampling — targets with higher weight are preferred.
     #[default]
     Weighted,
+    /// Priority groups — lower priority number tried first; random within group.
     Priority,
+    /// Cooldown-aware round-robin — deprioritises recently-used targets.
+    Cooldown,
+    /// Latency-ordered — targets sorted by ascending EMA response latency.
+    Latency,
 }
 
 impl RouteStrategy {
@@ -167,6 +173,8 @@ impl RouteStrategy {
         match self {
             Self::Weighted => "weighted",
             Self::Priority => "priority",
+            Self::Cooldown => "cooldown",
+            Self::Latency => "latency",
         }
     }
 }
@@ -178,6 +186,8 @@ impl std::str::FromStr for RouteStrategy {
         match s.trim().to_ascii_lowercase().as_str() {
             "weighted" => Ok(Self::Weighted),
             "priority" => Ok(Self::Priority),
+            "cooldown" => Ok(Self::Cooldown),
+            "latency" => Ok(Self::Latency),
             other => anyhow::bail!("unsupported route strategy: {other}"),
         }
     }

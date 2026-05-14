@@ -1,7 +1,38 @@
-use crate::db::models::{RouteStrategy, RouteTarget};
-use rand::Rng;
-use std::collections::BTreeMap;
+//! Target selection strategies for the proxy routing layer.
+//!
+//! # Architecture
+//!
+//! Each strategy implements the [`RoutingStrategy`] trait and returns an
+//! ordered `Vec<SelectedTarget>` — the dispatcher tries them in order and
+//! stops on the first successful upstream response.
+//!
+//! | Strategy   | Description                                             |
+//! |------------|---------------------------------------------------------|
+//! | `weighted` | Weighted reservoir sampling (default)                   |
+//! | `priority` | Priority groups; random within a group                  |
+//! | `cooldown` | Deprioritises recently-used targets (round-robin style) |
+//! | `latency`  | Ascending EMA response-latency order                    |
+//!
+//! # Usage
+//!
+//! ```rust,ignore
+//! // Dispatcher
+//! let ordered = TargetSelector::select_ordered(&route.strategy, &targets);
+//! // After a successful call (for stateful strategies):
+//! TargetSelector::record_selected(&route.strategy, &target_key);
+//! TargetSelector::record_latency(&route.strategy, &target_key, elapsed_ms);
+//! ```
+
+use std::collections::{BTreeMap, HashMap};
 use std::str::FromStr;
+use std::sync::{OnceLock, RwLock};
+use std::time::{Duration, Instant};
+
+use rand::Rng;
+
+use crate::db::models::{RouteStrategy, RouteTarget};
+
+// ── SelectedTarget ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
 pub struct SelectedTarget {
@@ -9,45 +40,183 @@ pub struct SelectedTarget {
     pub model: String,
 }
 
+// ── RoutingStrategy trait ─────────────────────────────────────────────────────
+
+/// Produces an ordered list of targets to try, from most to least preferred.
+pub trait RoutingStrategy: Send + Sync {
+    fn select_ordered(&self, targets: &[RouteTarget]) -> Vec<SelectedTarget>;
+}
+
+// ── Weighted ──────────────────────────────────────────────────────────────────
+
+pub struct WeightedStrategy;
+
+impl RoutingStrategy for WeightedStrategy {
+    fn select_ordered(&self, targets: &[RouteTarget]) -> Vec<SelectedTarget> {
+        let refs: Vec<&RouteTarget> = targets.iter().filter(|t| t.weight > 0).collect();
+        weighted_shuffle(&refs)
+            .into_iter()
+            .map(to_selected)
+            .collect()
+    }
+}
+
+// ── Priority ──────────────────────────────────────────────────────────────────
+
+pub struct PriorityStrategy;
+
+impl RoutingStrategy for PriorityStrategy {
+    fn select_ordered(&self, targets: &[RouteTarget]) -> Vec<SelectedTarget> {
+        let mut groups: BTreeMap<i32, Vec<&RouteTarget>> = BTreeMap::new();
+        for t in targets {
+            groups.entry(t.priority).or_default().push(t);
+        }
+        groups
+            .into_values()
+            .flat_map(|group| group.into_iter().map(to_selected))
+            .collect()
+    }
+}
+
+// ── Cooldown ──────────────────────────────────────────────────────────────────
+
+/// Cooldown window: a target is fully "cooled" after this duration.
+const COOLDOWN: Duration = Duration::from_secs(60);
+
+/// Process-wide cooldown state. Tracks when each target was last selected.
+pub struct CooldownStrategy {
+    last_selected: RwLock<HashMap<String, Instant>>,
+}
+
+impl CooldownStrategy {
+    pub fn global() -> &'static Self {
+        static INSTANCE: OnceLock<CooldownStrategy> = OnceLock::new();
+        INSTANCE.get_or_init(|| CooldownStrategy {
+            last_selected: RwLock::new(HashMap::new()),
+        })
+    }
+
+    /// Mark `target_key` as just selected.
+    pub fn record_selected(&self, target_key: &str) {
+        if let Ok(mut map) = self.last_selected.write() {
+            map.insert(target_key.to_string(), Instant::now());
+        }
+    }
+}
+
+impl RoutingStrategy for CooldownStrategy {
+    fn select_ordered(&self, targets: &[RouteTarget]) -> Vec<SelectedTarget> {
+        let map = self.last_selected.read().unwrap_or_else(|p| p.into_inner());
+        let mut scored: Vec<(&RouteTarget, Duration)> = targets
+            .iter()
+            .map(|t| {
+                let key = target_key(t);
+                // How long since this target was last selected (capped at COOLDOWN).
+                // Targets never selected are treated as fully cooled.
+                let cooled_for = map
+                    .get(&key)
+                    .map(|inst| inst.elapsed().min(COOLDOWN))
+                    .unwrap_or(COOLDOWN);
+                (t, cooled_for)
+            })
+            .collect();
+        // Coolest (longest unused) first.
+        scored.sort_by(|a, b| b.1.cmp(&a.1));
+        scored.into_iter().map(|(t, _)| to_selected(t)).collect()
+    }
+}
+
+// ── Latency ───────────────────────────────────────────────────────────────────
+
+/// EMA smoothing factor: 20% weight to new observations.
+const LATENCY_ALPHA: f64 = 0.2;
+
+/// Process-wide latency state. Tracks EMA response latency per target.
+pub struct LatencyStrategy {
+    ema: RwLock<HashMap<String, f64>>,
+}
+
+impl LatencyStrategy {
+    pub fn global() -> &'static Self {
+        static INSTANCE: OnceLock<LatencyStrategy> = OnceLock::new();
+        INSTANCE.get_or_init(|| LatencyStrategy {
+            ema: RwLock::new(HashMap::new()),
+        })
+    }
+
+    /// Record a new latency observation for `target_key`.
+    pub fn record_latency(&self, target_key: &str, latency_ms: f64) {
+        if let Ok(mut map) = self.ema.write() {
+            let entry = map.entry(target_key.to_string()).or_insert(latency_ms);
+            *entry = LATENCY_ALPHA * latency_ms + (1.0 - LATENCY_ALPHA) * (*entry);
+        }
+    }
+}
+
+impl RoutingStrategy for LatencyStrategy {
+    fn select_ordered(&self, targets: &[RouteTarget]) -> Vec<SelectedTarget> {
+        let map = self.ema.read().unwrap_or_else(|p| p.into_inner());
+        let mut scored: Vec<(&RouteTarget, f64)> = targets
+            .iter()
+            .map(|t| {
+                let key = target_key(t);
+                // No observation yet → 0 ms (unobserved targets go first).
+                let ema = map.get(&key).copied().unwrap_or(0.0);
+                (t, ema)
+            })
+            .collect();
+        // Fastest first.
+        scored.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored.into_iter().map(|(t, _)| to_selected(t)).collect()
+    }
+}
+
+// ── TargetSelector (public entry point) ───────────────────────────────────────
+
 pub struct TargetSelector;
 
 impl TargetSelector {
+    /// Return targets ordered by the named strategy. Unrecognised strategy
+    /// strings fall back to `weighted`.
     pub fn select_ordered(strategy: &str, targets: &[RouteTarget]) -> Vec<SelectedTarget> {
-        let parsed = RouteStrategy::from_str(strategy).unwrap_or_default();
-        match parsed {
-            RouteStrategy::Weighted => weighted_select(targets),
-            RouteStrategy::Priority => priority_select(targets),
+        match RouteStrategy::from_str(strategy).unwrap_or_default() {
+            RouteStrategy::Weighted => WeightedStrategy.select_ordered(targets),
+            RouteStrategy::Priority => PriorityStrategy.select_ordered(targets),
+            RouteStrategy::Cooldown => CooldownStrategy::global().select_ordered(targets),
+            RouteStrategy::Latency => LatencyStrategy::global().select_ordered(targets),
+        }
+    }
+
+    /// Record that `target_key` was successfully selected.
+    /// Only meaningful for the `cooldown` strategy; a no-op for others.
+    pub fn record_selected(strategy: &str, target_key: &str) {
+        if RouteStrategy::from_str(strategy).unwrap_or_default() == RouteStrategy::Cooldown {
+            CooldownStrategy::global().record_selected(target_key);
+        }
+    }
+
+    /// Record observed response latency for `target_key`.
+    /// Only meaningful for the `latency` strategy; a no-op for others.
+    pub fn record_latency(strategy: &str, target_key: &str, latency_ms: f64) {
+        if RouteStrategy::from_str(strategy).unwrap_or_default() == RouteStrategy::Latency {
+            LatencyStrategy::global().record_latency(target_key, latency_ms);
         }
     }
 }
 
-fn weighted_select(targets: &[RouteTarget]) -> Vec<SelectedTarget> {
-    let refs: Vec<&RouteTarget> = targets.iter().filter(|target| target.weight > 0).collect();
-    weighted_shuffle(&refs)
-        .into_iter()
-        .map(|target| SelectedTarget {
-            provider_id: target.provider_id.clone(),
-            model: target.model.clone(),
-        })
-        .collect()
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+#[inline]
+fn target_key(t: &RouteTarget) -> String {
+    format!("{}:{}", t.provider_id, t.model)
 }
 
-fn priority_select(targets: &[RouteTarget]) -> Vec<SelectedTarget> {
-    let mut groups: BTreeMap<i32, Vec<&RouteTarget>> = BTreeMap::new();
-    for target in targets {
-        groups.entry(target.priority).or_default().push(target);
+#[inline]
+fn to_selected(t: &RouteTarget) -> SelectedTarget {
+    SelectedTarget {
+        provider_id: t.provider_id.clone(),
+        model: t.model.clone(),
     }
-
-    let mut ordered = Vec::new();
-    for (_, group) in groups {
-        for target in group {
-            ordered.push(SelectedTarget {
-                provider_id: target.provider_id.clone(),
-                model: target.model.clone(),
-            });
-        }
-    }
-    ordered
 }
 
 fn weighted_shuffle<'a>(targets: &[&'a RouteTarget]) -> Vec<&'a RouteTarget> {
@@ -57,12 +226,12 @@ fn weighted_shuffle<'a>(targets: &[&'a RouteTarget]) -> Vec<&'a RouteTarget> {
     let mut rng = rand::thread_rng();
     let mut items: Vec<(&RouteTarget, f64)> = targets
         .iter()
-        .map(|target| {
-            let weight = target.weight.max(1) as f64;
+        .map(|t| {
+            let weight = t.weight.max(1) as f64;
             let key = rng.r#gen::<f64>().powf(1.0 / weight);
-            (*target, key)
+            (*t, key)
         })
         .collect();
     items.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-    items.into_iter().map(|(target, _)| target).collect()
+    items.into_iter().map(|(t, _)| t).collect()
 }

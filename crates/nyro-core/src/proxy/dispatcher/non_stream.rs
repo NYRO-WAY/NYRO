@@ -12,6 +12,7 @@ use reqwest::header::HeaderMap as ReqwestHeaderMap;
 use serde_json::Value;
 
 use crate::cache::entry::CacheEntry;
+use crate::integrations::{HookContext, HookRegistry};
 use crate::provider::inbound::InboundResponse;
 use crate::provider::vendor::ProviderCtx;
 use crate::proxy::client::ProxyClient;
@@ -144,6 +145,22 @@ pub(super) async fn handle_non_stream(
     // Ensure actual_model is set in the response.
     if internal_resp.model.is_empty() {
         internal_resp.model = actual_model.to_string();
+    }
+
+    // ── Response hooks ──────────────────────────────────────────────────────
+    let hook_registry = HookRegistry::global();
+    if hook_registry.has_response_hooks() {
+        let latency_ms = call_ctx.start.elapsed().as_millis() as u64;
+        let hook_ctx = HookContext {
+            route_id: call_ctx.route_id.to_string(),
+            provider_name: call_ctx.provider.name.clone(),
+            model: internal_resp.model.clone(),
+            api_key_id: call_ctx.api_key_id.map(str::to_string),
+        };
+        for hook in hook_registry.response_hooks() {
+            hook.on_response(&hook_ctx, &mut internal_resp, latency_ms)
+                .await;
+        }
     }
 
     let is_tool = !internal_resp.tool_calls.is_empty();

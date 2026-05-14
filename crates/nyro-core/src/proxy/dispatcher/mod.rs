@@ -97,7 +97,7 @@ pub async fn dispatch_pipeline(
         headers: request_headers_str.clone(),
         body: request_body_str.clone(),
     };
-    let internal: InternalRequest = request.into();
+    let mut internal: InternalRequest = request.into();
     let start = Instant::now();
     let request_model = internal.model.clone();
     let is_stream = internal.stream;
@@ -346,6 +346,36 @@ pub async fn dispatch_pipeline(
         None
     };
 
+    // ── Request hooks ──────────────────────────────────────────────────────────
+
+    let hook_registry = crate::integrations::HookRegistry::global();
+    if hook_registry.has_request_hooks() {
+        let hook_ctx = crate::integrations::HookContext {
+            route_id: route.id.clone(),
+            provider_name: String::new(),
+            model: internal.model.clone(),
+            api_key_id: auth_key.id.clone(),
+        };
+        for hook in hook_registry.request_hooks() {
+            if let Err(e) = hook.on_request(&hook_ctx, &mut internal).await {
+                tracing::warn!(hook = hook.name(), error = %e, "request hook rejected request");
+                LogBuilder::from_dispatch(
+                    &gw,
+                    &ingress_str,
+                    &request_model,
+                    auth_key.id.as_deref(),
+                    start,
+                    is_stream,
+                )
+                .status(500)
+                .error(format!("request hook `{}` rejected: {e}", hook.name()))
+                .with_req_extras(&req_extras)
+                .emit();
+                return error_response(500, &e.to_string());
+            }
+        }
+    }
+
     // ── Target iteration ──────────────────────────────────────────────────────
 
     let targets = load_route_targets(&gw, &route).await;
@@ -526,6 +556,7 @@ pub async fn dispatch_pipeline(
         let call_ctx = CallCtx {
             gw: gw.clone(),
             provider: &provider,
+            route_id: &route.id,
             egress,
             ingress,
             ingress_str: &ingress_str,
@@ -589,6 +620,9 @@ pub async fn dispatch_pipeline(
                 finalize_singleflight(&gw, singleflight_leader.as_ref(), true).await;
             }
             gw.health_registry.record_success(&target_key);
+            let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+            TargetSelector::record_selected(&route.strategy, &target_key);
+            TargetSelector::record_latency(&route.strategy, &target_key, elapsed_ms);
             return response;
         }
         gw.health_registry.record_failure(&target_key);
@@ -679,6 +713,7 @@ pub async fn dispatch(
 struct CallCtx<'a> {
     gw: Gateway,
     provider: &'a Provider,
+    route_id: &'a str,
     egress: ProtocolId,
     ingress: ProtocolId,
     ingress_str: &'a str,

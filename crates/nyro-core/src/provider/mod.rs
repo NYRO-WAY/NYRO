@@ -12,8 +12,8 @@
 //! ├── inbound.rs          — InboundResponse (wire-format inbound)
 //! ├── stream.rs           — ProviderStreamParser trait
 //! ├── common/
-//! │   ├── openai.rs       — shared Bearer auth / URL helpers
-//! │   └── pipeline.rs     — standard 7-step request/response pipeline
+//! │   ├── openai_compat.rs — Bearer auth, URL helpers, openai_compat_vendor! macro
+//! │   └── pipeline.rs      — standard 7-step request/response pipeline
 //! └── <vendor>/mod.rs     — per-vendor Vendor impls
 //! ```
 

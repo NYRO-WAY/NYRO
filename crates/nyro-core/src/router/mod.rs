@@ -3,7 +3,10 @@ mod matcher;
 pub mod selector;
 
 pub use matcher::RouteCache;
-pub use selector::{SelectedTarget, TargetSelector};
+pub use selector::{
+    CooldownStrategy, LatencyStrategy, PriorityStrategy, RoutingStrategy, SelectedTarget,
+    TargetSelector, WeightedStrategy,
+};
 
 use crate::db::models::Route;
 
