@@ -110,6 +110,9 @@ struct YamlProviderRaw {
     pub models_source: Option<String>,
     #[serde(default)]
     pub static_models: Option<Vec<String>>,
+    // Deprecated: capabilities_source was removed; captured here only to emit a warning.
+    #[serde(default)]
+    pub capabilities_source: Option<serde_json::Value>,
 }
 
 impl TryFrom<YamlProviderRaw> for YamlProvider {
@@ -138,6 +141,13 @@ impl TryFrom<YamlProviderRaw> for YamlProvider {
                 return Err(format!("provider '{}': 'api_key' is required", r.name));
             }
         };
+        if r.capabilities_source.is_some() {
+            tracing::warn!(
+                provider = %r.name,
+                "YAML field 'capabilities_source' is no longer supported and will be ignored; \
+                 remove it from your config file"
+            );
+        }
         Ok(YamlProvider {
             name: r.name,
             vendor: r.vendor,
@@ -177,6 +187,9 @@ pub struct YamlRoute {
     pub targets: Vec<YamlRouteTarget>,
     #[serde(default)]
     pub access_control: bool,
+    // Deprecated: route_type / type was removed; captured here only to emit a warning.
+    #[serde(default, alias = "type")]
+    pub route_type: Option<String>,
 }
 
 fn default_strategy() -> String {
@@ -259,6 +272,13 @@ impl YamlConfig {
         for (i, r) in self.routes.iter().enumerate() {
             if r.name.trim().is_empty() {
                 anyhow::bail!("routes[{i}]: name is required");
+            }
+            if r.route_type.is_some() {
+                tracing::warn!(
+                    route = %r.name,
+                    "YAML field 'type' (route_type) is no longer supported and will be ignored; \
+                     remove it from your config file"
+                );
             }
             if r.virtual_model.trim().is_empty() {
                 anyhow::bail!("routes[{i}] ({}): virtual_model is required", r.name);
@@ -582,15 +602,24 @@ providers:
         let providers = build_providers(&cfg);
         assert_eq!(providers.len(), 1);
         let p = &providers[0];
-        assert_eq!(p.protocol, "openai/chat/v1");
-        assert_eq!(p.default_protocol, "openai/chat/v1");
+        // Canonical IDs now use `<protocol-short>/<name>/<version>` form.
+        assert_eq!(p.protocol, "openai-compat/chat-completions/v1");
+        assert_eq!(p.default_protocol, "openai-compat/chat-completions/v1");
         let endpoints: serde_json::Value =
             serde_json::from_str(&p.protocol_endpoints).expect("valid json");
         let obj = endpoints.as_object().expect("object");
-        assert!(obj.contains_key("openai/chat/v1"));
-        assert!(obj.contains_key("anthropic/messages/2023-06-01"));
-        assert!(!obj.contains_key("openai"));
-        assert!(!obj.contains_key("anthropic"));
+        // build_providers canonicalizes via resolve_alias → ProtocolEndpoint::to_string,
+        // so keys are full canonical endpoint IDs.
+        assert!(
+            obj.contains_key("openai-compat/chat-completions/v1"),
+            "expected openai-compat/chat-completions/v1 key"
+        );
+        assert!(
+            obj.contains_key("anthropic-msgs/messages/2023-06-01"),
+            "expected anthropic-msgs/messages/2023-06-01 key"
+        );
+        assert!(!obj.contains_key("openai"), "raw alias must not appear");
+        assert!(!obj.contains_key("anthropic"), "raw alias must not appear");
     }
 
     #[test]
@@ -610,5 +639,100 @@ providers:
             err.contains("protocol 'gemini'") && err.contains("no matching endpoint"),
             "unexpected error: {err}"
         );
+    }
+
+    // ── Deprecated field acceptance ────────────────────────────────────────────
+
+    #[test]
+    fn deprecated_route_type_field_is_silently_parsed() {
+        // `type` / `route_type` was removed in Q2. Existing YAML configs that
+        // still carry this field must parse and validate without error, and must
+        // produce the same `Route` output as configs without it.
+        let yaml = r#"
+providers:
+  - name: openai
+    endpoints:
+      openai:
+        base_url: https://api.openai.com/v1
+    apikey: sk-x
+routes:
+  - name: embeddings
+    vmodel: text-embedding-3-small
+    type: embedding
+    targets:
+      - provider: openai
+        model: text-embedding-3-small
+  - name: chat
+    vmodel: gpt-4o
+    route_type: chat
+    targets:
+      - provider: openai
+        model: gpt-4o
+"#;
+        let cfg: YamlConfig = serde_yaml::from_str(yaml).expect("parse");
+        cfg.validate()
+            .expect("validate must succeed for deprecated type field");
+        assert_eq!(cfg.routes.len(), 2);
+
+        let providers = build_providers(&cfg);
+        let routes = build_routes(&cfg, &providers);
+        assert_eq!(routes.len(), 2);
+        // Both routes are built correctly; route_type is not propagated.
+        assert_eq!(routes[0].name, "embeddings");
+        assert_eq!(routes[1].name, "chat");
+    }
+
+    #[test]
+    fn deprecated_capabilities_source_field_is_silently_parsed() {
+        // `capabilities_source` was removed in Q3. Configs that still carry it
+        // must parse and validate without error; the field is not propagated.
+        let yaml = r#"
+providers:
+  - name: openai
+    endpoints:
+      openai:
+        base_url: https://api.openai.com/v1
+    apikey: sk-x
+    capabilities_source: models.dev
+routes:
+  - name: chat
+    vmodel: gpt-4o
+    targets:
+      - provider: openai
+        model: gpt-4o
+"#;
+        let cfg: YamlConfig = serde_yaml::from_str(yaml).expect("parse");
+        cfg.validate()
+            .expect("validate must succeed for deprecated capabilities_source");
+
+        let providers = build_providers(&cfg);
+        assert_eq!(providers.len(), 1);
+        assert_eq!(providers[0].name, "openai");
+    }
+
+    #[test]
+    fn both_deprecated_fields_together_are_accepted() {
+        let yaml = r#"
+providers:
+  - name: openai
+    endpoints:
+      openai:
+        base_url: https://api.openai.com/v1
+    apikey: sk-x
+    capabilities_source: http
+routes:
+  - name: embeddings
+    vmodel: text-embedding-3-small
+    type: embedding
+    targets:
+      - provider: openai
+        model: text-embedding-3-small
+"#;
+        let cfg: YamlConfig = serde_yaml::from_str(yaml).expect("parse");
+        cfg.validate().expect("validate");
+        let providers = build_providers(&cfg);
+        let routes = build_routes(&cfg, &providers);
+        assert_eq!(providers.len(), 1);
+        assert_eq!(routes.len(), 1);
     }
 }

@@ -71,7 +71,6 @@ routes:
 
   - name: text-embedding-3-small
     vmodel: text-embedding-3-small
-    type: embedding
     targets:
       - provider: openai
         model: text-embedding-3-small
