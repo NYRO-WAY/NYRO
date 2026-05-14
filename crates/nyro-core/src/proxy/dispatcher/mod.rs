@@ -21,23 +21,24 @@
 //!   6. Finalize singleflight; return last error or 502.
 
 mod accumulator;
+mod auth;
+mod non_stream;
+mod stream;
 mod util;
 use self::accumulator::*;
+use self::auth::{GatewayProxyAccessStore, authorize_route_access, get_provider};
+use self::non_stream::{handle_non_stream, handle_non_stream_via_upstream_stream};
+use self::stream::handle_stream;
 use self::util::*;
 
 use std::convert::Infallible;
 use std::time::Instant;
 
-use bytes::Bytes;
-
-use async_trait::async_trait;
 use axum::Json;
 use axum::body::Body;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use dashmap::mapref::entry::Entry as DashEntry;
-use futures::StreamExt;
-use reqwest::header::HeaderMap as ReqwestHeaderMap;
 use serde_json::Value;
 use tokio::sync::broadcast;
 use tokio::time::{Duration, timeout};
@@ -46,22 +47,19 @@ use tokio_stream::wrappers::ReceiverStream;
 use crate::Gateway;
 use crate::cache::entry::CacheEntry;
 use crate::cache::key::{build_cache_key, build_semantic_partition};
-use crate::db::models::{Provider, Route};
+use crate::db::models::Provider;
 use crate::error::{AuthFailure, GatewayError};
 use crate::protocol::ProviderProtocols;
 use crate::protocol::ids::{OPENAI_CHAT_COMPLETIONS_V1, OPENAI_EMBEDDINGS_V1, ProtocolId};
 use crate::protocol::ir::{AiRequest, RawEnvelope};
 use crate::protocol::types::{InternalRequest, InternalResponse, StreamDelta, TokenUsage};
-use crate::provider::inbound::InboundResponse;
 use crate::provider::vendor::ProviderCtx;
 use crate::provider::{VendorCtx, VendorRegistry};
 use crate::proxy::client::ProxyClient;
 use crate::proxy::context::RequestContext;
 use crate::proxy::observability::{LogExtras, emit_log, headers_to_json};
 use crate::proxy::planner::{ProtocolMode, negotiate};
-use crate::proxy::security::{extract_api_key, is_key_expired};
 use crate::router::TargetSelector;
-use crate::storage::traits::{ApiKeyAccessRecord, UsageWindow};
 
 // ── Public entry points ───────────────────────────────────────────────────────
 
@@ -92,6 +90,13 @@ pub async fn dispatch_pipeline(
         .as_ref()
         .and_then(|b| serde_json::to_string(b).ok());
     let request_headers_str = serde_json::to_string(&envelope.headers).ok();
+    // Built early so it can be used by both pre-loop log entries and the per-target handlers.
+    let req_extras = RequestExtras {
+        method: method_owned.clone(),
+        path: path_owned.clone(),
+        headers: request_headers_str.clone(),
+        body: request_body_str.clone(),
+    };
     let internal: InternalRequest = request.into();
     let start = Instant::now();
     let request_model = internal.model.clone();
@@ -108,32 +113,14 @@ pub async fn dispatch_pipeline(
         Some(r) => r,
         None => {
             let msg = format!("no route for model: {request_model}");
-            emit_log(
-                &gw,
-                &ingress_str,
-                &ingress_str,
-                &request_model,
-                "",
-                None,
-                "",
-                404,
-                start.elapsed().as_millis() as f64,
-                TokenUsage::default(),
-                is_stream,
-                false,
-                Some(msg.clone()),
-                None,
-                LogExtras {
-                    method: Some(method_owned.clone()),
-                    path: Some(path_owned.clone()),
-                    request_headers: request_headers_str.clone(),
-                    request_body: request_body_str.clone(),
-                    response_headers: None,
-                    response_body: Some(
-                        serde_json::json!({ "error": { "message": msg.clone() } }).to_string(),
-                    ),
-                },
-            );
+            LogBuilder::from_dispatch(&gw, &ingress_str, &request_model, None, start, is_stream)
+                .status(404)
+                .error(msg.clone())
+                .with_req_extras(&req_extras)
+                .resp_body(Some(
+                    serde_json::json!({ "error": { "message": msg.clone() } }).to_string(),
+                ))
+                .emit();
             return error_response(404, &msg);
         }
     };
@@ -145,30 +132,11 @@ pub async fn dispatch_pipeline(
         Ok(v) => v,
         Err(resp) => {
             let status = resp.status().as_u16() as i32;
-            emit_log(
-                &gw,
-                &ingress_str,
-                &ingress_str,
-                &request_model,
-                "",
-                None,
-                "",
-                status,
-                start.elapsed().as_millis() as f64,
-                TokenUsage::default(),
-                is_stream,
-                false,
-                Some(format!("authorization failed: {status}")),
-                None,
-                LogExtras {
-                    method: Some(method_owned.clone()),
-                    path: Some(path_owned.clone()),
-                    request_headers: request_headers_str.clone(),
-                    request_body: request_body_str.clone(),
-                    response_headers: None,
-                    response_body: None,
-                },
-            );
+            LogBuilder::from_dispatch(&gw, &ingress_str, &request_model, None, start, is_stream)
+                .status_i32(status)
+                .error(format!("authorization failed: {status}"))
+                .with_req_extras(&req_extras)
+                .emit();
             return resp;
         }
     };
@@ -225,33 +193,26 @@ pub async fn dispatch_pipeline(
             cache_config.exact.expose_headers,
         );
         let cached_usage = cached_entry.usage.clone();
-        emit_log(
+        LogBuilder::from_dispatch(
             &gw,
             &ingress_str,
-            &ingress_str,
             &request_model,
+            auth_key.id.as_deref(),
+            start,
+            is_stream,
+        )
+        .actual_model_str(
             cached_entry
                 .actual_model
                 .as_deref()
                 .unwrap_or(&request_model),
-            auth_key.id.as_deref(),
-            &cached_entry.provider_name,
-            cached_entry.status_code as i32,
-            start.elapsed().as_millis() as f64,
-            cached_usage,
-            is_stream,
-            false,
-            None,
-            None,
-            LogExtras {
-                method: Some(method_owned.clone()),
-                path: Some(path_owned.clone()),
-                request_headers: request_headers_str.clone(),
-                request_body: request_body_str.clone(),
-                response_headers: None,
-                response_body: serde_json::to_string(&cached_entry.payload).ok(),
-            },
-        );
+        )
+        .provider_str(&cached_entry.provider_name)
+        .status_i32(cached_entry.status_code as i32)
+        .usage(cached_usage)
+        .with_req_extras(&req_extras)
+        .resp_body(serde_json::to_string(&cached_entry.payload).ok())
+        .emit();
         return response;
     }
 
@@ -278,33 +239,26 @@ pub async fn dispatch_pipeline(
                         cache_config.exact.expose_headers,
                     );
                     let cached_usage = cached_entry.usage.clone();
-                    emit_log(
+                    LogBuilder::from_dispatch(
                         &gw,
                         &ingress_str,
-                        &ingress_str,
                         &request_model,
+                        auth_key.id.as_deref(),
+                        start,
+                        is_stream,
+                    )
+                    .actual_model_str(
                         cached_entry
                             .actual_model
                             .as_deref()
                             .unwrap_or(&request_model),
-                        auth_key.id.as_deref(),
-                        &cached_entry.provider_name,
-                        cached_entry.status_code as i32,
-                        start.elapsed().as_millis() as f64,
-                        cached_usage,
-                        is_stream,
-                        false,
-                        None,
-                        None,
-                        LogExtras {
-                            method: Some(method_owned.clone()),
-                            path: Some(path_owned.clone()),
-                            request_headers: request_headers_str.clone(),
-                            request_body: request_body_str.clone(),
-                            response_headers: None,
-                            response_body: serde_json::to_string(&cached_entry.payload).ok(),
-                        },
-                    );
+                    )
+                    .provider_str(&cached_entry.provider_name)
+                    .status_i32(cached_entry.status_code as i32)
+                    .usage(cached_usage)
+                    .with_req_extras(&req_extras)
+                    .resp_body(serde_json::to_string(&cached_entry.payload).ok())
+                    .emit();
                     return response;
                 }
             }
@@ -351,33 +305,26 @@ pub async fn dispatch_pipeline(
                 cache_config.semantic.expose_headers,
             );
             let cached_usage = cached_entry.usage.clone();
-            emit_log(
+            LogBuilder::from_dispatch(
                 &gw,
                 &ingress_str,
-                &ingress_str,
                 &request_model,
+                auth_key.id.as_deref(),
+                start,
+                is_stream,
+            )
+            .actual_model_str(
                 cached_entry
                     .actual_model
                     .as_deref()
                     .unwrap_or(&request_model),
-                auth_key.id.as_deref(),
-                &cached_entry.provider_name,
-                cached_entry.status_code as i32,
-                start.elapsed().as_millis() as f64,
-                cached_usage,
-                is_stream,
-                false,
-                None,
-                None,
-                LogExtras {
-                    method: Some(method_owned.clone()),
-                    path: Some(path_owned.clone()),
-                    request_headers: request_headers_str.clone(),
-                    request_body: request_body_str.clone(),
-                    response_headers: None,
-                    response_body: serde_json::to_string(&cached_entry.payload).ok(),
-                },
-            );
+            )
+            .provider_str(&cached_entry.provider_name)
+            .status_i32(cached_entry.status_code as i32)
+            .usage(cached_usage)
+            .with_req_extras(&req_extras)
+            .resp_body(serde_json::to_string(&cached_entry.payload).ok())
+            .emit();
             return response;
         }
     }
@@ -403,58 +350,34 @@ pub async fn dispatch_pipeline(
 
     let targets = load_route_targets(&gw, &route).await;
     if targets.is_empty() {
-        emit_log(
+        LogBuilder::from_dispatch(
             &gw,
             &ingress_str,
-            &ingress_str,
             &request_model,
-            "",
             auth_key.id.as_deref(),
-            "",
-            503,
-            start.elapsed().as_millis() as f64,
-            TokenUsage::default(),
+            start,
             is_stream,
-            false,
-            Some("no route targets configured".to_string()),
-            None,
-            LogExtras {
-                method: Some(method_owned.clone()),
-                path: Some(path_owned.clone()),
-                request_headers: request_headers_str.clone(),
-                request_body: request_body_str.clone(),
-                response_headers: None,
-                response_body: None,
-            },
-        );
+        )
+        .status(503)
+        .error("no route targets configured")
+        .with_req_extras(&req_extras)
+        .emit();
         return error_response(503, "no route targets configured");
     }
     let ordered_targets = TargetSelector::select_ordered(&route.strategy, &targets);
     if ordered_targets.is_empty() {
-        emit_log(
+        LogBuilder::from_dispatch(
             &gw,
             &ingress_str,
-            &ingress_str,
             &request_model,
-            "",
             auth_key.id.as_deref(),
-            "",
-            503,
-            start.elapsed().as_millis() as f64,
-            TokenUsage::default(),
+            start,
             is_stream,
-            false,
-            Some("no route targets configured".to_string()),
-            None,
-            LogExtras {
-                method: Some(method_owned.clone()),
-                path: Some(path_owned.clone()),
-                request_headers: request_headers_str.clone(),
-                request_body: request_body_str.clone(),
-                response_headers: None,
-                response_body: None,
-            },
-        );
+        )
+        .status(503)
+        .error("no route targets configured")
+        .with_req_extras(&req_extras)
+        .emit();
         return error_response(503, "no route targets configured");
     }
 
@@ -599,7 +522,7 @@ pub async fn dispatch_pipeline(
         let egress_caps = egress.handler().capabilities();
         let upstream_forces_stream = egress_caps.force_upstream_stream;
 
-        // ── Build context structs (replaces the long flat argument lists) ──────
+        // ── Build per-target context structs ─────────────────────────────────
         let call_ctx = CallCtx {
             gw: gw.clone(),
             provider: &provider,
@@ -618,12 +541,6 @@ pub async fn dispatch_pipeline(
             exact_cache_ttl: Some(exact_ttl),
             semantic: semantic_write_ctx.clone(),
             expose_headers: miss_expose_headers,
-        };
-        let req_extras = RequestExtras {
-            method: method_owned.clone(),
-            path: path_owned.clone(),
-            headers: request_headers_str.clone(),
-            body: request_body_str.clone(),
         };
 
         let response = if is_stream {
@@ -685,30 +602,18 @@ pub async fn dispatch_pipeline(
 
     finalize_singleflight(&gw, singleflight_leader.as_ref(), false).await;
     last_response.unwrap_or_else(|| {
-        emit_log(
+        LogBuilder::from_dispatch(
             &gw,
             &ingress_str,
-            &ingress_str,
             &request_model,
-            "",
             auth_key.id.as_deref(),
-            "",
-            502,
-            start.elapsed().as_millis() as f64,
-            TokenUsage::default(),
+            start,
             is_stream,
-            false,
-            Some("all route targets failed".to_string()),
-            None,
-            LogExtras {
-                method: Some(method_owned.clone()),
-                path: Some(path_owned.clone()),
-                request_headers: request_headers_str.clone(),
-                request_body: request_body_str.clone(),
-                response_headers: None,
-                response_body: None,
-            },
-        );
+        )
+        .status(502)
+        .error("all route targets failed")
+        .with_req_extras(&req_extras)
+        .emit();
         error_response(502, "all route targets failed")
     })
 }
@@ -743,32 +648,21 @@ pub async fn dispatch(
         Err(e) => {
             let ingress_str = ingress.to_string();
             let msg = format!("invalid request: {e}");
-            emit_log(
-                &gw,
-                &ingress_str,
-                &ingress_str,
-                "",
-                "",
-                None,
-                "",
-                400,
-                0.0,
-                TokenUsage::default(),
-                false,
-                false,
-                Some(msg.clone()),
-                None,
-                LogExtras {
-                    method: Some(method.into()),
-                    path: Some(path.into()),
-                    request_headers: request_headers_str.clone(),
-                    request_body: request_body_str.clone(),
-                    response_headers: None,
-                    response_body: Some(
-                        serde_json::json!({ "error": { "message": msg.clone() } }).to_string(),
-                    ),
-                },
-            );
+            // dispatch() has no start Instant; use a zero-duration sentinel.
+            let decode_start = Instant::now();
+            LogBuilder::from_dispatch(&gw, &ingress_str, "", None, decode_start, false)
+                .status(400)
+                .error(msg.clone())
+                .with_req_extras(&RequestExtras {
+                    method: method.to_string(),
+                    path: path.to_string(),
+                    headers: request_headers_str.clone(),
+                    body: request_body_str.clone(),
+                })
+                .resp_body(Some(
+                    serde_json::json!({ "error": { "message": msg.clone() } }).to_string(),
+                ))
+                .emit();
             return error_response(400, &msg);
         }
     };
@@ -816,1054 +710,179 @@ struct RequestExtras {
     body: Option<String>,
 }
 
-// ── Non-streaming response handler ───────────────────────────────────────────
+// ── Log builder ───────────────────────────────────────────────────────────────
 
-async fn handle_non_stream(
-    client: ProxyClient,
-    url: &str,
-    headers: ReqwestHeaderMap,
-    body: Value,
-    call_ctx: &CallCtx<'_>,
-    cache_ctx: &CacheWriteCtx<'_>,
-    req_extras: &RequestExtras,
-    adapter: &dyn crate::provider::vendor::Vendor,
-    // `ctx` is the vendor-level provider context used for codec operations.
-    ctx: &ProviderCtx<'_>,
-    // When true: Native protocol + no response mutations → skip IR round-trip.
-    passthrough_resp: bool,
-) -> Response {
-    // ── Unpack context structs into local aliases (matches the old param names) ──
-    let gw = &call_ctx.gw;
-    let provider = call_ctx.provider;
-    let egress = call_ctx.egress;
-    let ingress = call_ctx.ingress;
-    let ingress_str = call_ctx.ingress_str;
-    let egress_str = call_ctx.egress_str;
-    let request_model = call_ctx.request_model;
-    let actual_model = call_ctx.actual_model;
-    let api_key_id = call_ctx.api_key_id;
-    let start = call_ctx.start;
-    let cache_key = cache_ctx.cache_key;
-    let allow_exact_store = cache_ctx.allow_exact_store;
-    let exact_cache_ttl = cache_ctx.exact_cache_ttl;
-    let semantic_write_ctx = cache_ctx.semantic.clone();
-    let expose_headers = cache_ctx.expose_headers;
-    let make_extras = |response_body: Option<String>, resp_headers: Option<String>| LogExtras {
-        method: Some(req_extras.method.clone()),
-        path: Some(req_extras.path.clone()),
-        request_headers: req_extras.headers.clone(),
-        request_body: req_extras.body.clone(),
-        response_headers: resp_headers,
-        response_body,
-    };
+/// Fluent builder for `emit_log`. Eliminates the 15-argument flat call site.
+///
+/// Create via `LogBuilder::from_ctx` (inside handler functions, where a
+/// `CallCtx` is available) or `LogBuilder::from_dispatch` (in
+/// `dispatch_pipeline` before a provider has been selected).  Chain setter
+/// methods for the per-call fields, then call `emit` to enqueue the entry.
+#[derive(Clone)]
+struct LogBuilder {
+    gw: Gateway,
+    ingress: String,
+    egress: String,
+    request_model: String,
+    actual_model: String,
+    api_key_id: Option<String>,
+    provider_name: String,
+    start: Instant,
+    status_code: i32,
+    usage: TokenUsage,
+    is_stream: bool,
+    is_tool_call: bool,
+    error_message: Option<String>,
+    response_preview: Option<String>,
+    extras: LogExtras,
+}
 
-    let call_result = match client.call_non_stream(url, headers, body.clone()).await {
-        Ok(r) => r,
-        Err(e) => {
-            emit_log(
-                &gw, ingress_str, egress_str, request_model, actual_model,
-                api_key_id, &provider.name, 502, start.elapsed().as_millis() as f64,
-                TokenUsage::default(), false, false, Some(e.to_string()), None,
-                make_extras(Some(
-                    serde_json::json!({ "error": { "message": format!("upstream error: {e}") } }).to_string(),
-                ), None),
-            );
-            return error_response(502, &format!("upstream error: {e}"));
+impl LogBuilder {
+    /// Build from a handler-level `CallCtx`; identity fields are pre-filled.
+    fn from_ctx(call_ctx: &CallCtx<'_>) -> Self {
+        Self {
+            gw: call_ctx.gw.clone(),
+            ingress: call_ctx.ingress_str.to_string(),
+            egress: call_ctx.egress_str.to_string(),
+            request_model: call_ctx.request_model.to_string(),
+            actual_model: call_ctx.actual_model.to_string(),
+            api_key_id: call_ctx.api_key_id.map(ToString::to_string),
+            provider_name: call_ctx.provider.name.clone(),
+            start: call_ctx.start,
+            status_code: 200,
+            usage: TokenUsage::default(),
+            is_stream: false,
+            is_tool_call: false,
+            error_message: None,
+            response_preview: None,
+            extras: LogExtras::default(),
         }
-    };
+    }
 
-    let (resp, status, upstream_headers) = call_result;
-    let upstream_hdrs_str = headers_to_json(&upstream_headers);
+    /// Build from dispatch-pipeline context before a provider is selected.
+    /// `egress` defaults to `ingress`; `actual_model` and `provider_name`
+    /// default to empty strings; override with `actual_model_str` / `provider_str`.
+    fn from_dispatch(
+        gw: &Gateway,
+        ingress: &str,
+        request_model: &str,
+        api_key_id: Option<&str>,
+        start: Instant,
+        is_stream: bool,
+    ) -> Self {
+        Self {
+            gw: gw.clone(),
+            ingress: ingress.to_string(),
+            egress: ingress.to_string(),
+            request_model: request_model.to_string(),
+            actual_model: String::new(),
+            api_key_id: api_key_id.map(ToString::to_string),
+            provider_name: String::new(),
+            start,
+            status_code: 200,
+            usage: TokenUsage::default(),
+            is_stream,
+            is_tool_call: false,
+            error_message: None,
+            response_preview: None,
+            extras: LogExtras::default(),
+        }
+    }
 
-    if status >= 400 {
-        let body_str = serde_json::to_string(&resp).ok();
-        let preview = body_str.as_ref().map(|s| s.chars().take(500).collect());
+    fn status(mut self, code: u16) -> Self {
+        self.status_code = code as i32;
+        self
+    }
+
+    fn status_i32(mut self, code: i32) -> Self {
+        self.status_code = code;
+        self
+    }
+
+    fn actual_model_str(mut self, m: &str) -> Self {
+        self.actual_model = m.to_string();
+        self
+    }
+
+    fn provider_str(mut self, name: &str) -> Self {
+        self.provider_name = name.to_string();
+        self
+    }
+
+    fn usage(mut self, u: TokenUsage) -> Self {
+        self.usage = u;
+        self
+    }
+
+    fn stream(mut self) -> Self {
+        self.is_stream = true;
+        self
+    }
+
+    fn maybe_tool(mut self, yes: bool) -> Self {
+        self.is_tool_call = yes;
+        self
+    }
+
+    fn error(mut self, msg: impl Into<String>) -> Self {
+        self.error_message = Some(msg.into());
+        self
+    }
+
+    fn maybe_error(mut self, msg: Option<String>) -> Self {
+        self.error_message = msg;
+        self
+    }
+
+    fn preview(mut self, p: Option<String>) -> Self {
+        self.response_preview = p;
+        self
+    }
+
+    /// Pre-fill the request-side `LogExtras` fields (method, path, headers,
+    /// body) from a `RequestExtras`.  Response-side fields remain unset until
+    /// `resp_headers` / `resp_body` are called.
+    fn with_req_extras(mut self, req: &RequestExtras) -> Self {
+        self.extras.method = Some(req.method.clone());
+        self.extras.path = Some(req.path.clone());
+        self.extras.request_headers = req.headers.clone();
+        self.extras.request_body = req.body.clone();
+        self
+    }
+
+    fn resp_headers(mut self, h: Option<String>) -> Self {
+        self.extras.response_headers = h;
+        self
+    }
+
+    fn resp_body(mut self, b: Option<String>) -> Self {
+        self.extras.response_body = b;
+        self
+    }
+
+    fn emit(self) {
         emit_log(
-            &gw,
-            ingress_str,
-            egress_str,
-            request_model,
-            actual_model,
-            api_key_id,
-            &provider.name,
-            status as i32,
-            start.elapsed().as_millis() as f64,
-            TokenUsage::default(),
-            false,
-            false,
-            preview,
-            None,
-            make_extras(body_str, upstream_hdrs_str.clone()),
+            &self.gw,
+            &self.ingress,
+            &self.egress,
+            &self.request_model,
+            &self.actual_model,
+            self.api_key_id.as_deref(),
+            &self.provider_name,
+            self.status_code,
+            self.start.elapsed().as_millis() as f64,
+            self.usage,
+            self.is_stream,
+            self.is_tool_call,
+            self.error_message,
+            self.response_preview,
+            self.extras,
         );
-        return (
-            StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
-            Json(resp),
-        )
-            .into_response();
-    }
-
-    // Embeddings: passthrough response (parse_response is not implemented for codec).
-    if egress.handler().capabilities().embeddings {
-        let usage = crate::protocol::codec::openai_compatible::embeddings::parse_usage(&resp);
-        let resp_str = serde_json::to_string(&resp).ok();
-        let preview = resp_str.as_ref().map(|s| s.chars().take(500).collect());
-        emit_log(
-            &gw,
-            ingress_str,
-            egress_str,
-            request_model,
-            actual_model,
-            api_key_id,
-            &provider.name,
-            status as i32,
-            start.elapsed().as_millis() as f64,
-            usage,
-            false,
-            false,
-            None,
-            preview,
-            make_extras(resp_str, upstream_hdrs_str.clone()),
-        );
-        return (
-            StatusCode::from_u16(status).unwrap_or(StatusCode::OK),
-            Json(resp),
-        )
-            .into_response();
-    }
-
-    // PassThrough: Native protocol + no response mutations → forward upstream JSON verbatim,
-    // skipping the IR round-trip (parse_response → InternalResponse → format_response).
-    if passthrough_resp {
-        tracing::debug!(
-            mode = "passthrough",
-            egress = egress_str,
-            "bypassing IR round-trip"
-        );
-        let resp_str = serde_json::to_string(&resp).ok();
-        let preview = resp_str.as_ref().map(|s| s.chars().take(500).collect());
-        emit_log(
-            &gw,
-            ingress_str,
-            egress_str,
-            request_model,
-            actual_model,
-            api_key_id,
-            &provider.name,
-            status as i32,
-            start.elapsed().as_millis() as f64,
-            TokenUsage::default(),
-            false,
-            false,
-            None,
-            preview,
-            make_extras(resp_str, upstream_hdrs_str.clone()),
-        );
-        return (
-            StatusCode::from_u16(status).unwrap_or(StatusCode::OK),
-            Json(resp),
-        )
-            .into_response();
-    }
-
-    // Parse response via ProviderAdapter.
-    let inbound = InboundResponse { status, body: resp };
-    let mut internal_resp = match adapter.parse_response(inbound, ctx).await {
-        Ok(r) => r,
-        Err(e) => {
-            emit_log(
-                &gw,
-                ingress_str,
-                egress_str,
-                request_model,
-                actual_model,
-                api_key_id,
-                &provider.name,
-                500,
-                start.elapsed().as_millis() as f64,
-                TokenUsage::default(),
-                false,
-                false,
-                Some(format!("parse error: {e}")),
-                None,
-                make_extras(
-                    Some(
-                        serde_json::json!({ "error": { "message": format!("parse error: {e}") } })
-                            .to_string(),
-                    ),
-                    upstream_hdrs_str.clone(),
-                ),
-            );
-            return error_response(500, &format!("parse error: {e}"));
-        }
-    };
-
-    // Ensure actual_model is set in the response.
-    if internal_resp.model.is_empty() {
-        internal_resp.model = actual_model.to_string();
-    }
-
-    let is_tool = !internal_resp.tool_calls.is_empty();
-    let usage = internal_resp.usage.clone();
-    let formatter = ingress.handler().make_response_formatter();
-    let output = formatter.format_response(&internal_resp);
-
-    let response_body_full = serde_json::to_string(&output).ok();
-    let response_preview = response_body_full
-        .as_ref()
-        .map(|s| s.chars().take(500).collect());
-    emit_log(
-        &gw,
-        ingress_str,
-        egress_str,
-        request_model,
-        actual_model,
-        api_key_id,
-        &provider.name,
-        status as i32,
-        start.elapsed().as_millis() as f64,
-        usage.clone(),
-        false,
-        is_tool,
-        None,
-        response_preview,
-        make_extras(response_body_full, upstream_hdrs_str),
-    );
-
-    let mut response = (
-        StatusCode::from_u16(status).unwrap_or(StatusCode::OK),
-        Json(output.clone()),
-    )
-        .into_response();
-    set_cache_headers(&mut response, "MISS", cache_key, None, expose_headers);
-
-    if status < 400 && !is_tool {
-        let entry = CacheEntry {
-            payload: output,
-            status_code: status,
-            provider_name: provider.name.clone(),
-            actual_model: Some(actual_model.to_string()),
-            usage,
-            created_at_epoch_ms: chrono::Utc::now().timestamp_millis(),
-            internal_response: Some(internal_resp),
-        };
-        if let Ok(bytes) = serde_json::to_vec(&entry) {
-            if allow_exact_store {
-                let cache_backend = (**gw.cache_backend.load()).clone();
-                if let (Some(key), Some(cache_backend)) = (cache_key, cache_backend.as_ref()) {
-                    let _ = cache_backend.set(key, &bytes, exact_cache_ttl).await;
-                }
-            }
-            let vector_store = (**gw.vector_store.load()).clone();
-            if let (Some(vector_store), Some(ctx)) =
-                (vector_store.as_ref(), semantic_write_ctx.as_ref())
-            {
-                let vector = if let Some(existing) = ctx.query_vector.clone() {
-                    Some(existing)
-                } else {
-                    compute_embedding(&gw, &ctx.embedding_text).await.ok()
-                };
-                if let Some(vector) = vector {
-                    let _ = vector_store
-                        .upsert(&ctx.partition, ctx.key.clone(), vector, bytes)
-                        .await;
-                }
-            }
-        }
-    }
-    response
-}
-
-// ── Force-stream non-stream handler ──────────────────────────────────────────
-
-/// Consume a streaming upstream response and return a non-streaming client
-/// response. Used when the egress protocol forces `stream: true` upstream
-/// (e.g. Responses API) but the ingress client requested non-stream.
-async fn handle_non_stream_via_upstream_stream(
-    client: ProxyClient,
-    url: &str,
-    headers: ReqwestHeaderMap,
-    body: Value,
-    call_ctx: &CallCtx<'_>,
-    cache_ctx: &CacheWriteCtx<'_>,
-) -> Response {
-    // ── Unpack context structs into local aliases (matches the old param names) ──
-    let gw = &call_ctx.gw;
-    let provider = call_ctx.provider;
-    let egress = call_ctx.egress;
-    let ingress = call_ctx.ingress;
-    let ingress_str = call_ctx.ingress_str;
-    let egress_str = call_ctx.egress_str;
-    let request_model = call_ctx.request_model;
-    let actual_model = call_ctx.actual_model;
-    let api_key_id = call_ctx.api_key_id;
-    let start = call_ctx.start;
-    let cache_key = cache_ctx.cache_key;
-    let allow_exact_store = cache_ctx.allow_exact_store;
-    let exact_cache_ttl = cache_ctx.exact_cache_ttl;
-    let semantic_write_ctx = cache_ctx.semantic.clone();
-    let expose_headers = cache_ctx.expose_headers;
-    let call_result = match client.call_stream(url, headers, body.clone()).await {
-        Ok(r) => r,
-        Err(e) => {
-            emit_log(
-                &gw,
-                ingress_str,
-                egress_str,
-                request_model,
-                actual_model,
-                api_key_id,
-                &provider.name,
-                502,
-                start.elapsed().as_millis() as f64,
-                TokenUsage::default(),
-                false,
-                false,
-                Some(e.to_string()),
-                None,
-                LogExtras::default(),
-            );
-            return error_response(502, &format!("upstream error: {e}"));
-        }
-    };
-
-    let (resp, status) = call_result;
-    let upstream_hdrs_str = headers_to_json(resp.headers());
-
-    if status >= 400 {
-        let err_body: Value = resp
-            .json()
-            .await
-            .unwrap_or_else(|_| serde_json::json!({"error": {"message": "upstream error"}}));
-        emit_log(
-            &gw,
-            ingress_str,
-            egress_str,
-            request_model,
-            actual_model,
-            api_key_id,
-            &provider.name,
-            status as i32,
-            start.elapsed().as_millis() as f64,
-            TokenUsage::default(),
-            false,
-            false,
-            Some(err_body.to_string()),
-            None,
-            LogExtras {
-                response_headers: upstream_hdrs_str,
-                response_body: serde_json::to_string(&err_body).ok(),
-                ..LogExtras::default()
-            },
-        );
-        return (
-            StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
-            Json(err_body),
-        )
-            .into_response();
-    }
-
-    let mut stream_parser = egress.handler().make_stream_parser();
-    let mut byte_stream = resp.bytes_stream();
-    let mut accumulator = StreamResponseAccumulator::default();
-
-    while let Some(chunk) = byte_stream.next().await {
-        let bytes = match chunk {
-            Ok(b) => b,
-            Err(e) => {
-                emit_log(
-                    &gw,
-                    ingress_str,
-                    egress_str,
-                    request_model,
-                    actual_model,
-                    api_key_id,
-                    &provider.name,
-                    502,
-                    start.elapsed().as_millis() as f64,
-                    TokenUsage::default(),
-                    false,
-                    false,
-                    Some(format!("stream read error: {e}")),
-                    None,
-                    LogExtras::default(),
-                );
-                return error_response(502, &format!("upstream stream error: {e}"));
-            }
-        };
-        let text = String::from_utf8_lossy(&bytes);
-        if let Ok(deltas) = stream_parser.parse_chunk(&text) {
-            accumulator.apply_all(&deltas);
-        }
-    }
-
-    if let Ok(deltas) = stream_parser.finish() {
-        accumulator.apply_all(&deltas);
-    }
-
-    let mut internal_resp = accumulator.into_internal_response();
-    if internal_resp.id.is_empty() {
-        internal_resp.id = format!("chatcmpl-{}", uuid::Uuid::new_v4().simple());
-    }
-    if internal_resp.model.is_empty() {
-        internal_resp.model = actual_model.to_string();
-    }
-    if internal_resp.stop_reason.is_none() {
-        internal_resp.stop_reason = Some("stop".to_string());
-    }
-    crate::protocol::codec::reasoning::normalize_response_reasoning(&mut internal_resp);
-
-    let is_tool = !internal_resp.tool_calls.is_empty();
-    let usage = internal_resp.usage.clone();
-    let formatter = ingress.handler().make_response_formatter();
-    let output = formatter.format_response(&internal_resp);
-
-    let response_preview = serde_json::to_string(&output)
-        .ok()
-        .map(|s| s.chars().take(500).collect());
-    emit_log(
-        &gw,
-        ingress_str,
-        egress_str,
-        request_model,
-        actual_model,
-        api_key_id,
-        &provider.name,
-        status as i32,
-        start.elapsed().as_millis() as f64,
-        usage.clone(),
-        false,
-        is_tool,
-        None,
-        response_preview,
-        LogExtras {
-            response_headers: upstream_hdrs_str,
-            response_body: serde_json::to_string(&output).ok(),
-            ..LogExtras::default()
-        },
-    );
-
-    let mut response = (
-        StatusCode::from_u16(status).unwrap_or(StatusCode::OK),
-        Json(output.clone()),
-    )
-        .into_response();
-    set_cache_headers(&mut response, "MISS", cache_key, None, expose_headers);
-
-    if status < 400 && !is_tool {
-        let entry = CacheEntry {
-            payload: output,
-            status_code: status,
-            provider_name: provider.name.clone(),
-            actual_model: Some(actual_model.to_string()),
-            usage,
-            created_at_epoch_ms: chrono::Utc::now().timestamp_millis(),
-            internal_response: Some(internal_resp),
-        };
-        if let Ok(bytes) = serde_json::to_vec(&entry) {
-            if allow_exact_store {
-                let cache_backend = (**gw.cache_backend.load()).clone();
-                if let (Some(key), Some(cache_backend)) = (cache_key, cache_backend.as_ref()) {
-                    let _ = cache_backend.set(key, &bytes, exact_cache_ttl).await;
-                }
-            }
-            let vector_store = (**gw.vector_store.load()).clone();
-            if let (Some(vector_store), Some(ctx)) =
-                (vector_store.as_ref(), semantic_write_ctx.as_ref())
-            {
-                let vector = if let Some(existing) = ctx.query_vector.clone() {
-                    Some(existing)
-                } else {
-                    compute_embedding(&gw, &ctx.embedding_text).await.ok()
-                };
-                if let Some(vector) = vector {
-                    let _ = vector_store
-                        .upsert(&ctx.partition, ctx.key.clone(), vector, bytes)
-                        .await;
-                }
-            }
-        }
-    }
-    response
-}
-
-// ── Streaming response handler ────────────────────────────────────────────────
-
-async fn handle_stream(
-    client: ProxyClient,
-    url: &str,
-    headers: ReqwestHeaderMap,
-    body: Value,
-    call_ctx: &CallCtx<'_>,
-    cache_ctx: &CacheWriteCtx<'_>,
-    req_extras: &RequestExtras,
-    singleflight_key: Option<&str>,
-    singleflight_tx: Option<broadcast::Sender<Vec<u8>>>,
-    passthrough_resp: bool,
-) -> Response {
-    // ── Unpack context structs into local aliases (matches the old param names) ──
-    let gw = &call_ctx.gw;
-    let provider = call_ctx.provider;
-    let egress = call_ctx.egress;
-    let ingress = call_ctx.ingress;
-    let ingress_str = call_ctx.ingress_str;
-    let egress_str = call_ctx.egress_str;
-    let request_model = call_ctx.request_model;
-    let actual_model = call_ctx.actual_model;
-    let api_key_id = call_ctx.api_key_id;
-    let start = call_ctx.start;
-    let cache_key = cache_ctx.cache_key;
-    let allow_exact_store = cache_ctx.allow_exact_store;
-    let exact_cache_ttl = cache_ctx.exact_cache_ttl;
-    let semantic_write_ctx = cache_ctx.semantic.clone();
-    let expose_headers = cache_ctx.expose_headers;
-    let ingress_method = req_extras.method.as_str();
-    let ingress_path = req_extras.path.as_str();
-    let request_headers_str = req_extras.headers.clone();
-    let request_body_str = req_extras.body.clone();
-    let make_extras_owned = {
-        let method = ingress_method.to_string();
-        let path_s = ingress_path.to_string();
-        let rh = request_headers_str.clone();
-        let rb = request_body_str.clone();
-        move |response_body: Option<String>, resp_headers: Option<String>| LogExtras {
-            method: Some(method.clone()),
-            path: Some(path_s.clone()),
-            request_headers: rh.clone(),
-            request_body: rb.clone(),
-            response_headers: resp_headers,
-            response_body,
-        }
-    };
-    let call_result = match client.call_stream(url, headers, body.clone()).await {
-        Ok(r) => r,
-        Err(e) => {
-            emit_log(
-                &gw, ingress_str, egress_str, request_model, actual_model,
-                api_key_id, &provider.name, 502, start.elapsed().as_millis() as f64,
-                TokenUsage::default(), true, false, Some(e.to_string()), None,
-                make_extras_owned(Some(
-                    serde_json::json!({ "error": { "message": format!("upstream error: {e}") } }).to_string(),
-                ), None),
-            );
-            return error_response(502, &format!("upstream error: {e}"));
-        }
-    };
-
-    let (resp, status) = call_result;
-    let upstream_hdrs_str = headers_to_json(resp.headers());
-
-    if status >= 400 {
-        let err_body: Value = resp
-            .json()
-            .await
-            .unwrap_or_else(|_| serde_json::json!({"error": {"message": "upstream error"}}));
-        let err_body_str = serde_json::to_string(&err_body).ok();
-        emit_log(
-            &gw,
-            ingress_str,
-            egress_str,
-            request_model,
-            actual_model,
-            api_key_id,
-            &provider.name,
-            status as i32,
-            start.elapsed().as_millis() as f64,
-            TokenUsage::default(),
-            true,
-            false,
-            Some(err_body.to_string()),
-            None,
-            make_extras_owned(err_body_str, upstream_hdrs_str.clone()),
-        );
-        return (
-            StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
-            Json(err_body),
-        )
-            .into_response();
-    }
-
-    // ── Byte-level SSE passthrough ────────────────────────────────────────────
-    // Used when ingress == egress protocol and the vendor declares no response
-    // mutations (passthrough_resp=true). Upstream bytes are forwarded verbatim;
-    // a side-channel parser accumulates usage stats for logging only.
-    if passthrough_resp {
-        let (pt_tx, pt_rx) = tokio::sync::mpsc::channel::<Result<Bytes, Infallible>>(64);
-
-        let gw_pt = gw.clone();
-        let provider_name_pt = provider.name.clone();
-        let ingress_s_pt = ingress_str.to_string();
-        let egress_s_pt = egress_str.to_string();
-        let req_model_pt = request_model.to_string();
-        let act_model_pt = actual_model.to_string();
-        let key_id_pt = api_key_id.map(ToString::to_string);
-        let leader_key_pt = singleflight_key.map(ToString::to_string);
-        let leader_tx_pt = singleflight_tx.clone();
-        let ingress_method_pt = ingress_method.to_string();
-        let ingress_path_pt = ingress_path.to_string();
-        let request_headers_pt = request_headers_str.clone();
-        let request_body_pt = request_body_str.clone();
-        let upstream_hdrs_pt = upstream_hdrs_str.clone();
-
-        tokio::spawn(async move {
-            let mut log_buf: Vec<u8> = Vec::new();
-            let mut byte_stream = resp.bytes_stream();
-            let mut stream_error: Option<String> = None;
-
-            while let Some(result) = byte_stream.next().await {
-                match result {
-                    Ok(b) => {
-                        log_buf.extend_from_slice(&b);
-                        if pt_tx.send(Ok(b)).await.is_err() {
-                            break; // client disconnected
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "upstream stream error during passthrough");
-                        stream_error = Some(e.to_string());
-                        // Emit an Anthropic-protocol error event so the client
-                        // gets an explicit signal instead of a truncated stream.
-                        let msg = e.to_string().replace('"', "\\\"");
-                        let err_sse = format!(
-                            "event: error\ndata: {{\"type\":\"error\",\"error\":{{\"type\":\"stream_error\",\"message\":\"{msg}\"}}}}\n\n"
-                        );
-                        let _ = pt_tx.send(Ok(Bytes::from(err_sse))).await;
-                        break;
-                    }
-                }
-            }
-
-            // Parse accumulated buffer for usage stats and log entry (best-effort).
-            let log_text = String::from_utf8_lossy(&log_buf);
-            let mut log_parser = egress.handler().make_stream_parser();
-            let mut accumulator = StreamResponseAccumulator::default();
-            if let Ok(deltas) = log_parser.parse_chunk(&log_text) {
-                accumulator.apply_all(&deltas);
-            }
-            if let Ok(deltas) = log_parser.finish() {
-                accumulator.apply_all(&deltas);
-            }
-
-            let mut internal = accumulator.into_internal_response();
-            if internal.id.is_empty() {
-                internal.id = format!("msg_{}", uuid::Uuid::new_v4().simple());
-            }
-            if internal.model.is_empty() {
-                internal.model = act_model_pt.clone();
-            }
-
-            let aggregated_formatter = ingress.handler().make_response_formatter();
-            let aggregated_output = aggregated_formatter.format_response(&internal);
-            let aggregated_body_str = serde_json::to_string(&aggregated_output).ok();
-
-            emit_log(
-                &gw_pt,
-                &ingress_s_pt,
-                &egress_s_pt,
-                &req_model_pt,
-                &act_model_pt,
-                key_id_pt.as_deref(),
-                &provider_name_pt,
-                200,
-                start.elapsed().as_millis() as f64,
-                internal.usage.clone(),
-                true,
-                !internal.tool_calls.is_empty(),
-                stream_error,
-                None,
-                LogExtras {
-                    method: Some(ingress_method_pt.clone()),
-                    path: Some(ingress_path_pt.clone()),
-                    request_headers: request_headers_pt.clone(),
-                    request_body: request_body_pt.clone(),
-                    response_headers: upstream_hdrs_pt,
-                    response_body: aggregated_body_str,
-                },
-            );
-
-            if let (Some(key), Some(tx)) = (leader_key_pt.as_deref(), leader_tx_pt.as_ref()) {
-                let _ = tx.send(vec![]);
-                gw_pt.cache_in_flight.remove(key);
-            }
-        });
-
-        let stream = ReceiverStream::new(pt_rx);
-        let body = Body::from_stream(stream);
-        let mut response = Response::builder()
-            .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, "text/event-stream")
-            .header(header::CACHE_CONTROL, "no-cache")
-            .header(header::CONNECTION, "keep-alive")
-            .body(body)
-            .unwrap();
-        set_cache_headers(&mut response, "MISS", cache_key, None, expose_headers);
-        return response;
-    }
-
-    // ── IR round-trip path ────────────────────────────────────────────────────
-    let mut stream_parser = egress.handler().make_stream_parser();
-    let mut stream_formatter = ingress.handler().make_stream_formatter();
-    let mut byte_stream = resp.bytes_stream();
-    let (tx, rx) = tokio::sync::mpsc::channel::<Result<String, Infallible>>(64);
-
-    let gw_log = gw.clone();
-    let provider_name = provider.name.clone();
-    let ingress_s = ingress_str.to_string();
-    let egress_s = egress_str.to_string();
-    let req_model = request_model.to_string();
-    let act_model = actual_model.to_string();
-    let key_id = api_key_id.map(ToString::to_string);
-    let cache_key_owned = cache_key.map(ToString::to_string);
-    let leader_key_owned = singleflight_key.map(ToString::to_string);
-    let leader_tx_owned = singleflight_tx.clone();
-    let exact_cache_ttl_owned = exact_cache_ttl;
-    let semantic_write_ctx_owned = semantic_write_ctx.clone();
-    let ingress_method_owned = ingress_method.to_string();
-    let ingress_path_owned = ingress_path.to_string();
-    let request_headers_owned = request_headers_str.clone();
-    let request_body_owned = request_body_str.clone();
-    let upstream_hdrs_owned = upstream_hdrs_str;
-
-    tokio::spawn(async move {
-        let mut accumulator = StreamResponseAccumulator::default();
-        while let Some(chunk) = byte_stream.next().await {
-            let bytes = match chunk {
-                Ok(b) => b,
-                Err(e) => {
-                    // P1: emit an explicit terminal event instead of silently breaking,
-                    // so the client receives a defined stop_reason and does not hang.
-                    tracing::warn!(error = %e, "upstream stream error; emitting terminal event");
-                    let error_deltas = [StreamDelta::Done {
-                        stop_reason: "error".to_string(),
-                    }];
-                    let events = stream_formatter.format_deltas(&error_deltas);
-                    for ev in events {
-                        let _ = tx.send(Ok(ev.to_sse_string())).await;
-                    }
-                    break;
-                }
-            };
-            let text = String::from_utf8_lossy(&bytes);
-            if let Ok(deltas) = stream_parser.parse_chunk(&text) {
-                accumulator.apply_all(&deltas);
-                let events = stream_formatter.format_deltas(&deltas);
-                for ev in events {
-                    if tx.send(Ok(ev.to_sse_string())).await.is_err() {
-                        return;
-                    }
-                }
-            }
-        }
-
-        if let Ok(deltas) = stream_parser.finish() {
-            accumulator.apply_all(&deltas);
-            let events = stream_formatter.format_deltas(&deltas);
-            for ev in events {
-                let _ = tx.send(Ok(ev.to_sse_string())).await;
-            }
-        }
-
-        let done_events = stream_formatter.format_done();
-        for ev in done_events {
-            let _ = tx.send(Ok(ev.to_sse_string())).await;
-        }
-
-        let usage = stream_formatter.usage();
-        let mut internal = accumulator.into_internal_response();
-        if internal.usage.input_tokens == 0 && internal.usage.output_tokens == 0 {
-            internal.usage = usage.clone();
-        }
-        if internal.id.is_empty() {
-            internal.id = format!("chatcmpl-{}", uuid::Uuid::new_v4().simple());
-        }
-        if internal.model.is_empty() {
-            internal.model = act_model.clone();
-        }
-        if internal.stop_reason.is_none() {
-            internal.stop_reason = Some("stop".to_string());
-        }
-
-        let aggregated_formatter = ingress.handler().make_response_formatter();
-        let aggregated_output = aggregated_formatter.format_response(&internal);
-        let aggregated_body_str = serde_json::to_string(&aggregated_output).ok();
-        emit_log(
-            &gw_log,
-            &ingress_s,
-            &egress_s,
-            &req_model,
-            &act_model,
-            key_id.as_deref(),
-            &provider_name,
-            200,
-            start.elapsed().as_millis() as f64,
-            internal.usage.clone(),
-            true,
-            !internal.tool_calls.is_empty(),
-            None,
-            None,
-            LogExtras {
-                method: Some(ingress_method_owned.clone()),
-                path: Some(ingress_path_owned.clone()),
-                request_headers: request_headers_owned.clone(),
-                request_body: request_body_owned.clone(),
-                response_headers: upstream_hdrs_owned,
-                response_body: aggregated_body_str,
-            },
-        );
-
-        let mut singleflight_payload: Option<Vec<u8>> = None;
-        if allow_exact_store && internal.tool_calls.is_empty() {
-            let cache_backend = (**gw_log.cache_backend.load()).clone();
-            if let (Some(cache_backend), Some(cache_key)) =
-                (cache_backend.as_ref(), cache_key_owned.as_deref())
-            {
-                let formatter = ingress.handler().make_response_formatter();
-                let payload = formatter.format_response(&internal);
-                let entry = CacheEntry {
-                    payload,
-                    status_code: 200,
-                    provider_name: provider_name.clone(),
-                    actual_model: Some(act_model.clone()),
-                    usage: internal.usage.clone(),
-                    created_at_epoch_ms: chrono::Utc::now().timestamp_millis(),
-                    internal_response: Some(internal.clone()),
-                };
-                if let Ok(bytes) = serde_json::to_vec(&entry) {
-                    let _ = cache_backend
-                        .set(cache_key, &bytes, exact_cache_ttl_owned)
-                        .await;
-                    singleflight_payload = Some(bytes.clone());
-                    let vector_store = (**gw_log.vector_store.load()).clone();
-                    if let (Some(vector_store), Some(ctx)) =
-                        (vector_store.as_ref(), semantic_write_ctx_owned.as_ref())
-                    {
-                        let vector = if let Some(existing) = ctx.query_vector.clone() {
-                            Some(existing)
-                        } else {
-                            compute_embedding(&gw_log, &ctx.embedding_text).await.ok()
-                        };
-                        if let Some(vector) = vector {
-                            let _ = vector_store
-                                .upsert(&ctx.partition, ctx.key.clone(), vector, bytes)
-                                .await;
-                        }
-                    }
-                }
-            }
-        } else if internal.tool_calls.is_empty() {
-            let vector_store = (**gw_log.vector_store.load()).clone();
-            if let (Some(vector_store), Some(ctx)) =
-                (vector_store.as_ref(), semantic_write_ctx_owned.as_ref())
-            {
-                let formatter = ingress.handler().make_response_formatter();
-                let payload = formatter.format_response(&internal);
-                let entry = CacheEntry {
-                    payload,
-                    status_code: 200,
-                    provider_name: provider_name.clone(),
-                    actual_model: Some(act_model.clone()),
-                    usage: internal.usage.clone(),
-                    created_at_epoch_ms: chrono::Utc::now().timestamp_millis(),
-                    internal_response: Some(internal.clone()),
-                };
-                if let Ok(bytes) = serde_json::to_vec(&entry) {
-                    let vector = if let Some(existing) = ctx.query_vector.clone() {
-                        Some(existing)
-                    } else {
-                        compute_embedding(&gw_log, &ctx.embedding_text).await.ok()
-                    };
-                    if let Some(vector) = vector {
-                        let _ = vector_store
-                            .upsert(&ctx.partition, ctx.key.clone(), vector, bytes)
-                            .await;
-                    }
-                }
-            }
-        }
-
-        if let (Some(key), Some(tx)) = (leader_key_owned.as_deref(), leader_tx_owned.as_ref()) {
-            let _ = tx.send(singleflight_payload.unwrap_or_default());
-            gw_log.cache_in_flight.remove(key);
-        }
-    });
-
-    let stream = ReceiverStream::new(rx);
-    let body = Body::from_stream(stream);
-
-    let mut response = Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "text/event-stream")
-        .header(header::CACHE_CONTROL, "no-cache")
-        .header(header::CONNECTION, "keep-alive")
-        .body(body)
-        .unwrap();
-    set_cache_headers(&mut response, "MISS", cache_key, None, expose_headers);
-    response
-}
-
-// ── Auth helpers ──────────────────────────────────────────────────────────────
-
-struct AuthenticatedKey {
-    id: Option<String>,
-}
-
-#[async_trait]
-trait ProxyAccessStore {
-    async fn get_active_provider(&self, id: &str) -> anyhow::Result<Option<Provider>>;
-    async fn find_api_key(&self, raw_key: &str) -> anyhow::Result<Option<ApiKeyAccessRecord>>;
-    async fn route_binding_exists(&self, api_key_id: &str, route_id: &str) -> anyhow::Result<bool>;
-    async fn request_count_since(
-        &self,
-        api_key_id: &str,
-        window: UsageWindow,
-    ) -> anyhow::Result<i64>;
-    async fn token_count_since(&self, api_key_id: &str, window: UsageWindow)
-    -> anyhow::Result<i64>;
-}
-
-struct GatewayProxyAccessStore<'a> {
-    gw: &'a Gateway,
-}
-
-impl<'a> GatewayProxyAccessStore<'a> {
-    fn new(gw: &'a Gateway) -> Self {
-        Self { gw }
     }
 }
 
-#[async_trait]
-impl ProxyAccessStore for GatewayProxyAccessStore<'_> {
-    async fn get_active_provider(&self, id: &str) -> anyhow::Result<Option<Provider>> {
-        let provider = self.gw.storage.providers().get(id).await?;
-        Ok(provider.filter(|p| p.is_enabled))
-    }
-    async fn find_api_key(&self, raw_key: &str) -> anyhow::Result<Option<ApiKeyAccessRecord>> {
-        match self.gw.storage.auth() {
-            Some(store) => store.find_api_key(raw_key).await,
-            None => Ok(None),
-        }
-    }
-    async fn route_binding_exists(&self, api_key_id: &str, route_id: &str) -> anyhow::Result<bool> {
-        match self.gw.storage.auth() {
-            Some(store) => store.route_binding_exists(api_key_id, route_id).await,
-            None => Ok(false),
-        }
-    }
-    async fn request_count_since(
-        &self,
-        api_key_id: &str,
-        window: UsageWindow,
-    ) -> anyhow::Result<i64> {
-        match self.gw.storage.auth() {
-            Some(store) => store.request_count_since(api_key_id, window).await,
-            None => Ok(0),
-        }
-    }
-    async fn token_count_since(
-        &self,
-        api_key_id: &str,
-        window: UsageWindow,
-    ) -> anyhow::Result<i64> {
-        match self.gw.storage.auth() {
-            Some(store) => store.token_count_since(api_key_id, window).await,
-            None => Ok(0),
-        }
-    }
-}
-
-async fn authorize_route_access<S: ProxyAccessStore + ?Sized>(
-    access_store: &S,
-    route: &Route,
-    headers: &HeaderMap,
-) -> Result<AuthenticatedKey, Response> {
-    if !route.access_control {
-        return Ok(AuthenticatedKey { id: None });
-    }
-
-    let Some(raw_key) = extract_api_key(headers) else {
-        return Err(error_response(401, "missing api key"));
-    };
-
-    let key_row = access_store
-        .find_api_key(&raw_key)
-        .await
-        .map_err(|e| error_response(500, &format!("auth db error: {e}")))?;
-
-    let Some(key_row) = key_row else {
-        return Err(error_response(401, "invalid api key"));
-    };
-
-    if !key_row.is_enabled {
-        return Err(error_response(403, "api key disabled"));
-    }
-
-    if let Some(expires) = key_row.expires_at.as_ref()
-        && is_key_expired(expires)
-    {
-        return Err(error_response(403, "api key expired"));
-    }
-
-    let allowed = access_store
-        .route_binding_exists(&key_row.id, &route.id)
-        .await
-        .map_err(|e| error_response(500, &format!("auth db error: {e}")))?;
-    if !allowed {
-        return Err(error_response(403, "api key not allowed for this route"));
-    }
-
-    if let Some(limit) = key_row.rpm.filter(|v| *v > 0) {
-        let req_count = access_store
-            .request_count_since(&key_row.id, UsageWindow::Minute)
-            .await
-            .map_err(|e| error_response(500, &format!("quota db error: {e}")))?;
-        if req_count >= i64::from(limit) {
-            return Err(error_response(429, "api key rpm quota exceeded"));
-        }
-    }
-
-    if let Some(limit) = key_row.rpd.filter(|v| *v > 0) {
-        let req_count = access_store
-            .request_count_since(&key_row.id, UsageWindow::Day)
-            .await
-            .map_err(|e| error_response(500, &format!("quota db error: {e}")))?;
-        if req_count >= i64::from(limit) {
-            return Err(error_response(429, "api key rpd quota exceeded"));
-        }
-    }
-
-    if let Some(limit) = key_row.tpm.filter(|v| *v > 0) {
-        let token_count = access_store
-            .token_count_since(&key_row.id, UsageWindow::Minute)
-            .await
-            .map_err(|e| error_response(500, &format!("quota db error: {e}")))?;
-        if token_count >= i64::from(limit) {
-            return Err(error_response(429, "api key tpm quota exceeded"));
-        }
-    }
-
-    if let Some(limit) = key_row.tpd.filter(|v| *v > 0) {
-        let token_count = access_store
-            .token_count_since(&key_row.id, UsageWindow::Day)
-            .await
-            .map_err(|e| error_response(500, &format!("quota db error: {e}")))?;
-        if token_count >= i64::from(limit) {
-            return Err(error_response(429, "api key tpd quota exceeded"));
-        }
-    }
-
-    Ok(AuthenticatedKey {
-        id: Some(key_row.id),
-    })
-}
-
-async fn get_provider<S: ProxyAccessStore + ?Sized>(
-    access_store: &S,
-    id: &str,
-) -> anyhow::Result<Provider> {
-    access_store
-        .get_active_provider(id)
-        .await?
-        .ok_or_else(|| anyhow::anyhow!("provider not found or inactive: {id}"))
-}
+// ── Non-streaming / streaming handlers: see non_stream.rs and stream.rs ───────
+// ── Auth helpers: see auth.rs ─────────────────────────────────────────────
 
 // Cache helpers (SemanticWriteContext, resolve_route_cache, route_*_ttl,
 // is_semantic_entry_expired, request_has_image_input, extract_semantic_embedding_input,
