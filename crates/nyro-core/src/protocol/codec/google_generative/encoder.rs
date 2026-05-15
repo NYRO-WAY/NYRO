@@ -3,8 +3,8 @@ use reqwest::header::HeaderMap;
 use serde_json::Value;
 
 use crate::protocol::EgressEncoder;
-use crate::protocol::ir::request::{ContentBlock, MediaSource, Message, MessageContent, Role};
 use crate::protocol::ir::AiRequest;
+use crate::protocol::ir::request::{ContentBlock, MediaSource, Message, MessageContent, Role};
 
 pub struct GoogleEncoder;
 
@@ -215,7 +215,11 @@ fn encode_content_block_for_gemini(b: &ContentBlock) -> Value {
         ContentBlock::ToolUse { name, input, .. } => {
             serde_json::json!({"functionCall": {"name": name, "args": input}})
         }
-        ContentBlock::ToolResult { tool_use_id, content, .. } => {
+        ContentBlock::ToolResult {
+            tool_use_id,
+            content,
+            ..
+        } => {
             serde_json::json!({
                 "functionResponse": {"name": tool_use_id, "response": content}
             })

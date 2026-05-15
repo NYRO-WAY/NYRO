@@ -718,9 +718,9 @@ fn anthropic_encoder_maps_required_tool_choice_to_any() {
     };
     req.generation.max_tokens = Some(256);
     req.tools = tools;
-    req.tool_choice = Some(nyro_core::protocol::ir::ToolChoice::Raw(
-        serde_json::json!("required"),
-    ));
+    req.tool_choice = Some(nyro_core::protocol::ir::ToolChoice::Raw(serde_json::json!(
+        "required"
+    )));
     req.meta.source_protocol = Some(OPENAI_RESPONSES_V1);
 
     let (body, _) = AnthropicEncoder
@@ -758,10 +758,12 @@ fn anthropic_encoder_maps_function_tool_choice_to_tool_name() {
     };
     req.generation.max_tokens = Some(256);
     req.tools = tools;
-    req.tool_choice = Some(nyro_core::protocol::ir::ToolChoice::Raw(serde_json::json!({
-        "type":"function",
-        "function":{"name":"exec_command"}
-    })));
+    req.tool_choice = Some(nyro_core::protocol::ir::ToolChoice::Raw(
+        serde_json::json!({
+            "type":"function",
+            "function":{"name":"exec_command"}
+        }),
+    ));
     req.meta.source_protocol = Some(OPENAI_RESPONSES_V1);
 
     let (body, _) = AnthropicEncoder
@@ -1512,9 +1514,7 @@ fn responses_encoder_targets_slash_v1_responses_and_forces_stream() {
         false,
     );
 
-    let (body, _) = ResponsesEncoder
-        .encode_request(&req)
-        .expect("encode");
+    let (body, _) = ResponsesEncoder.encode_request(&req).expect("encode");
     assert_eq!(
         body.get("stream").and_then(|v| v.as_bool()),
         Some(true),
@@ -1553,9 +1553,7 @@ fn responses_encoder_splits_system_to_instructions_and_user_to_input_text() {
         false,
     );
 
-    let (body, _) = ResponsesEncoder
-        .encode_request(&req)
-        .expect("encode");
+    let (body, _) = ResponsesEncoder.encode_request(&req).expect("encode");
     assert_eq!(
         body.get("instructions").and_then(|v| v.as_str()),
         Some("be terse")
@@ -1605,9 +1603,7 @@ fn responses_encoder_emits_function_call_and_function_call_output_items() {
         false,
     );
 
-    let (body, _) = ResponsesEncoder
-        .encode_request(&req)
-        .expect("encode");
+    let (body, _) = ResponsesEncoder.encode_request(&req).expect("encode");
     let input = body.get("input").and_then(|v| v.as_array()).expect("input");
     assert_eq!(
         input.len(),
@@ -1660,9 +1656,7 @@ fn responses_encoder_drops_max_output_tokens_for_codex_compat() {
     );
     req.generation.max_tokens = Some(128);
 
-    let (body, _) = ResponsesEncoder
-        .encode_request(&req)
-        .expect("encode");
+    let (body, _) = ResponsesEncoder.encode_request(&req).expect("encode");
     assert!(
         body.get("max_output_tokens").is_none(),
         "codex backend rejects max_output_tokens; callers needing a cap must use extra"

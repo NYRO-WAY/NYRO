@@ -33,9 +33,9 @@ use serde_json::Value;
 
 use crate::protocol::SseEvent;
 use crate::protocol::ids::{EndpointCapabilities, OPENAI_EMBEDDINGS_V1, ProtocolEndpoint};
+use crate::protocol::ir::Usage;
 use crate::protocol::ir::{AiRequest, GenerationConfig, Message, StreamConfig};
 use crate::protocol::registry::EndpointRegistration;
-use crate::protocol::ir::Usage;
 use crate::protocol::traits::*;
 
 /// Key under which the complete original request body is kept as a

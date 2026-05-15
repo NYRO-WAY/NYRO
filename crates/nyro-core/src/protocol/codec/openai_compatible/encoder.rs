@@ -52,7 +52,9 @@ impl EgressEncoder for OpenAIEncoder {
                         "parameters": t.parameters,
                     });
                     if let Some(ref desc) = t.description {
-                        f.as_object_mut().unwrap().insert("description".into(), desc.clone().into());
+                        f.as_object_mut()
+                            .unwrap()
+                            .insert("description".into(), desc.clone().into());
                     }
                     serde_json::json!({
                         "type": "function",
@@ -122,10 +124,7 @@ fn tool_choice_to_value(tc: &ToolChoice) -> Value {
     }
 }
 
-fn normalize_messages_for_openai(
-    messages: &[Message],
-    tools: Option<&[ToolSpec]>,
-) -> Vec<Message> {
+fn normalize_messages_for_openai(messages: &[Message], tools: Option<&[ToolSpec]>) -> Vec<Message> {
     let preprocessed = remap_duplicate_tool_call_ids(messages);
 
     let mut out: Vec<Message> = Vec::with_capacity(preprocessed.len() + 2);
@@ -504,14 +503,20 @@ fn encode_content_block_for_openai(b: &ContentBlock) -> Value {
             let url = media_source_to_url(source);
             serde_json::json!({"type": "file", "file": {"url": url}})
         }
-        ContentBlock::ToolUse { id, name, input, .. } => {
+        ContentBlock::ToolUse {
+            id, name, input, ..
+        } => {
             serde_json::json!({
                 "type": "function",
                 "id": id,
                 "function": {"name": name, "arguments": input.to_string()}
             })
         }
-        ContentBlock::ToolResult { tool_use_id, content, .. } => {
+        ContentBlock::ToolResult {
+            tool_use_id,
+            content,
+            ..
+        } => {
             serde_json::json!({
                 "type": "text",
                 "text": match content {
@@ -553,7 +558,12 @@ fn tool_message_payload(msg: &Message) -> (String, Option<String>) {
         MessageContent::Text(t) => (t.clone(), None),
         MessageContent::Blocks(blocks) => {
             for block in blocks {
-                if let ContentBlock::ToolResult { tool_use_id, content, .. } = block {
+                if let ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                    ..
+                } = block
+                {
                     let text = match content {
                         Value::String(s) => s.clone(),
                         Value::Null => String::new(),

@@ -14,8 +14,8 @@ use reqwest::header::HeaderMap;
 use serde_json::Value;
 
 use crate::protocol::EgressEncoder;
-use crate::protocol::ir::request::{Role, ToolChoice};
 use crate::protocol::ir::AiRequest;
+use crate::protocol::ir::request::{Role, ToolChoice};
 
 /// Encoder for the OpenAI Responses API (`POST /v1/responses`).
 ///

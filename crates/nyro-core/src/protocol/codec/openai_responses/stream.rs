@@ -2,9 +2,9 @@ use std::collections::HashMap;
 
 use uuid::Uuid;
 
+use crate::protocol::ir::AiStreamDelta;
 use crate::protocol::ir::compat::ai_stream_delta_to_old;
 use crate::protocol::ir::usage::Usage;
-use crate::protocol::ir::AiStreamDelta;
 use crate::protocol::types::StreamDelta;
 use crate::protocol::{SseEvent, StreamFormatter};
 

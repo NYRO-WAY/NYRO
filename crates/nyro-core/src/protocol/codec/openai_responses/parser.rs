@@ -2,8 +2,8 @@ use anyhow::Result;
 use serde_json::Value;
 
 use crate::protocol::ir::compat::old_stream_delta_to_new;
-use crate::protocol::ir::{AiResponse, AiStreamDelta};
 use crate::protocol::ir::usage::Usage;
+use crate::protocol::ir::{AiResponse, AiStreamDelta};
 use crate::protocol::types::{StreamDelta, ToolCall};
 use crate::protocol::{ResponseParser, StreamParser};
 

@@ -3,10 +3,10 @@ use reqwest::header::{HeaderMap, HeaderValue};
 use serde_json::Value;
 
 use crate::protocol::EgressEncoder;
+use crate::protocol::ir::AiRequest;
 use crate::protocol::ir::request::{
     ContentBlock, MediaSource, Message, MessageContent, Role, ToolChoice,
 };
-use crate::protocol::ir::AiRequest;
 
 pub struct AnthropicEncoder;
 
@@ -422,14 +422,20 @@ fn encode_message(msg: &Message) -> Result<Value> {
 
 fn encode_content_block_for_anthropic(b: &ContentBlock) -> Value {
     match b {
-        ContentBlock::Text { text, cache_control } => {
+        ContentBlock::Text {
+            text,
+            cache_control,
+        } => {
             let mut block = serde_json::json!({"type": "text", "text": text});
             if let Some(cc) = cache_control {
                 block["cache_control"] = serde_json::to_value(cc).unwrap_or(Value::Null);
             }
             block
         }
-        ContentBlock::Image { source, cache_control } => {
+        ContentBlock::Image {
+            source,
+            cache_control,
+        } => {
             let src = match source {
                 MediaSource::Base64 { media_type, data } => serde_json::json!({
                     "type": "base64",
@@ -451,7 +457,10 @@ fn encode_content_block_for_anthropic(b: &ContentBlock) -> Value {
             }
             block
         }
-        ContentBlock::Thinking { thinking, signature } => {
+        ContentBlock::Thinking {
+            thinking,
+            signature,
+        } => {
             let mut block = serde_json::json!({
                 "type": "thinking",
                 "thinking": thinking,
@@ -467,7 +476,12 @@ fn encode_content_block_for_anthropic(b: &ContentBlock) -> Value {
         ContentBlock::RedactedThinking { data } => {
             serde_json::json!({"type": "redacted_thinking", "data": data})
         }
-        ContentBlock::ToolUse { id, name, input, cache_control } => {
+        ContentBlock::ToolUse {
+            id,
+            name,
+            input,
+            cache_control,
+        } => {
             let mut block = serde_json::json!({
                 "type": "tool_use",
                 "id": normalize_anthropic_tool_id(id),
@@ -479,7 +493,12 @@ fn encode_content_block_for_anthropic(b: &ContentBlock) -> Value {
             }
             block
         }
-        ContentBlock::ToolResult { tool_use_id, content, is_error, cache_control } => {
+        ContentBlock::ToolResult {
+            tool_use_id,
+            content,
+            is_error,
+            cache_control,
+        } => {
             let mut block = serde_json::json!({
                 "type": "tool_result",
                 "tool_use_id": normalize_anthropic_tool_id(tool_use_id),
@@ -503,7 +522,12 @@ fn anthropic_tool_result_payload(msg: &Message) -> (Value, Option<String>) {
         MessageContent::Text(t) => (Value::String(t.clone()), None),
         MessageContent::Blocks(blocks) => {
             for block in blocks {
-                if let ContentBlock::ToolResult { tool_use_id, content, .. } = block {
+                if let ContentBlock::ToolResult {
+                    tool_use_id,
+                    content,
+                    ..
+                } = block
+                {
                     return (content.clone(), Some(tool_use_id.clone()));
                 }
             }
