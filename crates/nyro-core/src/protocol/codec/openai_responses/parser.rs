@@ -3,7 +3,7 @@ use serde_json::Value;
 
 use crate::protocol::ir::compat::old_stream_delta_to_new;
 use crate::protocol::ir::{AiResponse, AiStreamDelta};
-use crate::protocol::types::*;
+use crate::protocol::types::{StreamDelta, TokenUsage, ToolCall};
 use crate::protocol::{ResponseParser, StreamParser};
 
 pub struct ResponsesResponseParser;
@@ -88,17 +88,19 @@ impl ResponseParser for ResponsesResponseParser {
             ..TokenUsage::default()
         };
 
-        Ok(AiResponse::from(InternalResponse {
-            id,
-            model,
-            content,
-            reasoning_content: None,
-            reasoning_signature: None,
-            tool_calls,
-            response_items: None,
-            stop_reason,
-            usage,
-        }))
+        let mut ai_resp = AiResponse::new(id, model);
+        ai_resp.content = content;
+        ai_resp.tool_calls = tool_calls
+            .into_iter()
+            .map(|tc| crate::protocol::ir::request::ToolCall {
+                id: tc.id,
+                name: tc.name,
+                arguments: tc.arguments,
+            })
+            .collect();
+        ai_resp.stop_reason = stop_reason;
+        ai_resp.usage = usage;
+        Ok(ai_resp)
     }
 }
 

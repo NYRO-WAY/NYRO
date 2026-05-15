@@ -21,11 +21,166 @@ use nyro_core::protocol::ir::compat::old_stream_delta_to_new;
 use nyro_core::protocol::ir::{
     AiRequest, AiResponse as IrAiResponse, AiStreamDelta as IrStreamDelta,
     ContentBlock as IrContentBlock, MessageContent as IrMessageContent, Role as IrRole,
+    StreamConfig,
 };
 use nyro_core::protocol::types::{
-    ContentBlock, InternalMessage, InternalRequest, InternalResponse, MessageContent, ResponseItem,
-    Role, StreamDelta, TokenUsage, ToolCall, ToolDef,
+    ContentBlock, InternalMessage, MessageContent, ResponseItem, Role, StreamDelta, TokenUsage,
+    ToolCall, ToolDef,
 };
+
+// ── Local compatibility shims (PR-6: InternalRequest/Response removed from types.rs) ──
+
+#[derive(Debug, Clone)]
+struct InternalRequest {
+    pub messages: Vec<InternalMessage>,
+    pub model: String,
+    pub stream: bool,
+    pub temperature: Option<f64>,
+    pub max_tokens: Option<u32>,
+    pub top_p: Option<f64>,
+    pub tools: Option<Vec<ToolDef>>,
+    pub tool_choice: Option<serde_json::Value>,
+    pub source_protocol: nyro_core::protocol::ids::ProtocolId,
+    pub extra: std::collections::HashMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+struct InternalResponse {
+    pub id: String,
+    pub model: String,
+    pub content: String,
+    pub reasoning_content: Option<String>,
+    pub reasoning_signature: Option<String>,
+    pub tool_calls: Vec<ToolCall>,
+    pub response_items: Option<Vec<ResponseItem>>,
+    pub stop_reason: Option<String>,
+    pub usage: TokenUsage,
+}
+
+impl From<InternalRequest> for AiRequest {
+    fn from(old: InternalRequest) -> Self {
+        let messages = old.messages.into_iter().map(ir_msg_from_old).collect();
+        let tools = old.tools.map(|ts| {
+            ts.into_iter()
+                .map(|t| nyro_core::protocol::ir::ToolSpec {
+                    name: t.name,
+                    description: t.description,
+                    parameters: t.parameters,
+                    strict: None,
+                    cache_control: None,
+                    meta: None,
+                })
+                .collect()
+        });
+        let mut req = AiRequest::new(old.model, messages);
+        req.stream = StreamConfig {
+            enabled: old.stream,
+            include_usage: false,
+        };
+        req.generation.temperature = old.temperature;
+        req.generation.max_tokens = old.max_tokens;
+        req.generation.top_p = old.top_p;
+        req.tools = tools;
+        req.tool_choice = old
+            .tool_choice
+            .map(nyro_core::protocol::ir::ToolChoice::Raw);
+        req.meta.source_protocol = Some(old.source_protocol);
+        for (k, v) in old.extra {
+            req.meta.vendor.ingress.insert(k, v);
+        }
+        req
+    }
+}
+
+impl From<InternalResponse> for IrAiResponse {
+    fn from(old: InternalResponse) -> Self {
+        let mut resp = IrAiResponse::new(old.id, old.model);
+        resp.content = old.content;
+        resp.reasoning_content = old.reasoning_content;
+        resp.reasoning_signature = old.reasoning_signature;
+        resp.tool_calls = old
+            .tool_calls
+            .into_iter()
+            .map(|tc| nyro_core::protocol::ir::request::ToolCall {
+                id: tc.id,
+                name: tc.name,
+                arguments: tc.arguments,
+            })
+            .collect();
+        resp.stop_reason = old.stop_reason;
+        resp.usage = old.usage;
+        resp
+    }
+}
+
+fn ir_msg_from_old(old: InternalMessage) -> nyro_core::protocol::ir::Message {
+    let meta = if old.extra.is_empty() {
+        None
+    } else {
+        Some(serde_json::Value::Object(old.extra.into_iter().collect()))
+    };
+    nyro_core::protocol::ir::Message {
+        role: match old.role {
+            Role::System => IrRole::System,
+            Role::User => IrRole::User,
+            Role::Assistant => IrRole::Assistant,
+            Role::Tool => IrRole::Tool,
+        },
+        content: match old.content {
+            MessageContent::Text(t) => IrMessageContent::Text(t),
+            MessageContent::Blocks(bs) => {
+                IrMessageContent::Blocks(bs.into_iter().filter_map(ir_block_from_old).collect())
+            }
+        },
+        tool_calls: old.tool_calls.map(|tcs| {
+            tcs.into_iter()
+                .map(|tc| nyro_core::protocol::ir::request::ToolCall {
+                    id: tc.id,
+                    name: tc.name,
+                    arguments: tc.arguments,
+                })
+                .collect()
+        }),
+        tool_call_id: old.tool_call_id,
+        meta,
+    }
+}
+
+fn ir_block_from_old(b: ContentBlock) -> Option<IrContentBlock> {
+    match b {
+        ContentBlock::Text { text } => Some(IrContentBlock::Text {
+            text,
+            cache_control: None,
+        }),
+        ContentBlock::Image { source } => Some(IrContentBlock::Image {
+            source: nyro_core::protocol::ir::MediaSource::Base64 {
+                media_type: source.media_type,
+                data: source.data,
+            },
+            cache_control: None,
+        }),
+        ContentBlock::Reasoning { text, signature } => Some(IrContentBlock::Thinking {
+            thinking: text,
+            signature,
+        }),
+        ContentBlock::ToolUse { id, name, input } => Some(IrContentBlock::ToolUse {
+            id,
+            name,
+            input,
+            cache_control: None,
+        }),
+        ContentBlock::ToolResult {
+            tool_use_id,
+            content,
+        } => Some(IrContentBlock::ToolResult {
+            tool_use_id,
+            content,
+            is_error: None,
+            cache_control: None,
+        }),
+    }
+}
 use nyro_core::protocol::{
     EgressEncoder, IngressDecoder, ResponseFormatter, ResponseParser, StreamFormatter, StreamParser,
 };
@@ -60,49 +215,6 @@ fn openai_to_anthropic_thinking_blocks() {
     assert_eq!(
         content[0].get("thinking").and_then(|v| v.as_str()),
         Some("reasoning summary")
-    );
-}
-
-#[test]
-fn ir_compat_preserves_per_message_reasoning_extra() {
-    let mut extra = std::collections::HashMap::new();
-    extra.insert(
-        "reasoning_content".to_string(),
-        serde_json::Value::String("preserved reasoning".to_string()),
-    );
-
-    let req = InternalRequest {
-        messages: vec![InternalMessage {
-            role: Role::Assistant,
-            content: MessageContent::Text(String::new()),
-            tool_calls: Some(vec![ToolCall {
-                id: "call_1".to_string(),
-                name: "exec_command".to_string(),
-                arguments: "{\"cmd\":\"echo hello\"}".to_string(),
-            }]),
-            tool_call_id: None,
-            extra,
-        }],
-        model: "deepseek-v4-flash".to_string(),
-        stream: false,
-        temperature: None,
-        max_tokens: None,
-        top_p: None,
-        tools: None,
-        tool_choice: None,
-        source_protocol: OPENAI_RESPONSES_V1,
-        extra: Default::default(),
-    };
-
-    let ai: AiRequest = req.into();
-    let back: InternalRequest = ai.into();
-
-    assert_eq!(
-        back.messages[0]
-            .extra
-            .get("reasoning_content")
-            .and_then(|v| v.as_str()),
-        Some("preserved reasoning")
     );
 }
 
@@ -276,7 +388,7 @@ fn openai_stream_formatter_sets_tool_calls_finish_reason_when_tool_calls_seen() 
 
 #[test]
 fn gemini_tool_result_correlation_success() {
-    let mut req = InternalRequest {
+    let req = InternalRequest {
         messages: vec![
             InternalMessage {
                 role: Role::Assistant,
@@ -311,9 +423,10 @@ fn gemini_tool_result_correlation_success() {
         extra: Default::default(),
     };
 
-    normalize_request_tool_results(&mut req);
+    let mut ai_req: AiRequest = req.into();
+    normalize_request_tool_results(&mut ai_req);
     assert_eq!(
-        req.messages[1].tool_call_id.as_deref(),
+        ai_req.messages[1].tool_call_id.as_deref(),
         Some("call_abc"),
         "tool result should be correlated to previous assistant tool_call id"
     );
@@ -321,7 +434,7 @@ fn gemini_tool_result_correlation_success() {
 
 #[test]
 fn gemini_tool_result_id_hint_matches_out_of_order_calls() {
-    let mut req = InternalRequest {
+    let req = InternalRequest {
         messages: vec![
             InternalMessage {
                 role: Role::Assistant,
@@ -373,14 +486,15 @@ fn gemini_tool_result_id_hint_matches_out_of_order_calls() {
         extra: Default::default(),
     };
 
-    normalize_request_tool_results(&mut req);
-    assert_eq!(req.messages[1].tool_call_id.as_deref(), Some("call_b"));
-    assert_eq!(req.messages[2].tool_call_id.as_deref(), Some("call_a"));
+    let mut ai_req: AiRequest = req.into();
+    normalize_request_tool_results(&mut ai_req);
+    assert_eq!(ai_req.messages[1].tool_call_id.as_deref(), Some("call_b"));
+    assert_eq!(ai_req.messages[2].tool_call_id.as_deref(), Some("call_a"));
 }
 
 #[test]
 fn minimax_reasoning_split_fallback_think_tag() {
-    let mut resp = InternalResponse {
+    let resp = InternalResponse {
         id: "resp_2".to_string(),
         model: "minimax-m2.7".to_string(),
         content: "<think>plan first</think>run ls".to_string(),
@@ -392,14 +506,15 @@ fn minimax_reasoning_split_fallback_think_tag() {
         usage: TokenUsage::default(),
     };
 
-    normalize_response_reasoning(&mut resp);
-    assert_eq!(resp.reasoning_content.as_deref(), Some("plan first"));
-    assert_eq!(resp.content, "run ls");
+    let mut ai_resp: IrAiResponse = resp.into();
+    normalize_response_reasoning(&mut ai_resp);
+    assert_eq!(ai_resp.reasoning_content.as_deref(), Some("plan first"));
+    assert_eq!(ai_resp.content, "run ls");
 }
 
 #[test]
 fn non_reasoning_model_no_regression() {
-    let mut resp = InternalResponse {
+    let resp = InternalResponse {
         id: "resp_3".to_string(),
         model: "plain-model".to_string(),
         content: "hello world".to_string(),
@@ -411,9 +526,10 @@ fn non_reasoning_model_no_regression() {
         usage: TokenUsage::default(),
     };
 
-    normalize_response_reasoning(&mut resp);
-    assert!(resp.reasoning_content.is_none());
-    assert_eq!(resp.content, "hello world");
+    let mut ai_resp: IrAiResponse = resp.into();
+    normalize_response_reasoning(&mut ai_resp);
+    assert!(ai_resp.reasoning_content.is_none());
+    assert_eq!(ai_resp.content, "hello world");
 }
 
 #[test]
@@ -1939,8 +2055,7 @@ fn codex_parallel_calls_with_intermediate_text_anthropic_egress() {
                 "output": "{\"stdout\":\"b\"}"},
         ]
     });
-    let internal = ResponsesDecoder.decode_request(body).expect("decode");
-    let mut req: InternalRequest = internal.into();
+    let mut req: AiRequest = ResponsesDecoder.decode_request(body).expect("decode");
     normalize_request_tool_results(&mut req);
 
     let (encoded, _) = AnthropicEncoder

@@ -96,17 +96,21 @@ impl ResponseParser for AnthropicResponseParser {
 
         let usage = extract_anthropic_usage(&resp);
 
-        Ok(AiResponse::from(InternalResponse {
-            id,
-            model,
-            content: content_text,
-            reasoning_content,
-            reasoning_signature,
-            tool_calls,
-            response_items: None,
-            stop_reason,
-            usage,
-        }))
+        let mut ai_resp = AiResponse::new(id, model);
+        ai_resp.content = content_text;
+        ai_resp.reasoning_content = reasoning_content;
+        ai_resp.reasoning_signature = reasoning_signature;
+        ai_resp.tool_calls = tool_calls
+            .into_iter()
+            .map(|tc| crate::protocol::ir::request::ToolCall {
+                id: tc.id,
+                name: tc.name,
+                arguments: tc.arguments,
+            })
+            .collect();
+        ai_resp.stop_reason = stop_reason;
+        ai_resp.usage = usage;
+        Ok(ai_resp)
     }
 }
 
@@ -116,7 +120,6 @@ pub struct AnthropicResponseFormatter;
 
 impl ResponseFormatter for AnthropicResponseFormatter {
     fn format_response(&self, resp: &AiResponse) -> Value {
-        let resp: InternalResponse = resp.clone().into();
         let mut content = Vec::new();
 
         if let Some(reasoning) = resp
@@ -769,19 +772,13 @@ mod tests {
 
     #[test]
     fn test_format_response_includes_thinking_signature() {
-        let resp = InternalResponse {
-            id: "msg_sig".to_string(),
-            model: "claude-3-7-sonnet".to_string(),
-            content: "answer".to_string(),
-            reasoning_content: Some("think".to_string()),
-            reasoning_signature: Some("sig_resp".to_string()),
-            tool_calls: vec![],
-            response_items: None,
-            stop_reason: Some("stop".to_string()),
-            usage: TokenUsage::default(),
-        };
+        let mut resp = AiResponse::new("msg_sig", "claude-3-7-sonnet");
+        resp.content = "answer".to_string();
+        resp.reasoning_content = Some("think".to_string());
+        resp.reasoning_signature = Some("sig_resp".to_string());
+        resp.stop_reason = Some("stop".to_string());
 
-        let out = AnthropicResponseFormatter.format_response(&AiResponse::from(resp.clone()));
+        let out = AnthropicResponseFormatter.format_response(&resp);
         let thinking = out
             .get("content")
             .and_then(|v| v.as_array())
@@ -1377,27 +1374,20 @@ mod tests {
 
     #[test]
     fn test_format_response_includes_cache_fields() {
-        let resp = InternalResponse {
-            id: "m3".into(),
-            model: "claude".into(),
-            content: "hi".into(),
-            reasoning_content: None,
-            reasoning_signature: None,
-            tool_calls: vec![],
-            response_items: None,
-            stop_reason: Some("stop".into()),
-            usage: TokenUsage {
-                input_tokens: 10,
-                output_tokens: 5,
-                cache_read_input_tokens: Some(3),
-                cache_creation_input_tokens: Some(7),
-                server_tool_use: Some(ServerToolUsage {
-                    web_search_requests: 1,
-                    web_fetch_requests: 0,
-                }),
-            },
+        let mut resp = AiResponse::new("m3", "claude");
+        resp.content = "hi".to_string();
+        resp.stop_reason = Some("stop".to_string());
+        resp.usage = TokenUsage {
+            input_tokens: 10,
+            output_tokens: 5,
+            cache_read_input_tokens: Some(3),
+            cache_creation_input_tokens: Some(7),
+            server_tool_use: Some(ServerToolUsage {
+                web_search_requests: 1,
+                web_fetch_requests: 0,
+            }),
         };
-        let json = AnthropicResponseFormatter.format_response(&AiResponse::from(resp.clone()));
+        let json = AnthropicResponseFormatter.format_response(&resp);
         let u = &json["usage"];
         assert_eq!(u["input_tokens"].as_u64(), Some(10));
         assert_eq!(u["output_tokens"].as_u64(), Some(5));

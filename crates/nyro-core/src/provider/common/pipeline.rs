@@ -46,13 +46,8 @@ where
         .await
         .map_err(GatewayError::internal)?;
 
-    // 2. normalize tool results (convert round-trip via compat for legacy helper)
-    {
-        let mut old_req: crate::protocol::types::InternalRequest = req.clone().into();
-        crate::protocol::codec::tool_correlation::normalize_request_tool_results(&mut old_req);
-        // Merge normalized messages back (tool correlation only touches messages)
-        req.messages = crate::protocol::ir::AiRequest::from(old_req).messages;
-    }
+    // 2. normalize tool results
+    crate::protocol::codec::tool_correlation::normalize_request_tool_results(req);
 
     // 3. pre_encode hook
     vendor
@@ -141,13 +136,8 @@ where
         .parse_response(body)
         .map_err(GatewayError::internal)?;
 
-    // 3. reasoning normalization (via compat round-trip)
-    {
-        let mut old = crate::protocol::types::InternalResponse::from(ai_resp.clone());
-        crate::protocol::codec::reasoning::normalize_response_reasoning(&mut old);
-        ai_resp.reasoning_content = old.reasoning_content;
-        ai_resp.reasoning_signature = old.reasoning_signature;
-    }
+    // 3. reasoning normalization
+    crate::protocol::codec::reasoning::normalize_response_reasoning(&mut ai_resp);
 
     // 4. post_parse hook
     vendor

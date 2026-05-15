@@ -6,6 +6,39 @@
 
 ---
 
+## [PR-6] 删除 InternalRequest / InternalResponse + 清理 compat.rs — 2026-05-15
+
+### 删除
+
+**`protocol/types.rs`**
+- `InternalRequest` struct — 全流程已用 `AiRequest` 替代
+- `InternalResponse` struct — 全流程已用 `AiResponse` 替代
+
+**`ir/compat.rs`**
+- `From<InternalRequest> for AiRequest` / `From<AiRequest> for InternalRequest`
+- `From<InternalResponse> for AiResponse` / `From<AiResponse> for InternalResponse`
+- 与 `InternalRequest`/`InternalResponse` 相关的所有 by-value 转换函数
+- Round-trip 测试（`round_trip_internal_request`）
+
+### 变更
+
+**保留**（仍用于 codec 内部辅助）
+- `types.rs` 内：`InternalMessage`, `Role`, `MessageContent`, `ContentBlock`, `ImageSource`, `ToolCall`, `ToolDef`, `ResponseItem`, `StreamDelta`, `TokenUsage`, `ServerToolUsage`
+- `compat.rs` 内：by-ref helpers (`ai_msg_to_old_ref`, `ai_tool_choice_to_value`, `ai_tool_spec_to_old_ref`) + StreamDelta 双向转换函数
+
+**`codec/reasoning.rs`**：改为接受 `&mut AiResponse`
+**`codec/tool_correlation.rs`**：完全重写，使用 `AiRequest`/`ir::Message`
+**`pipeline.rs`**：移除 compat 圈子转换，`normalize_tool_results` 和 `reasoning` 直接调用
+
+**4 个 ResponseFormatter**：移除 `let resp: InternalResponse = resp.clone().into()` 内部转换
+**4 个 ResponseParser**：直接构造 `AiResponse`，移除 `AiResponse::from(InternalResponse {...})`
+
+**`tests/protocol_conversion.rs`**
+- 删除 `ir_compat_preserves_per_message_reasoning_extra`（测试已删除的 compat round-trip）
+- 添加本地 `InternalRequest`/`InternalResponse` shim + `From` 实现，其余 36 个测试零改动
+
+---
+
 ## [PR-5] Dispatcher / Provider Adapter / Cache 全切到新 IR — 2026-05-15
 
 ### 变更

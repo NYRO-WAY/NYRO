@@ -3,30 +3,10 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::ids::ProtocolId;
-
-// ── Ingress: client request → internal ──
+// ── InternalMessage — internal codec helper type ──────────────────────────────
 //
-// NOTE: `InternalRequest` and `InternalResponse` are superseded by
-// `crate::protocol::ir::{AiRequest, AiResponse}` (PR-06).
-// These types remain for codec backward compatibility during PR-08–12.
-// Do not add new fields here; add them to `AiRequest`/`AiResponse` instead.
-
-#[derive(Debug, Clone)]
-pub struct InternalRequest {
-    pub messages: Vec<InternalMessage>,
-    pub model: String,
-    pub stream: bool,
-    pub temperature: Option<f64>,
-    pub max_tokens: Option<u32>,
-    pub top_p: Option<f64>,
-    pub tools: Option<Vec<ToolDef>>,
-    pub tool_choice: Option<Value>,
-    pub source_protocol: ProtocolId,
-    /// Superseded by `AiRequest.meta.vendor.ingress`. Will be removed once all
-    /// codec decoders migrate to the new IR (protocol/ir/request.rs).
-    pub extra: HashMap<String, Value>,
-}
+// Used by codec encoders as an intermediate working type.
+// `InternalRequest`/`InternalResponse` have been removed (PR-6).
 
 #[derive(Debug, Clone)]
 pub struct InternalMessage {
@@ -34,8 +14,6 @@ pub struct InternalMessage {
     pub content: MessageContent,
     pub tool_calls: Option<Vec<ToolCall>>,
     pub tool_call_id: Option<String>,
-    /// Superseded by per-message metadata in `AiRequest`. Will be removed once all
-    /// codec decoders migrate to the new IR (protocol/ir/request.rs).
     pub extra: HashMap<String, Value>,
 }
 
@@ -99,7 +77,7 @@ pub struct ImageSource {
     pub data: String,
 }
 
-// ── Egress: internal → upstream response ──
+// ── Shared response types ─────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ServerToolUsage {
@@ -117,19 +95,6 @@ pub struct TokenUsage {
     pub cache_creation_input_tokens: Option<u32>,
     /// Server-side tool call counts (web search / web fetch).
     pub server_tool_use: Option<ServerToolUsage>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct InternalResponse {
-    pub id: String,
-    pub model: String,
-    pub content: String,
-    pub reasoning_content: Option<String>,
-    pub reasoning_signature: Option<String>,
-    pub tool_calls: Vec<ToolCall>,
-    pub response_items: Option<Vec<ResponseItem>>,
-    pub stop_reason: Option<String>,
-    pub usage: TokenUsage,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -161,7 +126,7 @@ pub enum ResponseItem {
     },
 }
 
-// ── Streaming ──
+// ── Streaming ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
 pub enum StreamDelta {
@@ -186,8 +151,6 @@ pub enum StreamDelta {
         stop_reason: String,
     },
     /// A verbatim SSE event that was not classified into a known delta type.
-    /// Forwarded as-is by same-protocol formatters so no upstream data is silently dropped.
-    /// Other formatters (e.g. OpenAI, Google) ignore it.
     RawEvent {
         event_type: String,
         data: Value,

@@ -43,7 +43,7 @@ impl ResponseParser for OpenAIResponseParser {
             .and_then(|v| v.as_str())
             .map(String::from);
 
-        let tool_calls = message
+        let tool_calls: Vec<ToolCall> = message
             .and_then(|m| m.get("tool_calls"))
             .and_then(|v| v.as_array())
             .map(|arr| {
@@ -66,17 +66,20 @@ impl ResponseParser for OpenAIResponseParser {
 
         let usage = extract_usage(&resp);
 
-        Ok(AiResponse::from(InternalResponse {
-            id,
-            model,
-            content,
-            reasoning_content,
-            reasoning_signature: None,
-            tool_calls,
-            response_items: None,
-            stop_reason,
-            usage,
-        }))
+        let mut ai_resp = AiResponse::new(id, model);
+        ai_resp.content = content;
+        ai_resp.reasoning_content = reasoning_content;
+        ai_resp.tool_calls = tool_calls
+            .into_iter()
+            .map(|tc| crate::protocol::ir::request::ToolCall {
+                id: tc.id,
+                name: tc.name,
+                arguments: tc.arguments,
+            })
+            .collect();
+        ai_resp.stop_reason = stop_reason;
+        ai_resp.usage = usage;
+        Ok(ai_resp)
     }
 }
 
@@ -86,7 +89,6 @@ pub struct OpenAIResponseFormatter;
 
 impl ResponseFormatter for OpenAIResponseFormatter {
     fn format_response(&self, resp: &AiResponse) -> Value {
-        let resp: InternalResponse = resp.clone().into();
         let finish_reason = if !resp.tool_calls.is_empty() {
             Some("tool_calls")
         } else {
@@ -760,23 +762,16 @@ mod tests {
     #[test]
     fn test_format_response_includes_reasoning_content() {
         // The response formatter must emit reasoning_content when it is present.
-        let internal = InternalResponse {
-            id: "chatcmpl-test".to_string(),
-            model: "qwen3".to_string(),
-            content: "visible text".to_string(),
-            reasoning_content: Some("hidden chain of thought".to_string()),
-            reasoning_signature: None,
-            tool_calls: vec![],
-            response_items: None,
-            stop_reason: Some("stop".to_string()),
-            usage: TokenUsage {
-                input_tokens: 10,
-                output_tokens: 5,
-                ..TokenUsage::default()
-            },
+        let mut internal = AiResponse::new("chatcmpl-test", "qwen3");
+        internal.content = "visible text".to_string();
+        internal.reasoning_content = Some("hidden chain of thought".to_string());
+        internal.stop_reason = Some("stop".to_string());
+        internal.usage = TokenUsage {
+            input_tokens: 10,
+            output_tokens: 5,
+            ..TokenUsage::default()
         };
-        let formatted =
-            OpenAIResponseFormatter.format_response(&AiResponse::from(internal.clone()));
+        let formatted = OpenAIResponseFormatter.format_response(&internal);
         let msg = &formatted["choices"][0]["message"];
         assert_eq!(msg["content"].as_str(), Some("visible text"));
         assert_eq!(

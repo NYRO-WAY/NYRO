@@ -1,13 +1,13 @@
 use std::collections::VecDeque;
 
-use crate::protocol::types::{
-    ContentBlock, InternalMessage, InternalRequest, MessageContent, Role, ToolCall,
+use crate::protocol::ir::request::{
+    AiRequest, ContentBlock, Message, MessageContent, Role, ToolCall,
 };
 
-pub fn normalize_request_tool_results(req: &mut InternalRequest) {
+pub fn normalize_request_tool_results(req: &mut AiRequest) {
     let mut pending_calls: VecDeque<(String, String)> = VecDeque::new();
     let mut generated_id_seq: usize = 0;
-    let mut normalized_messages: Vec<InternalMessage> = Vec::with_capacity(req.messages.len());
+    let mut normalized_messages: Vec<Message> = Vec::with_capacity(req.messages.len());
 
     for mut msg in req.messages.drain(..) {
         if msg.role == Role::Assistant {
@@ -73,7 +73,6 @@ pub fn normalize_request_tool_results(req: &mut InternalRequest) {
         }
 
         if resolved_id.is_none() {
-            // Fallback: correlate by FIFO pending tool call when client omitted tool_call_id.
             if let Some((call_id, _name)) = pending_calls.pop_front() {
                 resolved_id = Some(call_id);
                 has_linked_pending_call = true;
@@ -92,16 +91,16 @@ pub fn normalize_request_tool_results(req: &mut InternalRequest) {
         let final_id = resolved_id.expect("final tool_call_id should always exist");
         if !has_linked_pending_call {
             let synth_name = hinted_value.unwrap_or_else(|| "unknown_tool".to_string());
-            normalized_messages.push(InternalMessage {
+            normalized_messages.push(Message {
                 role: Role::Assistant,
                 content: MessageContent::Text(String::new()),
                 tool_calls: Some(vec![ToolCall {
                     id: final_id.clone(),
-                    name: synth_name.clone(),
+                    name: synth_name,
                     arguments: "{}".to_string(),
                 }]),
                 tool_call_id: None,
-                extra: Default::default(),
+                meta: None,
             });
         }
 
@@ -129,26 +128,13 @@ fn extract_tool_result_hint(content: &MessageContent) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::ids::OPENAI_CHAT_COMPLETIONS_V1;
-    use crate::protocol::types::MessageContent;
 
-    fn make_req(messages: Vec<InternalMessage>) -> InternalRequest {
-        InternalRequest {
-            messages,
-            model: "test".to_string(),
-            stream: false,
-            temperature: None,
-            max_tokens: None,
-            top_p: None,
-            tools: None,
-            tool_choice: None,
-            source_protocol: OPENAI_CHAT_COMPLETIONS_V1,
-            extra: Default::default(),
-        }
+    fn make_req(messages: Vec<Message>) -> AiRequest {
+        AiRequest::new("test", messages)
     }
 
-    fn assistant_with_tool(tool_id: &str, tool_name: &str) -> InternalMessage {
-        InternalMessage {
+    fn assistant_with_tool(tool_id: &str, tool_name: &str) -> Message {
+        Message {
             role: Role::Assistant,
             content: MessageContent::Text(String::new()),
             tool_calls: Some(vec![ToolCall {
@@ -157,27 +143,27 @@ mod tests {
                 arguments: "{}".to_string(),
             }]),
             tool_call_id: None,
-            extra: Default::default(),
+            meta: None,
         }
     }
 
-    fn tool_result_with_id(tool_call_id: &str) -> InternalMessage {
-        InternalMessage {
+    fn tool_result_with_id(tool_call_id: &str) -> Message {
+        Message {
             role: Role::Tool,
             content: MessageContent::Text("result".to_string()),
             tool_calls: None,
             tool_call_id: Some(tool_call_id.to_string()),
-            extra: Default::default(),
+            meta: None,
         }
     }
 
-    fn tool_result_no_id() -> InternalMessage {
-        InternalMessage {
+    fn tool_result_no_id() -> Message {
+        Message {
             role: Role::Tool,
             content: MessageContent::Text("result".to_string()),
             tool_calls: None,
             tool_call_id: None,
-            extra: Default::default(),
+            meta: None,
         }
     }
 
@@ -195,7 +181,6 @@ mod tests {
 
     #[test]
     fn test_correlation_fifo_when_no_id() {
-        // Tool result has no tool_call_id — should match the pending call by FIFO.
         let mut req = make_req(vec![
             assistant_with_tool("call_abc", "search"),
             tool_result_no_id(),
@@ -212,9 +197,8 @@ mod tests {
 
     #[test]
     fn test_generated_id_for_empty_tool_call_id() {
-        // Assistant tool_call with blank id → must be assigned a generated id.
         let mut req = make_req(vec![
-            InternalMessage {
+            Message {
                 role: Role::Assistant,
                 content: MessageContent::Text(String::new()),
                 tool_calls: Some(vec![ToolCall {
@@ -223,7 +207,7 @@ mod tests {
                     arguments: "{}".to_string(),
                 }]),
                 tool_call_id: None,
-                extra: Default::default(),
+                meta: None,
             },
             tool_result_no_id(),
         ]);
@@ -251,7 +235,7 @@ mod tests {
     #[test]
     fn test_multiple_tool_calls_fifo_order() {
         let mut req = make_req(vec![
-            InternalMessage {
+            Message {
                 role: Role::Assistant,
                 content: MessageContent::Text(String::new()),
                 tool_calls: Some(vec![
@@ -267,10 +251,10 @@ mod tests {
                     },
                 ]),
                 tool_call_id: None,
-                extra: Default::default(),
+                meta: None,
             },
-            tool_result_no_id(), // first result → call_1 (FIFO)
-            tool_result_no_id(), // second result → call_2 (FIFO)
+            tool_result_no_id(),
+            tool_result_no_id(),
         ]);
         normalize_request_tool_results(&mut req);
 

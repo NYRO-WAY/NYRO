@@ -67,17 +67,19 @@ impl ResponseParser for GoogleResponseParser {
             .unwrap_or("")
             .to_string();
 
-        Ok(AiResponse::from(InternalResponse {
-            id: format!("gen-{}", uuid::Uuid::new_v4().simple()),
-            model,
-            content: text,
-            reasoning_content: None,
-            reasoning_signature: None,
-            tool_calls,
-            response_items: None,
-            stop_reason,
-            usage,
-        }))
+        let mut ai_resp = AiResponse::new(format!("gen-{}", uuid::Uuid::new_v4().simple()), model);
+        ai_resp.content = text;
+        ai_resp.tool_calls = tool_calls
+            .into_iter()
+            .map(|tc| crate::protocol::ir::request::ToolCall {
+                id: tc.id,
+                name: tc.name,
+                arguments: tc.arguments,
+            })
+            .collect();
+        ai_resp.stop_reason = stop_reason;
+        ai_resp.usage = usage;
+        Ok(ai_resp)
     }
 }
 
@@ -87,7 +89,6 @@ pub struct GoogleResponseFormatter;
 
 impl ResponseFormatter for GoogleResponseFormatter {
     fn format_response(&self, resp: &AiResponse) -> Value {
-        let resp: InternalResponse = resp.clone().into();
         let mut parts = Vec::new();
 
         if !resp.content.is_empty() {
