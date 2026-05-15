@@ -1,14 +1,16 @@
-//! `AiRequest` — the new unified ingress IR for all supported protocols.
+//! `AiRequest` — the unified ingress IR for all supported protocols.
 //!
-//! PR-08–12 will update the codec decoders to produce `AiRequest` instead of
-//! the old `InternalRequest`.  Until then, `compat.rs` provides lossless
-//! round-trip `From` conversions.
+//! Codec decoders (PR-2) produce `AiRequest`; codec encoders (PR-3) and the
+//! dispatcher (PR-5) consume it.  Until PR-2 lands, `compat.rs` provides
+//! lossless `From` conversions from/to the old `InternalRequest`.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::protocol::ids::ProtocolId;
+use crate::protocol::ir::cache::CacheControl;
 use crate::protocol::ir::envelope::RawEnvelope;
+use crate::protocol::ir::ext::ProtocolExt;
 use crate::protocol::ir::vendor_ext::VendorExtensions;
 
 // ── Role ─────────────────────────────────────────────────────────────────────
@@ -22,31 +24,186 @@ pub enum Role {
     Tool,
 }
 
+// ── Image source ─────────────────────────────────────────────────────────────
+
+/// The data source for an image or audio content block.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum MediaSource {
+    /// Inline base64-encoded data.
+    Base64 {
+        media_type: String,
+        data: String,
+    },
+    /// A URL pointing to the media.
+    Url(String),
+    /// A provider-side file reference.
+    FileId {
+        file_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        detail: Option<String>,
+    },
+}
+
+// ── Document source ───────────────────────────────────────────────────────────
+
+/// Source for a document content block (Anthropic).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum DocumentSource {
+    Base64Pdf {
+        data: String,
+    },
+    PlainText {
+        data: String,
+    },
+    Url(String),
+    /// Content already stored as content blocks.
+    Blocks {
+        content: Vec<ContentBlock>,
+    },
+}
+
 // ── Content blocks ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ContentBlock {
+    // ── Text ─────────────────────────────────────────────────────────────────
     Text {
         text: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
     },
+
+    // ── Multimodal ───────────────────────────────────────────────────────────
     Image {
-        media_type: String,
-        data: String,
+        source: MediaSource,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
     },
-    Reasoning {
-        text: String,
+    Audio {
+        source: MediaSource,
+    },
+    File {
+        source: MediaSource,
+    },
+
+    // ── Reasoning / thinking ─────────────────────────────────────────────────
+    /// Extended thinking output (Anthropic `ThinkingBlockParam`, Google `thought=true`).
+    Thinking {
+        thinking: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
         signature: Option<String>,
     },
+    /// Redacted thinking block (Anthropic `RedactedThinkingBlockParam`).
+    RedactedThinking {
+        data: String,
+    },
+
+    // ── Tool calls ────────────────────────────────────────────────────────────
     ToolUse {
         id: String,
         name: String,
         input: Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
     },
     ToolResult {
         tool_use_id: String,
         content: Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        is_error: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
     },
+
+    // ── Server-side tools (Anthropic) ────────────────────────────────────────
+    /// A server-executed tool call (Anthropic `ServerToolUseBlockParam`,
+    /// Google `Part.toolCall`).
+    ServerToolUse {
+        id: String,
+        /// Tool name (e.g. `"web_search"`, `"code_execution"`).
+        name: String,
+        input: Value,
+        /// Discriminator for the tool type (e.g. `"web_search"`, `"bash"`).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        server_type: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+    },
+    /// Result from a server-executed tool.
+    ServerToolResult {
+        tool_use_id: String,
+        content: Value,
+        /// Discriminator matching the originating `ServerToolUse.server_type`.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        server_type: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+    },
+
+    // ── Documents / search ────────────────────────────────────────────────────
+    /// A document block (Anthropic `DocumentBlockParam`).
+    Document {
+        source: DocumentSource,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        title: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        context: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+    },
+    /// A search result block (Anthropic `SearchResultBlockParam`).
+    SearchResult {
+        content: Vec<ContentBlock>,
+        source: String,
+        title: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+    },
+
+    // ── Citations ─────────────────────────────────────────────────────────────
+    /// A citation block (Anthropic citations, OpenAI Responses annotations).
+    Citation {
+        cited_text: String,
+        source: Value,
+    },
+
+    // ── Code execution ───────────────────────────────────────────────────────
+    /// Executable code produced by the model (Google `Part.executableCode`).
+    ExecutableCode {
+        code: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        language: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+    },
+    /// Code execution result (Google `Part.codeExecutionResult`,
+    /// Anthropic `CodeExecutionResultBlockParam`).
+    CodeExecutionResult {
+        return_code: i32,
+        stdout: String,
+        stderr: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        id: Option<String>,
+    },
+
+    // ── Container ────────────────────────────────────────────────────────────
+    /// Container file upload (Anthropic `ContainerUploadBlockParam`).
+    ContainerUpload {
+        file_id: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_control: Option<CacheControl>,
+    },
+
+    // ── Refusal ───────────────────────────────────────────────────────────────
+    /// Model refusal (OpenAI `content_filter` / Anthropic `stop_reason = "refusal"`).
+    Refusal {
+        refusal: String,
+    },
+
+    // ── Fallback ─────────────────────────────────────────────────────────────
     /// A raw JSON block that the codec does not understand.  Preserved for
     /// pass-through and future extension.
     Unknown {
@@ -56,15 +213,23 @@ pub enum ContentBlock {
 
 impl ContentBlock {
     pub fn as_text(&self) -> Option<&str> {
-        if let Self::Text { text } = self {
+        if let Self::Text { text, .. } = self {
             Some(text)
         } else {
             None
         }
     }
+
+    pub fn is_tool_use(&self) -> bool {
+        matches!(self, Self::ToolUse { .. } | Self::ServerToolUse { .. })
+    }
+
+    pub fn is_tool_result(&self) -> bool {
+        matches!(self, Self::ToolResult { .. } | Self::ServerToolResult { .. })
+    }
 }
 
-/// Message content can be a plain string or a list of typed blocks.
+/// Message content — either a plain string or a typed block list.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum MessageContent {
@@ -93,12 +258,11 @@ pub struct Message {
     pub content: MessageContent,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_calls: Option<Vec<ToolCall>>,
-    /// The `tool_call_id` of the preceding assistant tool call this result
-    /// answers.  Required for `Role::Tool` messages.
+    /// The `tool_call_id` this result answers.  Required for `Role::Tool` messages.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
     /// Provider-specific extras for this individual message (e.g. Anthropic
-    /// `cache_control`).
+    /// `cache_control` on `system` array items).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub meta: Option<Value>,
 }
@@ -117,31 +281,38 @@ pub struct ToolSpec {
     pub name: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// JSON Schema for the tool's input parameters.
     pub parameters: Value,
-    /// Vendor-specific extra fields (e.g. Google `codeExecution`, Anthropic
-    /// `cache_control`).
+    /// Whether to enforce strict JSON Schema validation (OpenAI + Anthropic).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub strict: Option<bool>,
+    /// Per-tool cache breakpoint (Anthropic).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cache_control: Option<CacheControl>,
+    /// Vendor-specific extra fields not covered by the IR.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub meta: Option<Value>,
 }
 
-/// Flexible `tool_choice` that can be a string sentinel or a named-tool object.
+/// `tool_choice` — how the model selects tools.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
+#[serde(rename_all = "snake_case")]
 pub enum ToolChoice {
-    #[serde(rename = "auto")]
+    /// Model decides whether to call a tool.
     Auto,
-    #[serde(rename = "none")]
+    /// Model must not call any tool.
     None,
-    #[serde(rename = "required")]
+    /// Model must call at least one tool.
     Required,
-    Named {
-        name: String,
-    },
+    /// Force a specific tool by name.
+    Named { name: String },
+    /// Pass-through raw value for protocol-specific options.
     Raw(Value),
 }
 
 // ── Generation config ─────────────────────────────────────────────────────────
 
+/// Core generation parameters shared across all supported protocols.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct GenerationConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -151,33 +322,63 @@ pub struct GenerationConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub top_p: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub top_k: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub seed: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stop: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub frequency_penalty: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub presence_penalty: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub frequency_penalty: Option<f64>,
+
+    // ── Fields pending migration to ProtocolExt (PR-2) ───────────────────────
+    // These belong in `OpenAIChatExt` / `AnthropicExt` / `GoogleExt` per
+    // FIELD_HOMING.md §3-6.  Kept here temporarily so existing codec encoders
+    // continue to compile.  Remove in PR-2 when decoders are rewritten.
+    /// TODO(PR-2): Move to `OpenAIChatExt.logit_bias`.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub logit_bias: Option<std::collections::HashMap<String, f64>>,
+    /// TODO(PR-2): Move to `OpenAIChatExt.n`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub n: Option<u32>,
+    /// TODO(PR-2): Move to `AnthropicExt.top_k` / `GoogleExt.top_k`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub top_k: Option<u32>,
 }
 
 // ── Reasoning config ──────────────────────────────────────────────────────────
 
+/// Effort level for reasoning / thinking models.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningEffort {
+    None,
+    Minimal,
+    Low,
+    Medium,
+    High,
+    Xhigh,
+    /// Budget in tokens (Anthropic `budget_tokens`).
+    Budget(u32),
+}
+
+/// Reasoning / extended-thinking configuration.
+///
+/// Normalized from:
+/// - OpenAI `reasoning.effort` + `reasoning.summary`
+/// - Anthropic `thinking: { type: "enabled", budget_tokens, display }`
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct ReasoningConfig {
-    /// Whether extended reasoning / thinking is enabled.
+    /// Whether extended reasoning / thinking is requested.
     pub enabled: bool,
-    /// Budget in tokens (Anthropic `budget_tokens`, OpenAI `budget_tokens`).
+    /// Token budget for thinking (Anthropic `budget_tokens`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub budget_tokens: Option<u32>,
-    /// Effort level (`"low" / "medium" / "high"`) for OpenAI `o` models.
+    /// Effort level (OpenAI `reasoning.effort`).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub effort: Option<String>,
+    pub effort: Option<ReasoningEffort>,
+    /// Display mode for thinking content (Anthropic `display: "summarized" | "omitted"`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display: Option<String>,
 }
 
 // ── Response format ───────────────────────────────────────────────────────────
@@ -190,6 +391,7 @@ pub enum ResponseFormat {
     JsonSchema {
         name: String,
         schema: Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
         strict: Option<bool>,
     },
 }
@@ -199,15 +401,13 @@ pub enum ResponseFormat {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct StreamConfig {
     pub enabled: bool,
-    /// Whether the provider should include token usage in the final stream
-    /// chunk (OpenAI `stream_options.include_usage`).
+    /// Whether the provider should include token usage in the final stream chunk.
     pub include_usage: bool,
 }
 
 // ── Safety settings ───────────────────────────────────────────────────────────
 
-/// Google SafetySettings are vendor-specific but important enough to have a
-/// first-class home in the IR.  Other vendors ignore this field.
+/// Google SafetySettings — important enough to have a first-class home in the IR.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SafetySettings {
     pub category: String,
@@ -228,45 +428,58 @@ pub struct RequestMetadata {
 
 // ── AiRequest ─────────────────────────────────────────────────────────────────
 
-/// Unified ingress IR.  Consumed by all codec encoders and the `dispatcher`.
+/// Unified ingress IR consumed by all codec encoders and the dispatcher.
 ///
-/// Every field that the old `InternalRequest` had is present here.  Fields
-/// added in PR-08–12 are new (marked with their PR number).
+/// Fields are annotated with the FIELD_HOMING.md category that they belong to:
+/// `[IR]` = core, `[OAIChat]` = OpenAIChatExt, etc.
 #[derive(Debug, Clone)]
 pub struct AiRequest {
     // ── Core ──────────────────────────────────────────────────────────────────
-    /// The model identifier as received from the client.
+    /// [IR] The model identifier as received from the client.
     pub model: String,
-    /// Conversation history.
+    /// [IR] Conversation history.
     pub messages: Vec<Message>,
-    /// System prompt (extracted from a leading `system` message or the
+    /// [IR] System prompt (extracted from a leading `system` message or the
     /// top-level `system` field in Anthropic Messages API).
     pub system: Option<String>,
 
     // ── Generation ────────────────────────────────────────────────────────────
+    /// [IR] Core generation parameters.
     pub generation: GenerationConfig,
 
-    // ── Streaming ────────────────────────────────────────────────────────────
+    // ── Streaming ─────────────────────────────────────────────────────────────
+    /// [IR] Streaming configuration.
     pub stream: StreamConfig,
 
     // ── Tools ─────────────────────────────────────────────────────────────────
+    /// [IR] User-defined tool specifications.
     pub tools: Option<Vec<ToolSpec>>,
+    /// [IR] Tool selection mode.
     pub tool_choice: Option<ToolChoice>,
-    /// Whether the provider should call tools in parallel (OpenAI PR-08).
+    /// [IR] Whether the provider should call tools in parallel.
     pub parallel_tool_calls: Option<bool>,
+    /// [IR] Disable parallel tool use (Anthropic `disable_parallel_tool_use`,
+    /// equivalent to `parallel_tool_calls = false` for OpenAI).
+    pub disable_parallel_tool_calls: Option<bool>,
 
     // ── Reasoning ─────────────────────────────────────────────────────────────
+    /// [IR] Reasoning / extended-thinking configuration.
     pub reasoning: ReasoningConfig,
 
     // ── Output format ─────────────────────────────────────────────────────────
+    /// [IR] Response format constraint.
     pub response_format: Option<ResponseFormat>,
-    /// Modalities to include in the response (OpenAI `modalities` PR-08).
-    pub modalities: Option<Vec<String>>,
 
     // ── Safety ────────────────────────────────────────────────────────────────
+    /// [IR] Google SafetySettings (ignored by other encoders).
     pub safety_settings: Option<Vec<SafetySettings>>,
 
-    // ── Metadata / extensions ─────────────────────────────────────────────────
+    // ── Protocol extensions ───────────────────────────────────────────────────
+    /// Protocol-domain Ext carrying fields specific to the source protocol.
+    /// Populated by the ingress decoder (PR-2); consumed by the egress encoder (PR-3).
+    pub ext: Option<ProtocolExt>,
+
+    // ── Metadata / vendor bag ─────────────────────────────────────────────────
     pub meta: RequestMetadata,
 }
 
@@ -282,11 +495,21 @@ impl AiRequest {
             tools: None,
             tool_choice: None,
             parallel_tool_calls: None,
+            disable_parallel_tool_calls: None,
             reasoning: ReasoningConfig::default(),
             response_format: None,
-            modalities: None,
             safety_settings: None,
+            ext: None,
             meta: RequestMetadata::default(),
+        }
+    }
+
+    /// Return the modalities from `OpenAIChatExt` if present.
+    pub fn modalities(&self) -> Option<&Vec<String>> {
+        if let Some(ProtocolExt::OpenAiChat(ref e)) = self.ext {
+            e.modalities.as_ref()
+        } else {
+            None
         }
     }
 }

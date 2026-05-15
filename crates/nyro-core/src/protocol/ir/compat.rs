@@ -9,8 +9,8 @@
 //! lossless for all fields present in `InternalRequest`.
 
 use crate::protocol::ir::request::{
-    AiRequest, ContentBlock, GenerationConfig, Message, MessageContent, Role, StreamConfig,
-    ToolCall, ToolSpec,
+    AiRequest, ContentBlock, GenerationConfig, MediaSource, Message, MessageContent, Role,
+    StreamConfig, ToolCall, ToolSpec,
 };
 use crate::protocol::ir::response::AiResponse;
 use crate::protocol::types::{
@@ -87,21 +87,35 @@ fn content_from_old(c: OldMessageContent) -> MessageContent {
 
 fn block_from_old(b: OldContentBlock) -> ContentBlock {
     match b {
-        OldContentBlock::Text { text } => ContentBlock::Text { text },
-        OldContentBlock::Image { source } => ContentBlock::Image {
-            media_type: source.media_type,
-            data: source.data,
+        OldContentBlock::Text { text } => ContentBlock::Text {
+            text,
+            cache_control: None,
         },
-        OldContentBlock::Reasoning { text, signature } => {
-            ContentBlock::Reasoning { text, signature }
-        }
-        OldContentBlock::ToolUse { id, name, input } => ContentBlock::ToolUse { id, name, input },
+        OldContentBlock::Image { source } => ContentBlock::Image {
+            source: MediaSource::Base64 {
+                media_type: source.media_type,
+                data: source.data,
+            },
+            cache_control: None,
+        },
+        OldContentBlock::Reasoning { text, signature } => ContentBlock::Thinking {
+            thinking: text,
+            signature,
+        },
+        OldContentBlock::ToolUse { id, name, input } => ContentBlock::ToolUse {
+            id,
+            name,
+            input,
+            cache_control: None,
+        },
         OldContentBlock::ToolResult {
             tool_use_id,
             content,
         } => ContentBlock::ToolResult {
             tool_use_id,
             content,
+            is_error: None,
+            cache_control: None,
         },
     }
 }
@@ -119,6 +133,8 @@ fn tool_spec_from_old(td: ToolDef) -> ToolSpec {
         name: td.name,
         description: td.description,
         parameters: td.parameters,
+        strict: None,
+        cache_control: None,
         meta: None,
     }
 }
@@ -193,24 +209,24 @@ fn content_to_old(c: MessageContent) -> OldMessageContent {
 
 fn block_to_old(b: ContentBlock) -> Option<OldContentBlock> {
     match b {
-        ContentBlock::Text { text } => Some(OldContentBlock::Text { text }),
-        ContentBlock::Image { media_type, data } => Some(OldContentBlock::Image {
-            source: crate::protocol::types::ImageSource { media_type, data },
-        }),
-        ContentBlock::Reasoning { text, signature } => {
-            Some(OldContentBlock::Reasoning { text, signature })
+        ContentBlock::Text { text, .. } => Some(OldContentBlock::Text { text }),
+        ContentBlock::Image { source, .. } => match source {
+            MediaSource::Base64 { media_type, data } => Some(OldContentBlock::Image {
+                source: crate::protocol::types::ImageSource { media_type, data },
+            }),
+            _ => None,
+        },
+        ContentBlock::Thinking { thinking, signature } => {
+            Some(OldContentBlock::Reasoning { text: thinking, signature })
         }
-        ContentBlock::ToolUse { id, name, input } => {
+        ContentBlock::ToolUse { id, name, input, .. } => {
             Some(OldContentBlock::ToolUse { id, name, input })
         }
-        ContentBlock::ToolResult {
-            tool_use_id,
-            content,
-        } => Some(OldContentBlock::ToolResult {
-            tool_use_id,
-            content,
-        }),
-        ContentBlock::Unknown { .. } => None,
+        ContentBlock::ToolResult { tool_use_id, content, .. } => {
+            Some(OldContentBlock::ToolResult { tool_use_id, content })
+        }
+        // New variants not representable in old IR are dropped.
+        _ => None,
     }
 }
 
@@ -273,7 +289,7 @@ impl From<AiResponse> for InternalResponse {
                     crate::protocol::ir::response::ResponseItem::OutputText { text } => {
                         Some(crate::protocol::types::ResponseItem::Message { text })
                     }
-                    crate::protocol::ir::response::ResponseItem::Reasoning { text } => {
+                    crate::protocol::ir::response::ResponseItem::Thinking { text } => {
                         Some(crate::protocol::types::ResponseItem::Reasoning { text })
                     }
                     crate::protocol::ir::response::ResponseItem::FunctionCall {

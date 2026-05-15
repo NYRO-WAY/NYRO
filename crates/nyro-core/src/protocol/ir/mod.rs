@@ -2,31 +2,55 @@
 //!
 //! # Design principles
 //!
-//! 1. **No silent drops** — every field from every supported protocol has
-//!    an explicit home: `known field`, `vendor.known_specific`, or
-//!    `vendor.passthrough_safe`.
+//! 1. **No silent drops** — every field from every supported protocol has an
+//!    explicit home: core IR field, `ProtocolExt`, `VendorExtensions`, or DROP.
+//!    See `docs/design/ir/FIELD_HOMING.md` for the authoritative decision table.
 //! 2. **Lossless envelope** — `RawEnvelope` keeps a snapshot of the original
 //!    request body + headers for pass-through and audit.
 //! 3. **Parallel deployment** — old `InternalRequest`/`InternalResponse` in
 //!    `protocol/types.rs` stay as `#[deprecated]` shims via `From` impls in
-//!    `compat.rs`.  No breaking change until all codec PRs (08-12) are done.
+//!    `compat.rs`.  No breaking change until all codec PRs are done.
 //! 4. **Repair, not validate** — `repair.rs` performs single-direction
-//!    mutations (fill missing `tool_call_id`, fix orphaned refs, patch broken
-//!    conversation structure) without rejecting the request.
+//!    mutations (fill missing `tool_call_id`, fix orphaned refs) without
+//!    rejecting the request.
 
+pub mod cache;
 pub mod compat;
 pub mod envelope;
+pub mod error;
+pub mod ext;
 pub mod repair;
 pub mod request;
 pub mod response;
+pub mod schema;
 pub mod stream;
 pub mod vendor_ext;
 
-pub use envelope::RawEnvelope;
+// ── Cache ──────────────────────────────────────────────────────────────────────
+pub use cache::{CacheControl, CacheTtl};
+
+// ── Error ──────────────────────────────────────────────────────────────────────
+pub use error::{AiError, AiErrorKind};
+
+// ── ProtocolExt ───────────────────────────────────────────────────────────────
+pub use ext::{AnthropicExt, GoogleExt, OpenAIChatExt, OpenAIResponsesExt, ProtocolExt};
+
+// ── Request ───────────────────────────────────────────────────────────────────
 pub use request::{
-    AiRequest, GenerationConfig, Message, MessageContent, ReasoningConfig, RequestMetadata,
-    ResponseFormat, Role, SafetySettings, StreamConfig, ToolChoice, ToolSpec,
+    AiRequest, ContentBlock, DocumentSource, GenerationConfig, MediaSource, Message,
+    MessageContent, ReasoningConfig, ReasoningEffort, RequestMetadata, ResponseFormat, Role,
+    SafetySettings, StreamConfig, ToolCall, ToolChoice, ToolSpec,
 };
+
+// ── Response ──────────────────────────────────────────────────────────────────
 pub use response::{AiResponse, ResponseItem};
+
+// ── Schema ────────────────────────────────────────────────────────────────────
+pub use schema::SchemaObject;
+
+// ── Stream ────────────────────────────────────────────────────────────────────
 pub use stream::StreamDelta as AiStreamDelta;
+
+// ── Vendor ────────────────────────────────────────────────────────────────────
+pub use envelope::RawEnvelope;
 pub use vendor_ext::VendorExtensions;
