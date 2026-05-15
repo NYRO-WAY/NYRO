@@ -3,16 +3,13 @@ use reqwest::header::HeaderMap;
 use serde_json::Value;
 
 use crate::protocol::EgressEncoder;
+use crate::protocol::ir::request::{ContentBlock, MediaSource, Message, MessageContent, Role};
 use crate::protocol::ir::AiRequest;
-use crate::protocol::ir::compat::ai_msg_to_old_ref;
-use crate::protocol::types::*;
 
 pub struct GoogleEncoder;
 
 impl EgressEncoder for GoogleEncoder {
     fn encode_request(&self, req: &AiRequest) -> Result<(Value, HeaderMap)> {
-        let old_messages: Vec<InternalMessage> =
-            req.messages.iter().map(ai_msg_to_old_ref).collect();
         let ingress = &req.meta.vendor.ingress;
 
         // ── System instruction ────────────────────────────────────────────────
@@ -21,9 +18,9 @@ impl EgressEncoder for GoogleEncoder {
                 Some(v.clone())
             } else {
                 let mut system_parts: Vec<Value> = Vec::new();
-                for msg in &old_messages {
+                for msg in &req.messages {
                     if msg.role == Role::System {
-                        system_parts.push(serde_json::json!({"text": msg.content.as_text()}));
+                        system_parts.push(serde_json::json!({"text": msg.content.to_text()}));
                     }
                 }
                 if system_parts.is_empty() {
@@ -35,7 +32,7 @@ impl EgressEncoder for GoogleEncoder {
 
         // ── Contents ─────────────────────────────────────────────────────────
         let mut contents: Vec<Value> = Vec::new();
-        for msg in &old_messages {
+        for msg in &req.messages {
             if msg.role == Role::System {
                 continue;
             }
@@ -159,7 +156,7 @@ fn sanitize_gemini_schema(value: &Value) -> Value {
 
 // ── Content encoding ──────────────────────────────────────────────────────────
 
-fn encode_content(msg: &InternalMessage) -> Result<Value> {
+fn encode_content(msg: &Message) -> Result<Value> {
     let role = match msg.role {
         Role::User | Role::Tool => "user",
         Role::Assistant => "model",
@@ -193,33 +190,38 @@ fn encode_content(msg: &InternalMessage) -> Result<Value> {
         }
         MessageContent::Blocks(blocks) => blocks
             .iter()
-            .map(|b| match b {
-                ContentBlock::Text { text } => serde_json::json!({"text": text}),
-                ContentBlock::Image { source } => {
-                    serde_json::json!({
-                        "inlineData": {
-                            "mimeType": source.media_type,
-                            "data": source.data,
-                        }
-                    })
-                }
-                ContentBlock::ToolUse { id: _, name, input } => {
-                    serde_json::json!({"functionCall": {"name": name, "args": input}})
-                }
-                ContentBlock::ToolResult {
-                    tool_use_id,
-                    content,
-                } => {
-                    serde_json::json!({
-                        "functionResponse": {"name": tool_use_id, "response": content}
-                    })
-                }
-                ContentBlock::Reasoning { text, .. } => {
-                    serde_json::json!({"text": text})
-                }
-            })
+            .map(|b| encode_content_block_for_gemini(b))
             .collect(),
     };
 
     Ok(serde_json::json!({"role": role, "parts": parts}))
+}
+
+fn encode_content_block_for_gemini(b: &ContentBlock) -> Value {
+    match b {
+        ContentBlock::Text { text, .. } => serde_json::json!({"text": text}),
+        ContentBlock::Image { source, .. } => match source {
+            MediaSource::Base64 { media_type, data } => serde_json::json!({
+                "inlineData": {
+                    "mimeType": media_type,
+                    "data": data,
+                }
+            }),
+            MediaSource::Url(url) => serde_json::json!({"fileData": {"fileUri": url}}),
+            MediaSource::FileId { file_id, .. } => {
+                serde_json::json!({"fileData": {"fileUri": file_id}})
+            }
+        },
+        ContentBlock::ToolUse { name, input, .. } => {
+            serde_json::json!({"functionCall": {"name": name, "args": input}})
+        }
+        ContentBlock::ToolResult { tool_use_id, content, .. } => {
+            serde_json::json!({
+                "functionResponse": {"name": tool_use_id, "response": content}
+            })
+        }
+        ContentBlock::Thinking { thinking, .. } => serde_json::json!({"text": thinking}),
+        ContentBlock::Unknown { raw } => raw.clone(),
+        other => serde_json::to_value(other).unwrap_or(Value::Null),
+    }
 }

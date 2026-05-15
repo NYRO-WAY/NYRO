@@ -1,6 +1,6 @@
 use tokio::sync::mpsc;
 
-use crate::protocol::types::TokenUsage;
+use crate::protocol::ir::Usage;
 use crate::storage::DynStorage;
 
 const DEFAULT_RETENTION_DAYS: i64 = 7;
@@ -18,7 +18,7 @@ pub struct LogEntry {
     pub provider_name: String,
     pub status_code: i32,
     pub duration_ms: f64,
-    pub usage: TokenUsage,
+    pub usage: Usage,
     pub is_stream: bool,
     pub is_tool_call: bool,
     pub error_message: Option<String>,

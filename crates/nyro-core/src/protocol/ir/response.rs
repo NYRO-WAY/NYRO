@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::protocol::ir::error::AiError;
+use crate::protocol::ir::usage::Usage;
 use crate::protocol::ir::vendor_ext::VendorExtensions;
-use crate::protocol::types::TokenUsage;
 
 // ── ResponseItem ──────────────────────────────────────────────────────────────
 
@@ -57,7 +57,7 @@ pub struct AiResponse {
     /// Stop reason (e.g. `"stop"`, `"tool_use"`, `"length"`).
     pub stop_reason: Option<String>,
     /// Token usage.
-    pub usage: TokenUsage,
+    pub usage: Usage,
     /// Normalized error — populated when the provider returns an error response
     /// or the parser detects a mid-stream error.
     pub error: Option<AiError>,
@@ -76,7 +76,7 @@ impl AiResponse {
             tool_calls: Vec::new(),
             items: None,
             stop_reason: None,
-            usage: TokenUsage::default(),
+            usage: Usage::default(),
             error: None,
             vendor: VendorExtensions::default(),
         }

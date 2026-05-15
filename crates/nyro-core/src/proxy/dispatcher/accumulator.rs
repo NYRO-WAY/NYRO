@@ -2,8 +2,7 @@
 //! `AiResponse` for caching and formatted response aggregation.
 
 use crate::protocol::ir::request::ToolCall;
-use crate::protocol::ir::{AiResponse, AiStreamDelta};
-use crate::protocol::types::TokenUsage;
+use crate::protocol::ir::{AiResponse, AiStreamDelta, Usage};
 
 #[derive(Default)]
 pub(super) struct StreamResponseAccumulator {
@@ -14,7 +13,7 @@ pub(super) struct StreamResponseAccumulator {
     pub(super) reasoning_signature: String,
     pub(super) tool_calls: Vec<Option<ToolCall>>,
     pub(super) stop_reason: Option<String>,
-    pub(super) usage: TokenUsage,
+    pub(super) usage: Usage,
 }
 
 impl StreamResponseAccumulator {

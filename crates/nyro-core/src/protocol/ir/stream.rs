@@ -2,7 +2,7 @@
 
 use crate::protocol::ir::error::AiError;
 use crate::protocol::ir::request::ToolCall;
-use crate::protocol::types::TokenUsage;
+use crate::protocol::ir::usage::Usage;
 
 /// A single parsed delta from a streaming response.
 ///
@@ -30,7 +30,7 @@ pub enum StreamDelta {
     /// Tool call arguments are complete.
     ToolCallComplete { index: usize, tool_call: ToolCall },
     /// Final token usage statistics.
-    Usage(TokenUsage),
+    Usage(Usage),
     /// Stream ended normally.
     Done { stop_reason: String },
     /// A mid-stream error detected by the parser (e.g. OAI `data: {"error":{...}}`,

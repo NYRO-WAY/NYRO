@@ -6,6 +6,69 @@
 
 ---
 
+## [PR-A] TokenUsage 重塑 + Encoder 直吃 IR — 2026-05-15
+
+### 新增
+
+**`ir/usage.rs`**（新文件）
+- `Usage` struct（字段：`prompt_tokens`, `completion_tokens`, `total_tokens`, `cache_read_tokens?`, `cache_creation_tokens?`, `server_tool_use?`）
+- `ServerToolUsage` struct（移自 `types.rs`）
+- `ir::mod.rs` 新增 `pub mod usage` 并 re-export `Usage`, `ServerToolUsage`
+
+### 重命名 / 变更
+
+**`ir::Usage`（原 `types::TokenUsage`）字段重命名**
+- `input_tokens` → `prompt_tokens`
+- `output_tokens` → `completion_tokens`
+- `cache_read_input_tokens` → `cache_read_tokens`（改为 `Option<u32>`）
+- `cache_creation_input_tokens` → `cache_creation_tokens`（改为 `Option<u32>`）
+
+**`ir/response.rs`**：`AiResponse.usage: TokenUsage` → `ir::Usage`
+
+**`ir/stream.rs`**：`AiStreamDelta::Usage(TokenUsage)` → `AiStreamDelta::Usage(ir::Usage)`
+
+**`cache/entry.rs`**：`CacheEntry.usage: TokenUsage` → `ir::Usage`
+
+**`cache/key.rs`**：`CODEC_SCHEMA_VERSION` 3 → 4（缓存 key 格式变更）
+
+**`logging/mod.rs`**：`LogEntry.usage: TokenUsage` → `ir::Usage`
+
+**`proxy/observability.rs`**：`emit_log` 参数 `TokenUsage` → `ir::Usage`
+
+**`proxy/stream.rs`**：`StreamBridge.final_usage` 及相关方法 → `ir::Usage`
+
+**`proxy/dispatcher/mod.rs`**：`LogBuilder.usage` → `ir::Usage`
+
+**`proxy/dispatcher/accumulator.rs`**：`StreamResponseAccumulator.usage` → `ir::Usage`
+
+**`protocol/mod.rs`**：`StreamFormatter::usage()` 返回类型 → `ir::Usage`
+
+**4 个 codec `stream.rs`/`parser.rs`**（anthropic、openai_compatible、google_generative、openai_responses）：
+- 内部 usage 累加器字段改为 `ir::Usage`
+- `extract_*_usage` 函数返回 `ir::Usage`，JSON wire key 保持原样（`input_tokens`→`prompt_tokens` 仅限 IR 侧）
+- `storage/postgres/mod.rs`、`storage/sqlite/mod.rs`：bind 改用 `prompt_tokens`/`completion_tokens`
+
+**4 个 encoder 直接消费 IR 类型**（`anthropic_messages`、`openai_compatible`、`google_generative`、`openai_responses`）：
+- 移除 `compat::ai_msg_to_old_ref`、`ai_tool_choice_to_value`、`ai_tool_spec_to_old_ref` 调用
+- 直接接受 `&ir::Message`、`&ir::ContentBlock`、`&ir::ToolSpec`
+- `ToolChoice::Tool(String)` → `ToolChoice::Named { name: String }`
+
+### 删除
+
+**`types.rs`**
+- `InternalMessage`, `Role`, `MessageContent`, `ContentBlock`, `ImageSource`, `ToolDef`, `ResponseItem`, `TokenUsage`, `ServerToolUsage`（仅保留 `ToolCall`、`StreamDelta`，PR-B 再删）
+
+**`compat.rs`**（by-ref encoder helpers）
+- `ai_msg_to_old_ref`
+- `ai_tool_choice_to_value`
+- `ai_tool_spec_to_old_ref`
+
+**`tests/protocol_conversion.rs`**
+- 删除本地 `InternalRequest`/`InternalResponse` shim 及所有 `From` 实现、`ir_msg_from_old`、`ir_block_from_old` 辅助函数
+- ~30 个测试全部改为直接构造 `AiRequest`/`IrAiResponse`，不再经过 shim 转换
+
+---
+
 ## [PR-6] 删除 InternalRequest / InternalResponse + 清理 compat.rs — 2026-05-15
 
 ### 删除

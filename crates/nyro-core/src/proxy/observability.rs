@@ -9,7 +9,7 @@
 
 use crate::Gateway;
 use crate::logging::LogEntry;
-use crate::protocol::types::TokenUsage;
+use crate::protocol::ir::Usage;
 
 // ── Log extras ────────────────────────────────────────────────────────────────
 
@@ -42,7 +42,7 @@ pub fn emit_log(
     provider_name: &str,
     status_code: i32,
     duration_ms: f64,
-    usage: TokenUsage,
+    usage: Usage,
     is_stream: bool,
     is_tool_call: bool,
     error_message: Option<String>,

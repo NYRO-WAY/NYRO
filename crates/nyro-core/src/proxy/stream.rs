@@ -29,7 +29,7 @@
 //! bridge.finish();   // sets Completed; Drop handles the Failed case
 //! ```
 
-use crate::protocol::types::TokenUsage;
+use crate::protocol::ir::Usage;
 use crate::proxy::context::{CancellationToken, RequestContext, RequestOutcome};
 
 // ── Failure variants ──────────────────────────────────────────────────────────
@@ -107,7 +107,7 @@ pub struct StreamBridge<'a> {
     ctx: &'a RequestContext,
     state: StreamState,
     chunks_sent: usize,
-    final_usage: Option<TokenUsage>,
+    final_usage: Option<Usage>,
     cancellation: CancellationToken,
     cleanups: Vec<CleanupFn>,
 }
@@ -203,11 +203,11 @@ impl<'a> StreamBridge<'a> {
 
     /// Record the final token usage (from the provider's `usage` event or
     /// the accumulator).
-    pub fn set_final_usage(&mut self, usage: TokenUsage) {
+    pub fn set_final_usage(&mut self, usage: Usage) {
         self.final_usage = Some(usage);
     }
 
-    pub fn final_usage(&self) -> Option<&TokenUsage> {
+    pub fn final_usage(&self) -> Option<&Usage> {
         self.final_usage.as_ref()
     }
 

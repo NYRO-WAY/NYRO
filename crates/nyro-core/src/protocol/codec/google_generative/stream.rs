@@ -3,8 +3,9 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 use crate::protocol::ir::compat::{ai_stream_delta_to_old, old_stream_delta_to_new};
+use crate::protocol::ir::usage::Usage;
 use crate::protocol::ir::{AiResponse, AiStreamDelta};
-use crate::protocol::types::*;
+use crate::protocol::types::{StreamDelta, ToolCall};
 use crate::protocol::*;
 
 // ── Non-streaming response parser ──
@@ -116,9 +117,9 @@ impl ResponseFormatter for GoogleResponseFormatter {
                 "finishReason": finish_reason,
             }],
             "usageMetadata": {
-                "promptTokenCount": resp.usage.input_tokens,
-                "candidatesTokenCount": resp.usage.output_tokens,
-                "totalTokenCount": resp.usage.input_tokens + resp.usage.output_tokens,
+                "promptTokenCount": resp.usage.prompt_tokens,
+                "candidatesTokenCount": resp.usage.completion_tokens,
+                "totalTokenCount": resp.usage.prompt_tokens + resp.usage.completion_tokens,
             }
         })
     }
@@ -245,7 +246,7 @@ fn parse_gemini_chunk(chunk: &Value, deltas: &mut Vec<StreamDelta>, first: &mut 
     }
 
     let u = extract_gemini_usage(chunk);
-    if u.input_tokens > 0 || u.output_tokens > 0 {
+    if u.prompt_tokens > 0 || u.completion_tokens > 0 {
         deltas.push(StreamDelta::Usage(u));
     }
 }
@@ -253,7 +254,7 @@ fn parse_gemini_chunk(chunk: &Value, deltas: &mut Vec<StreamDelta>, first: &mut 
 // ── Stream formatter (deltas → Gemini SSE) ──
 
 pub struct GoogleStreamFormatter {
-    usage: TokenUsage,
+    usage: Usage,
     model: String,
     tool_names: HashMap<usize, String>,
     tool_arg_buffers: HashMap<usize, String>,
@@ -268,7 +269,7 @@ impl Default for GoogleStreamFormatter {
 impl GoogleStreamFormatter {
     pub fn new() -> Self {
         Self {
-            usage: TokenUsage::default(),
+            usage: Usage::default(),
             model: String::new(),
             tool_names: HashMap::new(),
             tool_arg_buffers: HashMap::new(),
@@ -330,11 +331,11 @@ impl StreamFormatter for GoogleStreamFormatter {
                     events.push(SseEvent::new(None, chunk.to_string()));
                 }
                 StreamDelta::Usage(u) => {
-                    if u.input_tokens > 0 {
-                        self.usage.input_tokens = u.input_tokens;
+                    if u.prompt_tokens > 0 {
+                        self.usage.prompt_tokens = u.prompt_tokens;
                     }
-                    if u.output_tokens > 0 {
-                        self.usage.output_tokens = u.output_tokens;
+                    if u.completion_tokens > 0 {
+                        self.usage.completion_tokens = u.completion_tokens;
                     }
                 }
                 StreamDelta::RawEvent { .. } => {}
@@ -350,9 +351,9 @@ impl StreamFormatter for GoogleStreamFormatter {
                             "finishReason": gemini_reason,
                         }],
                         "usageMetadata": {
-                            "promptTokenCount": self.usage.input_tokens,
-                            "candidatesTokenCount": self.usage.output_tokens,
-                            "totalTokenCount": self.usage.input_tokens + self.usage.output_tokens,
+                            "promptTokenCount": self.usage.prompt_tokens,
+                            "candidatesTokenCount": self.usage.completion_tokens,
+                            "totalTokenCount": self.usage.prompt_tokens + self.usage.completion_tokens,
                         }
                     });
                     events.push(SseEvent::new(None, chunk.to_string()));
@@ -367,18 +368,18 @@ impl StreamFormatter for GoogleStreamFormatter {
         vec![]
     }
 
-    fn usage(&self) -> TokenUsage {
+    fn usage(&self) -> Usage {
         self.usage.clone()
     }
 }
 
-fn extract_gemini_usage(v: &Value) -> TokenUsage {
+fn extract_gemini_usage(v: &Value) -> Usage {
     let usage = v
         .get("usageMetadata")
         .or_else(|| v.get("usage_metadata"))
         .or_else(|| v.get("usage"));
     let Some(u) = usage else {
-        return TokenUsage::default();
+        return Usage::default();
     };
 
     let input = first_u64(
@@ -402,10 +403,10 @@ fn extract_gemini_usage(v: &Value) -> TokenUsage {
     )
     .unwrap_or(0);
 
-    TokenUsage {
-        input_tokens: input as u32,
-        output_tokens: output as u32,
-        ..TokenUsage::default()
+    Usage {
+        prompt_tokens: input as u32,
+        completion_tokens: output as u32,
+        ..Usage::default()
     }
 }
 

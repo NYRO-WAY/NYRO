@@ -81,7 +81,7 @@ pub trait StreamParser: Send {
 pub trait StreamFormatter: Send {
     fn format_deltas(&mut self, deltas: &[ir::AiStreamDelta]) -> Vec<SseEvent>;
     fn format_done(&mut self) -> Vec<SseEvent>;
-    fn usage(&self) -> types::TokenUsage;
+    fn usage(&self) -> ir::Usage;
 }
 
 // ── SSE helper ──

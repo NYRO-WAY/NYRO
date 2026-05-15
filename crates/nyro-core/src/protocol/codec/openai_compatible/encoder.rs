@@ -5,32 +5,19 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 
 use crate::protocol::EgressEncoder;
-use crate::protocol::ir::AiRequest;
-use crate::protocol::ir::compat::{
-    ai_msg_to_old_ref, ai_tool_choice_to_value, ai_tool_spec_to_old_ref,
+use crate::protocol::ir::request::{
+    ContentBlock, MediaSource, Message, MessageContent, Role, ToolChoice, ToolSpec,
 };
-use crate::protocol::types::*;
+use crate::protocol::ir::{AiRequest, ToolCall};
 
 pub struct OpenAIEncoder;
 
 impl EgressEncoder for OpenAIEncoder {
     fn encode_request(&self, req: &AiRequest) -> Result<(Value, HeaderMap)> {
-        let old_messages: Vec<InternalMessage> =
-            req.messages.iter().map(ai_msg_to_old_ref).collect();
-        let old_tools: Vec<ToolDef> = req
-            .tools
-            .as_deref()
-            .unwrap_or(&[])
-            .iter()
-            .map(ai_tool_spec_to_old_ref)
-            .collect();
-        let tools_opt: Option<&[ToolDef]> = if old_tools.is_empty() {
-            None
-        } else {
-            Some(&old_tools)
-        };
+        let tools = req.tools.as_deref().unwrap_or(&[]);
+        let tools_opt: Option<&[ToolSpec]> = if tools.is_empty() { None } else { Some(tools) };
 
-        let normalized_messages = normalize_messages_for_openai(&old_messages, tools_opt);
+        let normalized_messages = normalize_messages_for_openai(&req.messages, tools_opt);
         let messages: Vec<Value> = normalized_messages
             .iter()
             .map(encode_message)
@@ -56,24 +43,27 @@ impl EgressEncoder for OpenAIEncoder {
             obj.insert("top_p".into(), p.into());
         }
 
-        if !old_tools.is_empty() {
-            let tools_val: Vec<Value> = old_tools
+        if !tools.is_empty() {
+            let tools_val: Vec<Value> = tools
                 .iter()
                 .map(|t| {
+                    let mut f = serde_json::json!({
+                        "name": t.name,
+                        "parameters": t.parameters,
+                    });
+                    if let Some(ref desc) = t.description {
+                        f.as_object_mut().unwrap().insert("description".into(), desc.clone().into());
+                    }
                     serde_json::json!({
                         "type": "function",
-                        "function": {
-                            "name": t.name,
-                            "description": t.description,
-                            "parameters": t.parameters,
-                        }
+                        "function": f,
                     })
                 })
                 .collect();
             obj.insert("tools".into(), Value::Array(tools_val));
         }
         if let Some(ref tc) = req.tool_choice {
-            obj.insert("tool_choice".into(), ai_tool_choice_to_value(tc));
+            obj.insert("tool_choice".into(), tool_choice_to_value(tc));
         }
 
         // Always include_usage when streaming.
@@ -119,13 +109,26 @@ impl EgressEncoder for OpenAIEncoder {
     }
 }
 
+fn tool_choice_to_value(tc: &ToolChoice) -> Value {
+    match tc {
+        ToolChoice::Auto => Value::String("auto".into()),
+        ToolChoice::None => Value::String("none".into()),
+        ToolChoice::Required => Value::String("required".into()),
+        ToolChoice::Named { name } => serde_json::json!({
+            "type": "function",
+            "function": {"name": name}
+        }),
+        ToolChoice::Raw(v) => v.clone(),
+    }
+}
+
 fn normalize_messages_for_openai(
-    messages: &[InternalMessage],
-    tools: Option<&[ToolDef]>,
-) -> Vec<InternalMessage> {
+    messages: &[Message],
+    tools: Option<&[ToolSpec]>,
+) -> Vec<Message> {
     let preprocessed = remap_duplicate_tool_call_ids(messages);
 
-    let mut out: Vec<InternalMessage> = Vec::with_capacity(preprocessed.len() + 2);
+    let mut out: Vec<Message> = Vec::with_capacity(preprocessed.len() + 2);
     let mut seen_tool_call_ids: HashSet<String> = HashSet::new();
     let mut consumed_tool_result_ids: HashSet<String> = HashSet::new();
     let mut generated_seq: usize = 0;
@@ -179,22 +182,13 @@ fn normalize_messages_for_openai(
         let extracted_call = take_matching_tool_call_from_history(&mut out, &final_id);
         if let Some((tc, source_idx)) = extracted_call {
             trim_trailing_assistant_text_after_index(&mut out, source_idx);
-            // Carry forward extra fields (reasoning_content, etc.) from the
-            // source message that originally held this tool call. The source
-            // message may later be pruned if it has no remaining tool calls
-            // and empty content, so we must preserve its extra on the new one.
-            // Use clone() rather than take() because the source message may
-            // hold MULTIPLE tool calls (e.g., parallel function calls). Each
-            // extraction needs its own copy of extra — take() would leave
-            // subsequent extractions with HashMap::new(), dropping fields
-            // like reasoning_content on the floor.
-            let source_extra = out[source_idx].extra.clone();
-            out.push(InternalMessage {
+            let source_meta = out[source_idx].meta.clone();
+            out.push(Message {
                 role: Role::Assistant,
                 content: MessageContent::Text(String::new()),
                 tool_calls: Some(vec![tc]),
                 tool_call_id: None,
-                extra: source_extra,
+                meta: source_meta,
             });
             seen_tool_call_ids.insert(final_id.clone());
         } else {
@@ -218,7 +212,7 @@ fn normalize_messages_for_openai(
                     .filter(|v| !v.trim().is_empty())
                     .map(|_| fallback_tool_name.clone())
                     .unwrap_or_else(|| fallback_tool_name.clone());
-                out.push(InternalMessage {
+                out.push(Message {
                     role: Role::Assistant,
                     content: MessageContent::Text(String::new()),
                     tool_calls: Some(vec![ToolCall {
@@ -227,7 +221,7 @@ fn normalize_messages_for_openai(
                         arguments: "{}".to_string(),
                     }]),
                     tool_call_id: None,
-                    extra: HashMap::new(),
+                    meta: None,
                 });
                 seen_tool_call_ids.insert(final_id.clone());
             }
@@ -248,13 +242,13 @@ fn normalize_messages_for_openai(
         if has_calls {
             return true;
         }
-        !msg.content.as_text().trim().is_empty()
+        !msg.content.to_text().trim().is_empty()
     });
 
     out
 }
 
-fn prune_orphan_assistant_tool_calls(messages: Vec<InternalMessage>) -> Vec<InternalMessage> {
+fn prune_orphan_assistant_tool_calls(messages: Vec<Message>) -> Vec<Message> {
     let referenced_tool_ids: HashSet<String> = messages
         .iter()
         .filter(|m| m.role == Role::Tool)
@@ -262,7 +256,7 @@ fn prune_orphan_assistant_tool_calls(messages: Vec<InternalMessage>) -> Vec<Inte
         .filter(|id| !id.trim().is_empty())
         .collect();
 
-    let mut out: Vec<InternalMessage> = Vec::with_capacity(messages.len());
+    let mut out: Vec<Message> = Vec::with_capacity(messages.len());
     for mut msg in messages {
         if msg.role == Role::Assistant
             && let Some(calls) = msg.tool_calls.take()
@@ -280,7 +274,7 @@ fn prune_orphan_assistant_tool_calls(messages: Vec<InternalMessage>) -> Vec<Inte
     out
 }
 
-fn assistant_has_tool_call_id(msg: &InternalMessage, tool_call_id: &str) -> bool {
+fn assistant_has_tool_call_id(msg: &Message, tool_call_id: &str) -> bool {
     if msg.role != Role::Assistant {
         return false;
     }
@@ -291,7 +285,7 @@ fn assistant_has_tool_call_id(msg: &InternalMessage, tool_call_id: &str) -> bool
     })
 }
 
-fn remap_duplicate_tool_call_ids(messages: &[InternalMessage]) -> Vec<InternalMessage> {
+fn remap_duplicate_tool_call_ids(messages: &[Message]) -> Vec<Message> {
     let mut out = messages.to_vec();
     let mut seen_counts: HashMap<String, usize> = HashMap::new();
     let mut pending_by_original: HashMap<String, Vec<String>> = HashMap::new();
@@ -348,7 +342,7 @@ fn remap_duplicate_tool_call_ids(messages: &[InternalMessage]) -> Vec<InternalMe
     out
 }
 
-fn make_matching_call_adjacent(out: &mut Vec<InternalMessage>, tool_call_id: &str) -> bool {
+fn make_matching_call_adjacent(out: &mut Vec<Message>, tool_call_id: &str) -> bool {
     if out.is_empty() {
         return false;
     }
@@ -361,8 +355,6 @@ fn make_matching_call_adjacent(out: &mut Vec<InternalMessage>, tool_call_id: &st
             return true;
         }
 
-        // Drop trailing assistant text-only messages between a tool_call and its result.
-        // This keeps OpenAI/MiniMax strict "tool result follows tool call" ordering.
         let drop_candidate = last.role == Role::Assistant
             && last
                 .tool_calls
@@ -381,7 +373,7 @@ fn make_matching_call_adjacent(out: &mut Vec<InternalMessage>, tool_call_id: &st
 }
 
 fn take_matching_tool_call_from_history(
-    out: &mut [InternalMessage],
+    out: &mut [Message],
     tool_call_id: &str,
 ) -> Option<(ToolCall, usize)> {
     for (idx, msg) in out.iter_mut().enumerate().rev() {
@@ -402,7 +394,7 @@ fn take_matching_tool_call_from_history(
     None
 }
 
-fn trim_trailing_assistant_text_after_index(out: &mut Vec<InternalMessage>, source_idx: usize) {
+fn trim_trailing_assistant_text_after_index(out: &mut Vec<Message>, source_idx: usize) {
     while out.len() > source_idx + 1 {
         let Some(last) = out.last() else {
             break;
@@ -424,7 +416,7 @@ fn trim_trailing_assistant_text_after_index(out: &mut Vec<InternalMessage>, sour
     }
 }
 
-fn encode_message(msg: &InternalMessage) -> Result<Value> {
+fn encode_message(msg: &Message) -> Result<Value> {
     let role = match msg.role {
         Role::System => "system",
         Role::User => "user",
@@ -456,38 +448,7 @@ fn encode_message(msg: &InternalMessage) -> Result<Value> {
         MessageContent::Blocks(blocks) => {
             let parts: Vec<Value> = blocks
                 .iter()
-                .map(|b| match b {
-                    ContentBlock::Text { text } => {
-                        serde_json::json!({"type": "text", "text": text})
-                    }
-                    ContentBlock::Image { source } => {
-                        serde_json::json!({
-                            "type": "image_url",
-                            "image_url": {"url": &source.data}
-                        })
-                    }
-                    ContentBlock::ToolUse { id, name, input } => {
-                        serde_json::json!({
-                            "type": "function",
-                            "id": id,
-                            "function": {"name": name, "arguments": input.to_string()}
-                        })
-                    }
-                    ContentBlock::ToolResult {
-                        tool_use_id,
-                        content,
-                    } => {
-                        serde_json::json!({
-                            "type": "text",
-                            "text": content.to_string(),
-                            "tool_call_id": tool_use_id,
-                        })
-                    }
-                    ContentBlock::Reasoning { text, .. } => {
-                        // OpenAI does not support thinking blocks; pass as plain text
-                        serde_json::json!({"type": "text", "text": text})
-                    }
-                })
+                .map(|b| encode_content_block_for_openai(b))
                 .collect();
             map.insert("content".into(), Value::Array(parts));
         }
@@ -514,24 +475,85 @@ fn encode_message(msg: &InternalMessage) -> Result<Value> {
     }
 
     // Pass through any extra fields (reasoning_content, etc.)
-    // that were preserved from the original request.
-    for (k, v) in &msg.extra {
-        map.entry(k.clone()).or_insert_with(|| v.clone());
+    if let Some(Value::Object(extra)) = &msg.meta {
+        for (k, v) in extra {
+            map.entry(k.clone()).or_insert_with(|| v.clone());
+        }
     }
 
     Ok(obj)
 }
 
-fn tool_message_payload(msg: &InternalMessage) -> (String, Option<String>) {
+fn encode_content_block_for_openai(b: &ContentBlock) -> Value {
+    match b {
+        ContentBlock::Text { text, .. } => {
+            serde_json::json!({"type": "text", "text": text})
+        }
+        ContentBlock::Image { source, .. } => {
+            let url = media_source_to_url(source);
+            serde_json::json!({
+                "type": "image_url",
+                "image_url": {"url": url}
+            })
+        }
+        ContentBlock::Audio { source } => {
+            let url = media_source_to_url(source);
+            serde_json::json!({"type": "input_audio", "input_audio": {"data": url}})
+        }
+        ContentBlock::File { source } => {
+            let url = media_source_to_url(source);
+            serde_json::json!({"type": "file", "file": {"url": url}})
+        }
+        ContentBlock::ToolUse { id, name, input, .. } => {
+            serde_json::json!({
+                "type": "function",
+                "id": id,
+                "function": {"name": name, "arguments": input.to_string()}
+            })
+        }
+        ContentBlock::ToolResult { tool_use_id, content, .. } => {
+            serde_json::json!({
+                "type": "text",
+                "text": match content {
+                    Value::String(s) => s.clone(),
+                    Value::Null => String::new(),
+                    other => other.to_string(),
+                },
+                "tool_call_id": tool_use_id,
+            })
+        }
+        ContentBlock::Thinking { thinking, .. } => {
+            // OpenAI does not support thinking blocks; pass as plain text
+            serde_json::json!({"type": "text", "text": thinking})
+        }
+        ContentBlock::RedactedThinking { .. } => {
+            serde_json::json!({"type": "text", "text": ""})
+        }
+        ContentBlock::Unknown { raw } => raw.clone(),
+        other => {
+            // Other block types (Document, SearchResult, etc.) not supported
+            // by OpenAI chat/completions; serialise raw as fallback.
+            serde_json::to_value(other).unwrap_or(Value::Null)
+        }
+    }
+}
+
+fn media_source_to_url(source: &MediaSource) -> String {
+    match source {
+        MediaSource::Base64 { media_type, data } => {
+            format!("data:{media_type};base64,{data}")
+        }
+        MediaSource::Url(url) => url.clone(),
+        MediaSource::FileId { file_id, .. } => file_id.clone(),
+    }
+}
+
+fn tool_message_payload(msg: &Message) -> (String, Option<String>) {
     match &msg.content {
         MessageContent::Text(t) => (t.clone(), None),
         MessageContent::Blocks(blocks) => {
             for block in blocks {
-                if let ContentBlock::ToolResult {
-                    tool_use_id,
-                    content,
-                } = block
-                {
+                if let ContentBlock::ToolResult { tool_use_id, content, .. } = block {
                     let text = match content {
                         Value::String(s) => s.clone(),
                         Value::Null => String::new(),
@@ -545,7 +567,7 @@ fn tool_message_payload(msg: &InternalMessage) -> (String, Option<String>) {
                     return (text, hinted_id);
                 }
             }
-            (msg.content.as_text(), None)
+            (msg.content.to_text(), None)
         }
     }
 }

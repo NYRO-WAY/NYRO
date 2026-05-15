@@ -98,9 +98,9 @@ impl ResponseFormatter for ResponsesResponseFormatter {
             "output": output,
             "output_text": output_text,
             "usage": {
-                "input_tokens": resp.usage.input_tokens,
-                "output_tokens": resp.usage.output_tokens,
-                "total_tokens": resp.usage.input_tokens + resp.usage.output_tokens
+                "input_tokens": resp.usage.prompt_tokens,
+                "output_tokens": resp.usage.completion_tokens,
+                "total_tokens": resp.usage.prompt_tokens + resp.usage.completion_tokens
             }
         })
     }

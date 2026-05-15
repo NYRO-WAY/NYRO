@@ -3,8 +3,9 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::protocol::ir::compat::{ai_stream_delta_to_old, old_stream_delta_to_new};
+use crate::protocol::ir::usage::Usage;
 use crate::protocol::ir::{AiResponse, AiStreamDelta};
-use crate::protocol::types::*;
+use crate::protocol::types::{StreamDelta, ToolCall};
 use crate::protocol::*;
 
 // ── Non-streaming response parser ──
@@ -136,9 +137,9 @@ impl ResponseFormatter for OpenAIResponseFormatter {
                 "finish_reason": finish_reason,
             }],
             "usage": {
-                "prompt_tokens": resp.usage.input_tokens,
-                "completion_tokens": resp.usage.output_tokens,
-                "total_tokens": resp.usage.input_tokens + resp.usage.output_tokens,
+                "prompt_tokens": resp.usage.prompt_tokens,
+                "completion_tokens": resp.usage.completion_tokens,
+                "total_tokens": resp.usage.prompt_tokens + resp.usage.completion_tokens,
             }
         })
     }
@@ -234,7 +235,7 @@ impl OpenAIStreamParser {
             .and_then(|a| a.first())
         else {
             let u = extract_usage(chunk);
-            if u.input_tokens > 0 || u.output_tokens > 0 {
+            if u.prompt_tokens > 0 || u.completion_tokens > 0 {
                 deltas.push(StreamDelta::Usage(u));
             }
             return;
@@ -286,7 +287,7 @@ impl OpenAIStreamParser {
         }
 
         let u = extract_usage(chunk);
-        if u.input_tokens > 0 || u.output_tokens > 0 {
+        if u.prompt_tokens > 0 || u.completion_tokens > 0 {
             deltas.push(StreamDelta::Usage(u));
         }
     }
@@ -363,7 +364,7 @@ fn longest_suffix_that_can_start_tag(text: &str, tag: &str) -> usize {
 // ── Stream formatter (deltas → OpenAI SSE) ──
 
 pub struct OpenAIStreamFormatter {
-    usage: TokenUsage,
+    usage: Usage,
     id: String,
     model: String,
     saw_tool_call: bool,
@@ -378,7 +379,7 @@ impl Default for OpenAIStreamFormatter {
 impl OpenAIStreamFormatter {
     pub fn new() -> Self {
         Self {
-            usage: TokenUsage::default(),
+            usage: Usage::default(),
             id: format!("chatcmpl-{}", Uuid::new_v4()),
             model: String::new(),
             saw_tool_call: false,
@@ -463,9 +464,9 @@ impl StreamFormatter for OpenAIStreamFormatter {
                         "model": self.model,
                         "choices": [{"index": 0, "delta": {}, "finish_reason": final_reason}],
                         "usage": {
-                            "prompt_tokens": self.usage.input_tokens,
-                            "completion_tokens": self.usage.output_tokens,
-                            "total_tokens": self.usage.input_tokens + self.usage.output_tokens,
+                            "prompt_tokens": self.usage.prompt_tokens,
+                            "completion_tokens": self.usage.completion_tokens,
+                            "total_tokens": self.usage.prompt_tokens + self.usage.completion_tokens,
                         }
                     });
                     events.push(SseEvent::new(None, chunk.to_string()));
@@ -480,15 +481,15 @@ impl StreamFormatter for OpenAIStreamFormatter {
         vec![]
     }
 
-    fn usage(&self) -> TokenUsage {
+    fn usage(&self) -> Usage {
         self.usage.clone()
     }
 }
 
-fn extract_usage(v: &Value) -> TokenUsage {
+fn extract_usage(v: &Value) -> Usage {
     let usage = v.get("usage").or_else(|| v.get("usageMetadata"));
     let Some(u) = usage else {
-        return TokenUsage::default();
+        return Usage::default();
     };
 
     let input = first_u64(
@@ -512,10 +513,10 @@ fn extract_usage(v: &Value) -> TokenUsage {
     )
     .unwrap_or(0);
 
-    TokenUsage {
-        input_tokens: input as u32,
-        output_tokens: output as u32,
-        ..TokenUsage::default()
+    Usage {
+        prompt_tokens: input as u32,
+        completion_tokens: output as u32,
+        ..Usage::default()
     }
 }
 
@@ -578,8 +579,8 @@ mod tests {
         let r = OpenAIResponseParser.parse_response(resp).unwrap();
         assert_eq!(r.content, "hi");
         assert_eq!(r.stop_reason.as_deref(), Some("stop"));
-        assert_eq!(r.usage.input_tokens, 5);
-        assert_eq!(r.usage.output_tokens, 2);
+        assert_eq!(r.usage.prompt_tokens, 5);
+        assert_eq!(r.usage.completion_tokens, 2);
     }
 
     #[test]
@@ -766,10 +767,10 @@ mod tests {
         internal.content = "visible text".to_string();
         internal.reasoning_content = Some("hidden chain of thought".to_string());
         internal.stop_reason = Some("stop".to_string());
-        internal.usage = TokenUsage {
-            input_tokens: 10,
-            output_tokens: 5,
-            ..TokenUsage::default()
+        internal.usage = Usage {
+            prompt_tokens: 10,
+            completion_tokens: 5,
+            ..Usage::default()
         };
         let formatted = OpenAIResponseFormatter.format_response(&internal);
         let msg = &formatted["choices"][0]["message"];

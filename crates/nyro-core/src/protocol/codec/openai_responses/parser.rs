@@ -3,7 +3,8 @@ use serde_json::Value;
 
 use crate::protocol::ir::compat::old_stream_delta_to_new;
 use crate::protocol::ir::{AiResponse, AiStreamDelta};
-use crate::protocol::types::{StreamDelta, TokenUsage, ToolCall};
+use crate::protocol::ir::usage::Usage;
+use crate::protocol::types::{StreamDelta, ToolCall};
 use crate::protocol::{ResponseParser, StreamParser};
 
 pub struct ResponsesResponseParser;
@@ -74,18 +75,18 @@ impl ResponseParser for ResponsesResponseParser {
             }
         }
 
-        let usage = TokenUsage {
-            input_tokens: resp
+        let usage = Usage {
+            prompt_tokens: resp
                 .get("usage")
                 .and_then(|v| v.get("input_tokens"))
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as u32,
-            output_tokens: resp
+            completion_tokens: resp
                 .get("usage")
                 .and_then(|v| v.get("output_tokens"))
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0) as u32,
-            ..TokenUsage::default()
+            ..Usage::default()
         };
 
         let mut ai_resp = AiResponse::new(id, model);
@@ -247,20 +248,20 @@ impl ResponsesStreamParser {
             }
             "response.completed" => {
                 let response = payload.get("response").unwrap_or(payload);
-                let usage = TokenUsage {
-                    input_tokens: response
+                let usage = Usage {
+                    prompt_tokens: response
                         .get("usage")
                         .and_then(|v| v.get("input_tokens"))
                         .and_then(|v| v.as_u64())
                         .unwrap_or(0) as u32,
-                    output_tokens: response
+                    completion_tokens: response
                         .get("usage")
                         .and_then(|v| v.get("output_tokens"))
                         .and_then(|v| v.as_u64())
                         .unwrap_or(0) as u32,
-                    ..TokenUsage::default()
+                    ..Usage::default()
                 };
-                if usage.input_tokens > 0 || usage.output_tokens > 0 {
+                if usage.prompt_tokens > 0 || usage.completion_tokens > 0 {
                     deltas.push(StreamDelta::Usage(usage));
                 }
                 deltas.push(StreamDelta::Done {
@@ -312,7 +313,7 @@ mod tests {
         let r = ResponsesResponseParser.parse_response(resp).unwrap();
         assert_eq!(r.content, "hello");
         assert_eq!(r.stop_reason.as_deref(), Some("completed"));
-        assert_eq!(r.usage.input_tokens, 5);
+        assert_eq!(r.usage.prompt_tokens, 5);
     }
 
     #[test]

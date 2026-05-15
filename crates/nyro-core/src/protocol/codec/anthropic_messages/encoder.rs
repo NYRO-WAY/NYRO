@@ -3,16 +3,15 @@ use reqwest::header::{HeaderMap, HeaderValue};
 use serde_json::Value;
 
 use crate::protocol::EgressEncoder;
+use crate::protocol::ir::request::{
+    ContentBlock, MediaSource, Message, MessageContent, Role, ToolChoice,
+};
 use crate::protocol::ir::AiRequest;
-use crate::protocol::ir::compat::{ai_msg_to_old_ref, ai_tool_choice_to_value};
-use crate::protocol::types::*;
 
 pub struct AnthropicEncoder;
 
 impl EgressEncoder for AnthropicEncoder {
     fn encode_request(&self, req: &AiRequest) -> Result<(Value, HeaderMap)> {
-        let old_messages: Vec<InternalMessage> =
-            req.messages.iter().map(ai_msg_to_old_ref).collect();
         let ingress = &req.meta.vendor.ingress;
 
         // ── System ────────────────────────────────────────────────────────────
@@ -21,12 +20,12 @@ impl EgressEncoder for AnthropicEncoder {
             Some(v.clone())
         } else {
             let mut system_text = String::new();
-            for msg in &old_messages {
+            for msg in &req.messages {
                 if msg.role == Role::System {
                     if !system_text.is_empty() {
                         system_text.push('\n');
                     }
-                    system_text.push_str(&msg.content.as_text());
+                    system_text.push_str(&msg.content.to_text());
                 }
             }
             if system_text.is_empty() {
@@ -38,12 +37,12 @@ impl EgressEncoder for AnthropicEncoder {
 
         // ── Messages ──────────────────────────────────────────────────────────
         // Prefer __anthropic_raw_messages (preserves cache_control / exotic
-        // blocks) if present; otherwise reconstruct from InternalMessage.
+        // blocks) if present; otherwise reconstruct from Message.
         let messages_val: Value = if let Some(v) = ingress.get("__anthropic_raw_messages") {
             v.clone()
         } else {
             let mut raw_messages = Vec::new();
-            for msg in &old_messages {
+            for msg in &req.messages {
                 if msg.role == Role::System {
                     continue;
                 }
@@ -107,7 +106,7 @@ impl EgressEncoder for AnthropicEncoder {
 
         // ── Tool choice ───────────────────────────────────────────────────────
         if let Some(ref tc) = req.tool_choice {
-            let raw = ai_tool_choice_to_value(tc);
+            let raw = tool_choice_to_value_raw(tc);
             if let Some(mapped) = map_tool_choice_for_anthropic(&raw) {
                 obj.insert("tool_choice".into(), mapped);
             }
@@ -146,7 +145,20 @@ impl EgressEncoder for AnthropicEncoder {
     }
 }
 
-// ── tool_choice mapping ───────────────────────────────────────────────────────
+// ── tool_choice helpers ───────────────────────────────────────────────────────
+
+fn tool_choice_to_value_raw(tc: &ToolChoice) -> Value {
+    match tc {
+        ToolChoice::Auto => Value::String("auto".into()),
+        ToolChoice::None => Value::String("none".into()),
+        ToolChoice::Required => Value::String("required".into()),
+        ToolChoice::Named { name } => serde_json::json!({
+            "type": "tool",
+            "name": name,
+        }),
+        ToolChoice::Raw(v) => v.clone(),
+    }
+}
 
 fn map_tool_choice_for_anthropic(raw: &Value) -> Option<Value> {
     if let Some(s) = raw.as_str() {
@@ -321,7 +333,7 @@ fn validate_anthropic_payload(body: &Value) -> Result<()> {
 
 // ── Message encoding helpers ──────────────────────────────────────────────────
 
-fn encode_message(msg: &InternalMessage) -> Result<Value> {
+fn encode_message(msg: &Message) -> Result<Value> {
     let role = match msg.role {
         Role::User | Role::Tool => "user",
         Role::Assistant => "assistant",
@@ -347,16 +359,15 @@ fn encode_message(msg: &InternalMessage) -> Result<Value> {
         }));
     }
 
+    let meta_obj = msg.meta.as_ref().and_then(|m| m.as_object());
     let content = match &msg.content {
         MessageContent::Text(t) => {
-            let reasoning = msg
-                .extra
-                .get("reasoning_content")
+            let reasoning = meta_obj
+                .and_then(|m| m.get("reasoning_content"))
                 .and_then(|v| v.as_str())
                 .filter(|v| !v.trim().is_empty());
-            let reasoning_signature = msg
-                .extra
-                .get("reasoning_signature")
+            let reasoning_signature = meta_obj
+                .and_then(|m| m.get("reasoning_signature"))
                 .and_then(|v| v.as_str())
                 .filter(|v| !v.trim().is_empty());
 
@@ -397,52 +408,7 @@ fn encode_message(msg: &InternalMessage) -> Result<Value> {
         MessageContent::Blocks(blocks) => {
             let arr: Vec<Value> = blocks
                 .iter()
-                .map(|b| match b {
-                    ContentBlock::Text { text } => {
-                        serde_json::json!({"type": "text", "text": text})
-                    }
-                    ContentBlock::Image { source } => {
-                        serde_json::json!({
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": source.media_type,
-                                "data": source.data,
-                            }
-                        })
-                    }
-                    ContentBlock::Reasoning { text, signature } => {
-                        let mut block = serde_json::json!({
-                            "type": "thinking",
-                            "thinking": text,
-                        });
-                        if let Some(sig) = signature
-                            && !sig.trim().is_empty()
-                            && let Some(obj) = block.as_object_mut()
-                        {
-                            obj.insert("signature".into(), serde_json::json!(sig));
-                        }
-                        block
-                    }
-                    ContentBlock::ToolUse { id, name, input } => {
-                        serde_json::json!({
-                            "type": "tool_use",
-                            "id": normalize_anthropic_tool_id(id),
-                            "name": name,
-                            "input": input,
-                        })
-                    }
-                    ContentBlock::ToolResult {
-                        tool_use_id,
-                        content,
-                    } => {
-                        serde_json::json!({
-                            "type": "tool_result",
-                            "tool_use_id": normalize_anthropic_tool_id(tool_use_id),
-                            "content": content,
-                        })
-                    }
-                })
+                .map(|b| encode_content_block_for_anthropic(b))
                 .collect();
             Value::Array(arr)
         }
@@ -454,20 +420,94 @@ fn encode_message(msg: &InternalMessage) -> Result<Value> {
     }))
 }
 
-fn anthropic_tool_result_payload(msg: &InternalMessage) -> (Value, Option<String>) {
+fn encode_content_block_for_anthropic(b: &ContentBlock) -> Value {
+    match b {
+        ContentBlock::Text { text, cache_control } => {
+            let mut block = serde_json::json!({"type": "text", "text": text});
+            if let Some(cc) = cache_control {
+                block["cache_control"] = serde_json::to_value(cc).unwrap_or(Value::Null);
+            }
+            block
+        }
+        ContentBlock::Image { source, cache_control } => {
+            let src = match source {
+                MediaSource::Base64 { media_type, data } => serde_json::json!({
+                    "type": "base64",
+                    "media_type": media_type,
+                    "data": data,
+                }),
+                MediaSource::Url(url) => serde_json::json!({
+                    "type": "url",
+                    "url": url,
+                }),
+                MediaSource::FileId { file_id, .. } => serde_json::json!({
+                    "type": "file",
+                    "file_id": file_id,
+                }),
+            };
+            let mut block = serde_json::json!({"type": "image", "source": src});
+            if let Some(cc) = cache_control {
+                block["cache_control"] = serde_json::to_value(cc).unwrap_or(Value::Null);
+            }
+            block
+        }
+        ContentBlock::Thinking { thinking, signature } => {
+            let mut block = serde_json::json!({
+                "type": "thinking",
+                "thinking": thinking,
+            });
+            if let Some(sig) = signature
+                && !sig.trim().is_empty()
+                && let Some(obj) = block.as_object_mut()
+            {
+                obj.insert("signature".into(), serde_json::json!(sig));
+            }
+            block
+        }
+        ContentBlock::RedactedThinking { data } => {
+            serde_json::json!({"type": "redacted_thinking", "data": data})
+        }
+        ContentBlock::ToolUse { id, name, input, cache_control } => {
+            let mut block = serde_json::json!({
+                "type": "tool_use",
+                "id": normalize_anthropic_tool_id(id),
+                "name": name,
+                "input": input,
+            });
+            if let Some(cc) = cache_control {
+                block["cache_control"] = serde_json::to_value(cc).unwrap_or(Value::Null);
+            }
+            block
+        }
+        ContentBlock::ToolResult { tool_use_id, content, is_error, cache_control } => {
+            let mut block = serde_json::json!({
+                "type": "tool_result",
+                "tool_use_id": normalize_anthropic_tool_id(tool_use_id),
+                "content": content,
+            });
+            if let Some(err) = is_error {
+                block["is_error"] = Value::Bool(*err);
+            }
+            if let Some(cc) = cache_control {
+                block["cache_control"] = serde_json::to_value(cc).unwrap_or(Value::Null);
+            }
+            block
+        }
+        ContentBlock::Unknown { raw } => raw.clone(),
+        other => serde_json::to_value(other).unwrap_or(Value::Null),
+    }
+}
+
+fn anthropic_tool_result_payload(msg: &Message) -> (Value, Option<String>) {
     match &msg.content {
         MessageContent::Text(t) => (Value::String(t.clone()), None),
         MessageContent::Blocks(blocks) => {
             for block in blocks {
-                if let ContentBlock::ToolResult {
-                    tool_use_id,
-                    content,
-                } = block
-                {
+                if let ContentBlock::ToolResult { tool_use_id, content, .. } = block {
                     return (content.clone(), Some(tool_use_id.clone()));
                 }
             }
-            (Value::String(msg.content.as_text()), None)
+            (Value::String(msg.content.to_text()), None)
         }
     }
 }

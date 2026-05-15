@@ -24,6 +24,7 @@ pub mod request;
 pub mod response;
 pub mod schema;
 pub mod stream;
+pub mod usage;
 pub mod vendor_ext;
 
 // ── Cache ──────────────────────────────────────────────────────────────────────
@@ -50,6 +51,9 @@ pub use schema::SchemaObject;
 
 // ── Stream ────────────────────────────────────────────────────────────────────
 pub use stream::StreamDelta as AiStreamDelta;
+
+// ── Usage ─────────────────────────────────────────────────────────────────────
+pub use usage::{ServerToolUsage, Usage};
 
 // ── Vendor ────────────────────────────────────────────────────────────────────
 pub use envelope::RawEnvelope;

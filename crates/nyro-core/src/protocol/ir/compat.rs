@@ -1,20 +1,15 @@
 //! Compatibility helpers for progressive codec migration.
 //!
-//! `InternalRequest`/`InternalResponse` have been removed in PR-6.
-//! This module now provides:
+//! PR-A removed `InternalMessage`, `TokenUsage` and all by-ref encoder helpers.
+//! This module now provides only:
 //! - `AiStreamDelta` ↔ old `StreamDelta` conversions (used by `LegacyStreamParserAdapter`)
-//! - By-ref helpers for encoders that still use `InternalMessage` as an internal helper type
+//!
+//! PR-B will remove this module entirely once the 4 stream parsers emit
+//! `AiStreamDelta` directly.
 
-use crate::protocol::ir::request::{
-    ContentBlock, MediaSource, Message, MessageContent, Role, ToolChoice, ToolSpec,
-};
 use crate::protocol::ir::stream::StreamDelta as AiStreamDelta;
-use crate::protocol::types::{
-    ContentBlock as OldContentBlock, ImageSource, InternalMessage,
-    MessageContent as OldMessageContent, Role as OldRole, StreamDelta as OldStreamDelta,
-    ToolCall as OldToolCall, ToolDef,
-};
-use serde_json::Value;
+use crate::protocol::ir::usage::Usage;
+use crate::protocol::types::StreamDelta as OldStreamDelta;
 
 // ── StreamDelta ↔ AiStreamDelta conversions ───────────────────────────────────
 
@@ -92,122 +87,27 @@ pub fn ai_stream_delta_to_old(d: &AiStreamDelta) -> OldStreamDelta {
                 .and_then(|l| l.strip_prefix("data: "))
                 .unwrap_or("{}");
             let data = serde_json::from_str(data_str)
-                .unwrap_or_else(|_| Value::String(data_str.to_string()));
+                .unwrap_or_else(|_| serde_json::Value::String(data_str.to_string()));
             OldStreamDelta::RawEvent { event_type, data }
         }
     }
 }
 
-// ── By-ref helpers used by encoders ──────────────────────────────────────────
-
-/// Convert an IR `Message` to the old `InternalMessage` format (borrows; clones fields).
-pub fn ai_msg_to_old_ref(msg: &Message) -> InternalMessage {
-    let extra = match &msg.meta {
-        Some(Value::Object(obj)) => obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
-        _ => Default::default(),
-    };
-    InternalMessage {
-        role: role_to_old(msg.role),
-        content: content_to_old_ref(&msg.content),
-        tool_calls: msg.tool_calls.as_ref().map(|tcs| {
-            tcs.iter()
-                .map(|tc| OldToolCall {
-                    id: tc.id.clone(),
-                    name: tc.name.clone(),
-                    arguments: tc.arguments.clone(),
-                })
-                .collect()
-        }),
-        tool_call_id: msg.tool_call_id.clone(),
-        extra,
+/// Helper: convert `ir::Usage` field names to match old `TokenUsage` field names
+/// where the wire output JSON still needs old names (e.g. "input_tokens").
+pub fn usage_to_wire(u: &Usage) -> serde_json::Value {
+    let mut obj = serde_json::json!({
+        "input_tokens": u.prompt_tokens,
+        "output_tokens": u.completion_tokens,
+    });
+    if u.total_tokens > 0 {
+        obj["total_tokens"] = u.total_tokens.into();
     }
-}
-
-fn role_to_old(r: Role) -> OldRole {
-    match r {
-        Role::System => OldRole::System,
-        Role::User => OldRole::User,
-        Role::Assistant => OldRole::Assistant,
-        Role::Tool => OldRole::Tool,
+    if let Some(v) = u.cache_read_tokens {
+        obj["cache_read_input_tokens"] = v.into();
     }
-}
-
-fn content_to_old_ref(c: &MessageContent) -> OldMessageContent {
-    match c {
-        MessageContent::Text(t) => OldMessageContent::Text(t.clone()),
-        MessageContent::Blocks(bs) => {
-            OldMessageContent::Blocks(bs.iter().filter_map(block_to_old_ref).collect())
-        }
+    if let Some(v) = u.cache_creation_tokens {
+        obj["cache_creation_input_tokens"] = v.into();
     }
-}
-
-fn block_to_old_ref(b: &ContentBlock) -> Option<OldContentBlock> {
-    match b {
-        ContentBlock::Text { text, .. } => Some(OldContentBlock::Text { text: text.clone() }),
-        ContentBlock::Image { source, .. } => match source {
-            MediaSource::Base64 { media_type, data } => Some(OldContentBlock::Image {
-                source: ImageSource {
-                    media_type: media_type.clone(),
-                    data: data.clone(),
-                },
-            }),
-            MediaSource::Url(url) => Some(OldContentBlock::Image {
-                source: ImageSource {
-                    media_type: "image/url".to_string(),
-                    data: url.clone(),
-                },
-            }),
-            MediaSource::FileId { file_id, .. } => Some(OldContentBlock::Image {
-                source: ImageSource {
-                    media_type: "image/file_id".to_string(),
-                    data: file_id.clone(),
-                },
-            }),
-        },
-        ContentBlock::Thinking {
-            thinking,
-            signature,
-        } => Some(OldContentBlock::Reasoning {
-            text: thinking.clone(),
-            signature: signature.clone(),
-        }),
-        ContentBlock::ToolUse {
-            id, name, input, ..
-        } => Some(OldContentBlock::ToolUse {
-            id: id.clone(),
-            name: name.clone(),
-            input: input.clone(),
-        }),
-        ContentBlock::ToolResult {
-            tool_use_id,
-            content,
-            ..
-        } => Some(OldContentBlock::ToolResult {
-            tool_use_id: tool_use_id.clone(),
-            content: content.clone(),
-        }),
-        _ => None,
-    }
-}
-
-/// Convert an IR `ToolChoice` to a raw JSON `Value` for legacy encoders.
-pub fn ai_tool_choice_to_value(tc: &ToolChoice) -> Value {
-    match tc {
-        ToolChoice::Auto => Value::String("auto".into()),
-        ToolChoice::None => Value::String("none".into()),
-        ToolChoice::Required => Value::String("required".into()),
-        ToolChoice::Named { name } => {
-            serde_json::json!({ "type": "function", "function": { "name": name } })
-        }
-        ToolChoice::Raw(v) => v.clone(),
-    }
-}
-
-/// Convert an IR `ToolSpec` to the old `ToolDef` format.
-pub fn ai_tool_spec_to_old_ref(ts: &ToolSpec) -> ToolDef {
-    ToolDef {
-        name: ts.name.clone(),
-        description: ts.description.clone(),
-        parameters: ts.parameters.clone(),
-    }
+    obj
 }

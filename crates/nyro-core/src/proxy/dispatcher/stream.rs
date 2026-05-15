@@ -251,7 +251,7 @@ pub(super) async fn handle_stream(
 
         let usage = stream_formatter.usage();
         let mut ai_resp = accumulator.into_ai_response();
-        if ai_resp.usage.input_tokens == 0 && ai_resp.usage.output_tokens == 0 {
+        if ai_resp.usage.prompt_tokens == 0 && ai_resp.usage.completion_tokens == 0 {
             ai_resp.usage = usage.clone();
         }
         if ai_resp.id.is_empty() {

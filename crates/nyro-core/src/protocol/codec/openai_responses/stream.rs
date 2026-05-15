@@ -2,9 +2,10 @@ use std::collections::HashMap;
 
 use uuid::Uuid;
 
-use crate::protocol::ir::AiStreamDelta;
 use crate::protocol::ir::compat::ai_stream_delta_to_old;
-use crate::protocol::types::*;
+use crate::protocol::ir::usage::Usage;
+use crate::protocol::ir::AiStreamDelta;
+use crate::protocol::types::StreamDelta;
 use crate::protocol::{SseEvent, StreamFormatter};
 
 struct PendingFunctionCall {
@@ -21,7 +22,7 @@ pub struct ResponsesStreamFormatter {
     model: String,
     accumulated_text: String,
     accumulated_reasoning: String,
-    usage: TokenUsage,
+    usage: Usage,
     started: bool,
     completed: bool,
     next_output_index: usize,
@@ -45,7 +46,7 @@ impl ResponsesStreamFormatter {
             model: String::new(),
             accumulated_text: String::new(),
             accumulated_reasoning: String::new(),
-            usage: TokenUsage::default(),
+            usage: Usage::default(),
             started: false,
             completed: false,
             next_output_index: 1,
@@ -267,9 +268,9 @@ impl ResponsesStreamFormatter {
                 "output": output,
                 "output_text": self.accumulated_text,
                 "usage": {
-                    "input_tokens": self.usage.input_tokens,
-                    "output_tokens": self.usage.output_tokens,
-                    "total_tokens": self.usage.input_tokens + self.usage.output_tokens
+                    "input_tokens": self.usage.prompt_tokens,
+                    "output_tokens": self.usage.completion_tokens,
+                    "total_tokens": self.usage.prompt_tokens + self.usage.completion_tokens
                 }
             }
         });
@@ -403,17 +404,17 @@ impl StreamFormatter for ResponsesStreamFormatter {
                     }
                 }
                 StreamDelta::Usage(u) => {
-                    if u.input_tokens > 0 {
-                        self.usage.input_tokens = u.input_tokens;
+                    if u.prompt_tokens > 0 {
+                        self.usage.prompt_tokens = u.prompt_tokens;
                     }
-                    if u.output_tokens > 0 {
-                        self.usage.output_tokens = u.output_tokens;
+                    if u.completion_tokens > 0 {
+                        self.usage.completion_tokens = u.completion_tokens;
                     }
-                    if u.cache_read_input_tokens.is_some() {
-                        self.usage.cache_read_input_tokens = u.cache_read_input_tokens;
+                    if u.cache_read_tokens.is_some() {
+                        self.usage.cache_read_tokens = u.cache_read_tokens;
                     }
-                    if u.cache_creation_input_tokens.is_some() {
-                        self.usage.cache_creation_input_tokens = u.cache_creation_input_tokens;
+                    if u.cache_creation_tokens.is_some() {
+                        self.usage.cache_creation_tokens = u.cache_creation_tokens;
                     }
                     if u.server_tool_use.is_some() {
                         self.usage.server_tool_use = u.server_tool_use.clone();
@@ -442,7 +443,7 @@ impl StreamFormatter for ResponsesStreamFormatter {
         events
     }
 
-    fn usage(&self) -> TokenUsage {
+    fn usage(&self) -> Usage {
         self.usage.clone()
     }
 }

@@ -3,8 +3,9 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::protocol::ir::compat::{ai_stream_delta_to_old, old_stream_delta_to_new};
+use crate::protocol::ir::usage::{ServerToolUsage, Usage};
 use crate::protocol::ir::{AiResponse, AiStreamDelta};
-use crate::protocol::types::*;
+use crate::protocol::types::{StreamDelta, ToolCall};
 use crate::protocol::*;
 
 // ── Non-streaming response parser ──
@@ -168,8 +169,8 @@ impl ResponseFormatter for AnthropicResponseFormatter {
         });
 
         let mut usage = serde_json::json!({
-            "input_tokens": resp.usage.input_tokens,
-            "output_tokens": resp.usage.output_tokens,
+            "input_tokens": resp.usage.prompt_tokens,
+            "output_tokens": resp.usage.completion_tokens,
         });
         extend_usage_json(&mut usage, &resp.usage);
 
@@ -261,9 +262,9 @@ fn parse_anthropic_event(event_type: Option<&str>, data: &Value, deltas: &mut Ve
                 // Usage BEFORE MessageStart so the formatter has the correct
                 // input_tokens available when it emits the message_start SSE event.
                 let u = extract_anthropic_usage(msg);
-                if u.input_tokens > 0
-                    || u.cache_read_input_tokens.is_some()
-                    || u.cache_creation_input_tokens.is_some()
+                if u.prompt_tokens > 0
+                    || u.cache_read_tokens.is_some()
+                    || u.cache_creation_tokens.is_some()
                     || u.server_tool_use.is_some()
                 {
                     deltas.push(StreamDelta::Usage(u));
@@ -359,10 +360,10 @@ fn parse_anthropic_event(event_type: Option<&str>, data: &Value, deltas: &mut Ve
             // Also read input_tokens here — ZhipuAI and others publish the real
             // value in message_delta.usage rather than message_start.usage.
             let u = extract_anthropic_usage(data);
-            if u.input_tokens > 0
-                || u.output_tokens > 0
-                || u.cache_read_input_tokens.is_some()
-                || u.cache_creation_input_tokens.is_some()
+            if u.prompt_tokens > 0
+                || u.completion_tokens > 0
+                || u.cache_read_tokens.is_some()
+                || u.cache_creation_tokens.is_some()
                 || u.server_tool_use.is_some()
             {
                 deltas.push(StreamDelta::Usage(u));
@@ -395,7 +396,7 @@ fn parse_anthropic_event(event_type: Option<&str>, data: &Value, deltas: &mut Ve
 // ── Stream formatter (deltas → Anthropic SSE) ──
 
 pub struct AnthropicStreamFormatter {
-    usage: TokenUsage,
+    usage: Usage,
     id: String,
     model: String,
     block_index: usize,
@@ -414,7 +415,7 @@ impl Default for AnthropicStreamFormatter {
 impl AnthropicStreamFormatter {
     pub fn new() -> Self {
         Self {
-            usage: TokenUsage::default(),
+            usage: Usage::default(),
             id: format!("msg_{}", Uuid::new_v4().simple()),
             model: String::new(),
             block_index: 0,
@@ -431,7 +432,7 @@ impl AnthropicStreamFormatter {
         }
         self.message_started = true;
         let mut usage = serde_json::json!({
-            "input_tokens": self.usage.input_tokens,
+            "input_tokens": self.usage.prompt_tokens,
             "output_tokens": 0
         });
         extend_usage_json(&mut usage, &self.usage);
@@ -580,17 +581,17 @@ impl StreamFormatter for AnthropicStreamFormatter {
                     ));
                 }
                 StreamDelta::Usage(u) => {
-                    if u.input_tokens > 0 {
-                        self.usage.input_tokens = u.input_tokens;
+                    if u.prompt_tokens > 0 {
+                        self.usage.prompt_tokens = u.prompt_tokens;
                     }
-                    if u.output_tokens > 0 {
-                        self.usage.output_tokens = u.output_tokens;
+                    if u.completion_tokens > 0 {
+                        self.usage.completion_tokens = u.completion_tokens;
                     }
-                    if u.cache_read_input_tokens.is_some() {
-                        self.usage.cache_read_input_tokens = u.cache_read_input_tokens;
+                    if u.cache_read_tokens.is_some() {
+                        self.usage.cache_read_tokens = u.cache_read_tokens;
                     }
-                    if u.cache_creation_input_tokens.is_some() {
-                        self.usage.cache_creation_input_tokens = u.cache_creation_input_tokens;
+                    if u.cache_creation_tokens.is_some() {
+                        self.usage.cache_creation_tokens = u.cache_creation_tokens;
                     }
                     if u.server_tool_use.is_some() {
                         self.usage.server_tool_use = u.server_tool_use.clone();
@@ -607,7 +608,7 @@ impl StreamFormatter for AnthropicStreamFormatter {
                         other => other,
                     };
                     let mut usage = serde_json::json!({
-                        "output_tokens": self.usage.output_tokens
+                        "output_tokens": self.usage.completion_tokens
                     });
                     extend_usage_json(&mut usage, &self.usage);
                     let msg_delta = serde_json::json!({
@@ -636,7 +637,7 @@ impl StreamFormatter for AnthropicStreamFormatter {
         vec![]
     }
 
-    fn usage(&self) -> TokenUsage {
+    fn usage(&self) -> Usage {
         self.usage.clone()
     }
 }
@@ -682,9 +683,9 @@ impl AnthropicStreamFormatter {
     }
 }
 
-fn extract_anthropic_usage(v: &Value) -> TokenUsage {
+fn extract_anthropic_usage(v: &Value) -> Usage {
     let Some(u) = v.get("usage") else {
-        return TokenUsage::default();
+        return Usage::default();
     };
     let get_u32 = |key: &str| u.get(key).and_then(|v| v.as_u64()).unwrap_or(0) as u32;
     let get_opt_u32 = |key: &str| u.get(key).and_then(|v| v.as_u64()).map(|n| n as u32);
@@ -698,22 +699,23 @@ fn extract_anthropic_usage(v: &Value) -> TokenUsage {
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as u32,
     });
-    TokenUsage {
-        input_tokens: get_u32("input_tokens"),
-        output_tokens: get_u32("output_tokens"),
-        cache_read_input_tokens: get_opt_u32("cache_read_input_tokens"),
-        cache_creation_input_tokens: get_opt_u32("cache_creation_input_tokens"),
+    Usage {
+        prompt_tokens: get_u32("input_tokens"),
+        completion_tokens: get_u32("output_tokens"),
+        cache_read_tokens: get_opt_u32("cache_read_input_tokens"),
+        cache_creation_tokens: get_opt_u32("cache_creation_input_tokens"),
         server_tool_use,
+        ..Usage::default()
     }
 }
 
 /// Append optional Anthropic-specific usage fields to an existing JSON usage object.
 /// Omits keys whose values are `None`.
-fn extend_usage_json(obj: &mut Value, u: &TokenUsage) {
-    if let Some(v) = u.cache_read_input_tokens {
+fn extend_usage_json(obj: &mut Value, u: &Usage) {
+    if let Some(v) = u.cache_read_tokens {
         obj["cache_read_input_tokens"] = v.into();
     }
-    if let Some(v) = u.cache_creation_input_tokens {
+    if let Some(v) = u.cache_creation_tokens {
         obj["cache_creation_input_tokens"] = v.into();
     }
     if let Some(ref stu) = u.server_tool_use {
@@ -1235,8 +1237,8 @@ mod tests {
                 }
             })
             .expect("Usage delta must be present");
-        assert_eq!(usage.input_tokens, 60, "input_tokens must be 60");
-        assert_eq!(usage.output_tokens, 43, "output_tokens must be 43");
+        assert_eq!(usage.prompt_tokens, 60, "prompt_tokens must be 60");
+        assert_eq!(usage.completion_tokens, 43, "completion_tokens must be 43");
     }
 
     // ── New usage-field extraction tests (Task 2 – parser) ──
@@ -1260,8 +1262,8 @@ mod tests {
                 }
             })
             .expect("Usage delta must be present");
-        assert_eq!(usage.cache_read_input_tokens, Some(50));
-        assert_eq!(usage.cache_creation_input_tokens, Some(200));
+        assert_eq!(usage.cache_read_tokens, Some(50));
+        assert_eq!(usage.cache_creation_tokens, Some(200));
     }
 
     #[test]
@@ -1296,12 +1298,13 @@ mod tests {
     #[test]
     fn test_formatter_message_start_includes_cache_fields() {
         // Usage delta carrying cache fields must appear in the message_start SSE output.
-        let usage = TokenUsage {
-            input_tokens: 100,
-            output_tokens: 0,
-            cache_read_input_tokens: Some(50),
-            cache_creation_input_tokens: Some(200),
+        let usage = Usage {
+            prompt_tokens: 100,
+            completion_tokens: 0,
+            cache_read_tokens: Some(50),
+            cache_creation_tokens: Some(200),
             server_tool_use: None,
+            ..Usage::default()
         };
         let mut formatter = AnthropicStreamFormatter::new();
         let events = formatter.format_deltas(&[
@@ -1332,15 +1335,16 @@ mod tests {
     #[test]
     fn test_formatter_message_delta_includes_new_fields() {
         // message_delta SSE must carry cache and server_tool_use when present.
-        let usage = TokenUsage {
-            input_tokens: 60,
-            output_tokens: 43,
-            cache_read_input_tokens: Some(10),
-            cache_creation_input_tokens: None,
+        let usage = Usage {
+            prompt_tokens: 60,
+            completion_tokens: 43,
+            cache_read_tokens: Some(10),
+            cache_creation_tokens: None,
             server_tool_use: Some(ServerToolUsage {
                 web_search_requests: 2,
                 web_fetch_requests: 0,
             }),
+            ..Usage::default()
         };
         let mut formatter = AnthropicStreamFormatter::new();
         let events = formatter.format_deltas(&[
@@ -1377,15 +1381,16 @@ mod tests {
         let mut resp = AiResponse::new("m3", "claude");
         resp.content = "hi".to_string();
         resp.stop_reason = Some("stop".to_string());
-        resp.usage = TokenUsage {
-            input_tokens: 10,
-            output_tokens: 5,
-            cache_read_input_tokens: Some(3),
-            cache_creation_input_tokens: Some(7),
+        resp.usage = Usage {
+            prompt_tokens: 10,
+            completion_tokens: 5,
+            cache_read_tokens: Some(3),
+            cache_creation_tokens: Some(7),
             server_tool_use: Some(ServerToolUsage {
                 web_search_requests: 1,
                 web_fetch_requests: 0,
             }),
+            ..Usage::default()
         };
         let json = AnthropicResponseFormatter.format_response(&resp);
         let u = &json["usage"];
@@ -1441,9 +1446,9 @@ mod tests {
 
         // formatter.usage() must reflect input_tokens from message_delta (Bug 0c)
         assert_eq!(
-            formatter.usage().input_tokens,
+            formatter.usage().prompt_tokens,
             60,
-            "input_tokens=60 from message_delta must be captured in formatter state",
+            "prompt_tokens=60 from message_delta must be captured in formatter state",
         );
     }
 }

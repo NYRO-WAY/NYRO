@@ -14,9 +14,8 @@ use reqwest::header::HeaderMap;
 use serde_json::Value;
 
 use crate::protocol::EgressEncoder;
+use crate::protocol::ir::request::{Role, ToolChoice};
 use crate::protocol::ir::AiRequest;
-use crate::protocol::ir::compat::{ai_msg_to_old_ref, ai_tool_choice_to_value};
-use crate::protocol::types::{InternalMessage, Role};
 
 /// Encoder for the OpenAI Responses API (`POST /v1/responses`).
 ///
@@ -29,24 +28,21 @@ const SKIP_FROM_EXTRA: &[&str] = &["messages", "input", "instructions", "stream"
 
 impl EgressEncoder for ResponsesEncoder {
     fn encode_request(&self, req: &AiRequest) -> Result<(Value, HeaderMap)> {
-        let old_messages: Vec<InternalMessage> =
-            req.messages.iter().map(ai_msg_to_old_ref).collect();
-
         let ingress = &req.meta.vendor.ingress;
 
         let mut instructions: Vec<String> = Vec::new();
         let mut input: Vec<Value> = Vec::new();
 
-        for message in &old_messages {
+        for message in &req.messages {
             match message.role {
                 Role::System => {
-                    let text = message.content.as_text();
+                    let text = message.content.to_text();
                     if !text.is_empty() {
                         instructions.push(text);
                     }
                 }
                 Role::User | Role::Assistant => {
-                    let text = message.content.as_text();
+                    let text = message.content.to_text();
                     if !text.is_empty() {
                         let role_str = match message.role {
                             Role::User => "user",
@@ -78,7 +74,7 @@ impl EgressEncoder for ResponsesEncoder {
                     input.push(serde_json::json!({
                         "type": "function_call_output",
                         "call_id": message.tool_call_id.clone().unwrap_or_default(),
-                        "output": message.content.as_text(),
+                        "output": message.content.to_text(),
                     }));
                 }
             }
@@ -136,7 +132,7 @@ impl EgressEncoder for ResponsesEncoder {
             obj.insert("tools".into(), Value::Array(tools_val));
         }
         if let Some(ref tc) = req.tool_choice {
-            obj.insert("tool_choice".into(), ai_tool_choice_to_value(tc));
+            obj.insert("tool_choice".into(), tool_choice_to_value(tc));
         }
 
         for key in &[
@@ -169,5 +165,18 @@ impl EgressEncoder for ResponsesEncoder {
 
     fn egress_path(&self, _model: &str, _stream: bool) -> String {
         "/v1/responses".to_string()
+    }
+}
+
+fn tool_choice_to_value(tc: &ToolChoice) -> Value {
+    match tc {
+        ToolChoice::Auto => Value::String("auto".into()),
+        ToolChoice::None => Value::String("none".into()),
+        ToolChoice::Required => Value::String("required".into()),
+        ToolChoice::Named { name } => serde_json::json!({
+            "type": "function",
+            "function": {"name": name}
+        }),
+        ToolChoice::Raw(v) => v.clone(),
     }
 }

@@ -35,8 +35,8 @@ use crate::protocol::SseEvent;
 use crate::protocol::ids::{EndpointCapabilities, OPENAI_EMBEDDINGS_V1, ProtocolEndpoint};
 use crate::protocol::ir::{AiRequest, GenerationConfig, Message, StreamConfig};
 use crate::protocol::registry::EndpointRegistration;
+use crate::protocol::ir::Usage;
 use crate::protocol::traits::*;
-use crate::protocol::types::TokenUsage;
 
 /// Key under which the complete original request body is kept as a
 /// fallback (used by `embeddings_proxy` in handler.rs).
@@ -241,23 +241,22 @@ impl StreamFormatter for EmbeddingsStreamFormatter {
     fn format_done(&mut self) -> Vec<SseEvent> {
         unreachable!("embeddings has streaming=false; check capabilities before calling")
     }
-    fn usage(&self) -> TokenUsage {
-        TokenUsage::default()
+    fn usage(&self) -> Usage {
+        Usage::default()
     }
 }
 
 /// Pull `usage.prompt_tokens` out of an OpenAI embeddings response.
 /// Shared with `proxy::handler::embeddings_proxy` so the passthrough
 /// path and any future codec route agree on accounting.
-pub fn parse_usage(payload: &Value) -> TokenUsage {
+pub fn parse_usage(payload: &Value) -> Usage {
     let prompt = payload
         .get("usage")
         .and_then(|u| u.get("prompt_tokens"))
         .and_then(|v| v.as_i64())
         .unwrap_or(0);
-    TokenUsage {
-        input_tokens: prompt.max(0) as u32,
-        output_tokens: 0,
-        ..TokenUsage::default()
+    Usage {
+        prompt_tokens: prompt.max(0) as u32,
+        ..Usage::default()
     }
 }

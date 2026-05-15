@@ -52,7 +52,7 @@ use crate::error::{AuthFailure, GatewayError};
 use crate::protocol::ProviderProtocols;
 use crate::protocol::ids::{OPENAI_CHAT_COMPLETIONS_V1, OPENAI_EMBEDDINGS_V1, ProtocolId};
 use crate::protocol::ir::{AiRequest, AiResponse, RawEnvelope};
-use crate::protocol::types::TokenUsage;
+use crate::protocol::ir::Usage;
 use crate::provider::vendor::ProviderCtx;
 use crate::provider::{VendorCtx, VendorRegistry};
 use crate::proxy::client::ProxyClient;
@@ -763,7 +763,7 @@ struct LogBuilder {
     provider_name: String,
     start: Instant,
     status_code: i32,
-    usage: TokenUsage,
+    usage: Usage,
     is_stream: bool,
     is_tool_call: bool,
     error_message: Option<String>,
@@ -784,7 +784,7 @@ impl LogBuilder {
             provider_name: call_ctx.provider.name.clone(),
             start: call_ctx.start,
             status_code: 200,
-            usage: TokenUsage::default(),
+            usage: Usage::default(),
             is_stream: false,
             is_tool_call: false,
             error_message: None,
@@ -814,7 +814,7 @@ impl LogBuilder {
             provider_name: String::new(),
             start,
             status_code: 200,
-            usage: TokenUsage::default(),
+            usage: Usage::default(),
             is_stream,
             is_tool_call: false,
             error_message: None,
@@ -843,7 +843,7 @@ impl LogBuilder {
         self
     }
 
-    fn usage(mut self, u: TokenUsage) -> Self {
+    fn usage(mut self, u: Usage) -> Self {
         self.usage = u;
         self
     }

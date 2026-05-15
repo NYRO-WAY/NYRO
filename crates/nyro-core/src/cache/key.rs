@@ -12,7 +12,8 @@ use crate::protocol::ir::{AiRequest, ContentBlock, MessageContent};
 /// Bump when: IR mapping changes, codec field mapping changes, or cache key format changes.
 /// v1 → v2: dispatch_pipeline now carries RawEnvelope + AiRequest; ingress included in key.
 /// v3: PR-5 full switch to AiRequest; GenerationConfig fields used directly.
-pub const CODEC_SCHEMA_VERSION: u32 = 3;
+/// v4: PR-A TokenUsage renamed to ir::Usage; field names changed (input_tokens→prompt_tokens etc.).
+pub const CODEC_SCHEMA_VERSION: u32 = 4;
 
 /// Build a deterministic cache key for an exact-match or semantic-cache
 /// lookup.
