@@ -2,6 +2,8 @@ use anyhow::Result;
 use serde_json::Value;
 use uuid::Uuid;
 
+use crate::protocol::ir::compat::{ai_stream_delta_to_old, old_stream_delta_to_new};
+use crate::protocol::ir::{AiResponse, AiStreamDelta};
 use crate::protocol::types::*;
 use crate::protocol::*;
 
@@ -10,7 +12,7 @@ use crate::protocol::*;
 pub struct AnthropicResponseParser;
 
 impl ResponseParser for AnthropicResponseParser {
-    fn parse_response(&self, resp: Value) -> Result<InternalResponse> {
+    fn parse_response(&self, resp: Value) -> Result<AiResponse> {
         let id = resp
             .get("id")
             .and_then(|v| v.as_str())
@@ -94,7 +96,7 @@ impl ResponseParser for AnthropicResponseParser {
 
         let usage = extract_anthropic_usage(&resp);
 
-        Ok(InternalResponse {
+        Ok(AiResponse::from(InternalResponse {
             id,
             model,
             content: content_text,
@@ -104,7 +106,7 @@ impl ResponseParser for AnthropicResponseParser {
             response_items: None,
             stop_reason,
             usage,
-        })
+        }))
     }
 }
 
@@ -113,7 +115,8 @@ impl ResponseParser for AnthropicResponseParser {
 pub struct AnthropicResponseFormatter;
 
 impl ResponseFormatter for AnthropicResponseFormatter {
-    fn format_response(&self, resp: &InternalResponse) -> Value {
+    fn format_response(&self, resp: &AiResponse) -> Value {
+        let resp: InternalResponse = resp.clone().into();
         let mut content = Vec::new();
 
         if let Some(reasoning) = resp
@@ -200,7 +203,7 @@ impl AnthropicStreamParser {
 }
 
 impl StreamParser for AnthropicStreamParser {
-    fn parse_chunk(&mut self, raw: &str) -> Result<Vec<StreamDelta>> {
+    fn parse_chunk(&mut self, raw: &str) -> Result<Vec<AiStreamDelta>> {
         self.buffer.push_str(raw);
         let mut deltas = Vec::new();
 
@@ -226,10 +229,10 @@ impl StreamParser for AnthropicStreamParser {
             }
         }
 
-        Ok(deltas)
+        Ok(deltas.iter().map(old_stream_delta_to_new).collect())
     }
 
-    fn finish(&mut self) -> Result<Vec<StreamDelta>> {
+    fn finish(&mut self) -> Result<Vec<AiStreamDelta>> {
         if self.buffer.trim().is_empty() {
             return Ok(vec![]);
         }
@@ -447,7 +450,9 @@ impl AnthropicStreamFormatter {
 }
 
 impl StreamFormatter for AnthropicStreamFormatter {
-    fn format_deltas(&mut self, deltas: &[StreamDelta]) -> Vec<SseEvent> {
+    fn format_deltas(&mut self, deltas: &[AiStreamDelta]) -> Vec<SseEvent> {
+        let old: Vec<StreamDelta> = deltas.iter().map(ai_stream_delta_to_old).collect();
+        let deltas = old.as_slice();
         let mut events = Vec::new();
 
         for delta in deltas {
@@ -719,6 +724,7 @@ fn extend_usage_json(obj: &mut Value, u: &TokenUsage) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::ir::{AiResponse, AiStreamDelta};
     use crate::protocol::{ResponseFormatter, ResponseParser, StreamFormatter, StreamParser};
 
     fn make_sse_block(event: &str, data: &str) -> String {
@@ -775,7 +781,7 @@ mod tests {
             usage: TokenUsage::default(),
         };
 
-        let out = AnthropicResponseFormatter.format_response(&resp);
+        let out = AnthropicResponseFormatter.format_response(&AiResponse::from(resp.clone()));
         let thinking = out
             .get("content")
             .and_then(|v| v.as_array())
@@ -842,10 +848,10 @@ mod tests {
 
         let has_text = deltas
             .iter()
-            .any(|d| matches!(d, StreamDelta::TextDelta(t) if t == "hello"));
+            .any(|d| matches!(d, AiStreamDelta::TextDelta(t) if t == "hello"));
         let has_done = deltas
             .iter()
-            .any(|d| matches!(d, StreamDelta::Done { stop_reason } if stop_reason == "stop"));
+            .any(|d| matches!(d, AiStreamDelta::Done { stop_reason } if stop_reason == "stop"));
         assert!(has_text, "expected TextDelta('hello'), got: {deltas:?}");
         assert!(has_done, "expected Done(stop), got: {deltas:?}");
     }
@@ -896,7 +902,7 @@ mod tests {
         let reasoning: Vec<_> = deltas
             .iter()
             .filter_map(|d| {
-                if let StreamDelta::ReasoningDelta(t) = d {
+                if let AiStreamDelta::ThinkingDelta(t) = d {
                     Some(t.as_str())
                 } else {
                     None
@@ -914,7 +920,7 @@ mod tests {
 
         let has_text = deltas
             .iter()
-            .any(|d| matches!(d, StreamDelta::TextDelta(t) if t == "answer"));
+            .any(|d| matches!(d, AiStreamDelta::TextDelta(t) if t == "answer"));
         assert!(has_text, "expected TextDelta('answer'), got: {deltas:?}");
     }
 
@@ -947,7 +953,7 @@ mod tests {
 
         let deltas = result.unwrap();
         let signature = deltas.iter().find_map(|d| {
-            if let StreamDelta::ReasoningSignature(sig) = d {
+            if let AiStreamDelta::ThinkingSignature(sig) = d {
                 Some(sig.as_str())
             } else {
                 None
@@ -960,12 +966,12 @@ mod tests {
     fn test_stream_formatter_emits_signature_delta() {
         let mut formatter = AnthropicStreamFormatter::new();
         let events = formatter.format_deltas(&[
-            StreamDelta::MessageStart {
+            AiStreamDelta::MessageStart {
                 id: "msg_4".to_string(),
                 model: "claude-3-7-sonnet".to_string(),
             },
-            StreamDelta::ReasoningDelta("think".to_string()),
-            StreamDelta::ReasoningSignature("abc123".to_string()),
+            AiStreamDelta::ThinkingDelta("think".to_string()),
+            AiStreamDelta::ThinkingSignature("abc123".to_string()),
         ]);
 
         let has_signature = events
@@ -1010,15 +1016,15 @@ mod tests {
         let mut parser = AnthropicStreamParser::new();
         let deltas = parser.parse_chunk(&sse).unwrap();
 
-        let has_tool_start = deltas
-            .iter()
-            .any(|d| matches!(d, StreamDelta::ToolCallStart { name, .. } if name == "get_weather"));
+        let has_tool_start = deltas.iter().any(
+            |d| matches!(d, AiStreamDelta::ToolCallStart { name, .. } if name == "get_weather"),
+        );
         let has_tool_delta = deltas
             .iter()
-            .any(|d| matches!(d, StreamDelta::ToolCallDelta { .. }));
-        let has_done_tool = deltas
-            .iter()
-            .any(|d| matches!(d, StreamDelta::Done { stop_reason } if stop_reason == "tool_calls"));
+            .any(|d| matches!(d, AiStreamDelta::ToolCallDelta { .. }));
+        let has_done_tool = deltas.iter().any(
+            |d| matches!(d, AiStreamDelta::Done { stop_reason } if stop_reason == "tool_calls"),
+        );
         assert!(
             has_tool_start,
             "expected ToolCallStart(get_weather), got: {deltas:?}"
@@ -1056,19 +1062,28 @@ mod tests {
         let mut parser = AnthropicStreamParser::new();
         let deltas = parser.parse_chunk(&sse).unwrap();
 
-        let raw = deltas.iter().find_map(|d| {
-            if let StreamDelta::RawEvent { event_type, data } = d {
-                Some((event_type.as_str(), data.clone()))
+        let raw_str = deltas.iter().find_map(|d| {
+            if let AiStreamDelta::Unknown { raw } = d {
+                if raw.contains("content_block_start") {
+                    Some(raw.clone())
+                } else {
+                    None
+                }
             } else {
                 None
             }
         });
         assert!(
-            raw.is_some(),
-            "expected RawEvent for server_tool_use, got: {deltas:?}"
+            raw_str.is_some(),
+            "expected Unknown for server_tool_use, got: {deltas:?}"
         );
-        let (ev_type, data) = raw.unwrap();
-        assert_eq!(ev_type, "content_block_start");
+        let raw_str = raw_str.unwrap();
+        assert!(
+            raw_str.contains("content_block_start"),
+            "event type mismatch: {raw_str}"
+        );
+        let data_part = raw_str.splitn(2, "\ndata: ").nth(1).unwrap_or("{}");
+        let data: serde_json::Value = serde_json::from_str(data_part).unwrap_or_default();
         assert_eq!(
             data.pointer("/content_block/type").and_then(|v| v.as_str()),
             Some("server_tool_use"),
@@ -1086,10 +1101,12 @@ mod tests {
         let mut parser = AnthropicStreamParser::new();
         let deltas = parser.parse_chunk(&sse).unwrap();
 
-        let raw = deltas.iter().find(|d| matches!(d, StreamDelta::RawEvent { event_type, .. } if event_type == "web_search_result"));
+        let raw = deltas.iter().find(
+            |d| matches!(d, AiStreamDelta::Unknown { raw } if raw.contains("web_search_result")),
+        );
         assert!(
             raw.is_some(),
-            "expected RawEvent for web_search_result, got: {deltas:?}"
+            "expected Unknown for web_search_result, got: {deltas:?}"
         );
     }
 
@@ -1104,13 +1121,12 @@ mod tests {
 
         let mut formatter = AnthropicStreamFormatter::new();
         let events = formatter.format_deltas(&[
-            StreamDelta::MessageStart {
+            AiStreamDelta::MessageStart {
                 id: "msg_6".to_string(),
                 model: "glm-5".to_string(),
             },
-            StreamDelta::RawEvent {
-                event_type: "content_block_start".to_string(),
-                data: raw_data.clone(),
+            AiStreamDelta::Unknown {
+                raw: format!("event: content_block_start\ndata: {raw_data}"),
             },
         ]);
 
@@ -1136,10 +1152,12 @@ mod tests {
         let mut parser = AnthropicStreamParser::new();
         let deltas = parser.parse_chunk(&sse).unwrap();
 
-        let raw = deltas.iter().find(|d| matches!(d, StreamDelta::RawEvent { event_type, .. } if event_type == "content_block_delta"));
+        let raw = deltas.iter().find(
+            |d| matches!(d, AiStreamDelta::Unknown { raw } if raw.contains("content_block_delta")),
+        );
         assert!(
             raw.is_some(),
-            "expected RawEvent for citations_delta, got: {deltas:?}"
+            "expected Unknown for citations_delta, got: {deltas:?}"
         );
     }
 
@@ -1158,10 +1176,10 @@ mod tests {
 
         let usage_pos = deltas
             .iter()
-            .position(|d| matches!(d, StreamDelta::Usage(_)));
+            .position(|d| matches!(d, AiStreamDelta::Usage(_)));
         let start_pos = deltas
             .iter()
-            .position(|d| matches!(d, StreamDelta::MessageStart { .. }));
+            .position(|d| matches!(d, AiStreamDelta::MessageStart { .. }));
         assert!(
             usage_pos.is_some() && start_pos.is_some(),
             "both deltas must be present; got: {deltas:?}",
@@ -1185,10 +1203,10 @@ mod tests {
 
         let usage_pos = deltas
             .iter()
-            .position(|d| matches!(d, StreamDelta::Usage(_)));
+            .position(|d| matches!(d, AiStreamDelta::Usage(_)));
         let done_pos = deltas
             .iter()
-            .position(|d| matches!(d, StreamDelta::Done { .. }));
+            .position(|d| matches!(d, AiStreamDelta::Done { .. }));
         assert!(
             usage_pos.is_some() && done_pos.is_some(),
             "both deltas must be present; got: {deltas:?}",
@@ -1213,7 +1231,7 @@ mod tests {
         let usage = deltas
             .iter()
             .find_map(|d| {
-                if let StreamDelta::Usage(u) = d {
+                if let AiStreamDelta::Usage(u) = d {
                     Some(u)
                 } else {
                     None
@@ -1238,7 +1256,7 @@ mod tests {
         let usage = deltas
             .iter()
             .find_map(|d| {
-                if let StreamDelta::Usage(u) = d {
+                if let AiStreamDelta::Usage(u) = d {
                     Some(u)
                 } else {
                     None
@@ -1261,7 +1279,7 @@ mod tests {
         let usage = deltas
             .iter()
             .find_map(|d| {
-                if let StreamDelta::Usage(u) = d {
+                if let AiStreamDelta::Usage(u) = d {
                     Some(u)
                 } else {
                     None
@@ -1290,8 +1308,8 @@ mod tests {
         };
         let mut formatter = AnthropicStreamFormatter::new();
         let events = formatter.format_deltas(&[
-            StreamDelta::Usage(usage),
-            StreamDelta::MessageStart {
+            AiStreamDelta::Usage(usage),
+            AiStreamDelta::MessageStart {
                 id: "m1".into(),
                 model: "c".into(),
             },
@@ -1329,12 +1347,12 @@ mod tests {
         };
         let mut formatter = AnthropicStreamFormatter::new();
         let events = formatter.format_deltas(&[
-            StreamDelta::Usage(usage),
-            StreamDelta::MessageStart {
+            AiStreamDelta::Usage(usage),
+            AiStreamDelta::MessageStart {
                 id: "m2".into(),
                 model: "c".into(),
             },
-            StreamDelta::Done {
+            AiStreamDelta::Done {
                 stop_reason: "stop".into(),
             },
         ]);
@@ -1379,7 +1397,7 @@ mod tests {
                 }),
             },
         };
-        let json = AnthropicResponseFormatter.format_response(&resp);
+        let json = AnthropicResponseFormatter.format_response(&AiResponse::from(resp.clone()));
         let u = &json["usage"];
         assert_eq!(u["input_tokens"].as_u64(), Some(10));
         assert_eq!(u["output_tokens"].as_u64(), Some(5));

@@ -2,6 +2,8 @@ use anyhow::Result;
 use serde_json::Value;
 use std::collections::HashMap;
 
+use crate::protocol::ir::compat::{ai_stream_delta_to_old, old_stream_delta_to_new};
+use crate::protocol::ir::{AiResponse, AiStreamDelta};
 use crate::protocol::types::*;
 use crate::protocol::*;
 
@@ -10,7 +12,7 @@ use crate::protocol::*;
 pub struct GoogleResponseParser;
 
 impl ResponseParser for GoogleResponseParser {
-    fn parse_response(&self, resp: Value) -> Result<InternalResponse> {
+    fn parse_response(&self, resp: Value) -> Result<AiResponse> {
         let candidate = resp
             .get("candidates")
             .and_then(|c| c.as_array())
@@ -65,7 +67,7 @@ impl ResponseParser for GoogleResponseParser {
             .unwrap_or("")
             .to_string();
 
-        Ok(InternalResponse {
+        Ok(AiResponse::from(InternalResponse {
             id: format!("gen-{}", uuid::Uuid::new_v4().simple()),
             model,
             content: text,
@@ -75,7 +77,7 @@ impl ResponseParser for GoogleResponseParser {
             response_items: None,
             stop_reason,
             usage,
-        })
+        }))
     }
 }
 
@@ -84,7 +86,8 @@ impl ResponseParser for GoogleResponseParser {
 pub struct GoogleResponseFormatter;
 
 impl ResponseFormatter for GoogleResponseFormatter {
-    fn format_response(&self, resp: &InternalResponse) -> Value {
+    fn format_response(&self, resp: &AiResponse) -> Value {
+        let resp: InternalResponse = resp.clone().into();
         let mut parts = Vec::new();
 
         if !resp.content.is_empty() {
@@ -143,7 +146,7 @@ impl GoogleStreamParser {
 }
 
 impl StreamParser for GoogleStreamParser {
-    fn parse_chunk(&mut self, raw: &str) -> Result<Vec<StreamDelta>> {
+    fn parse_chunk(&mut self, raw: &str) -> Result<Vec<AiStreamDelta>> {
         self.buffer.push_str(raw);
         let mut deltas = Vec::new();
 
@@ -161,10 +164,10 @@ impl StreamParser for GoogleStreamParser {
             }
         }
 
-        Ok(deltas)
+        Ok(deltas.iter().map(old_stream_delta_to_new).collect())
     }
 
-    fn finish(&mut self) -> Result<Vec<StreamDelta>> {
+    fn finish(&mut self) -> Result<Vec<AiStreamDelta>> {
         if self.buffer.trim().is_empty() {
             return Ok(vec![]);
         }
@@ -273,7 +276,9 @@ impl GoogleStreamFormatter {
 }
 
 impl StreamFormatter for GoogleStreamFormatter {
-    fn format_deltas(&mut self, deltas: &[StreamDelta]) -> Vec<SseEvent> {
+    fn format_deltas(&mut self, deltas: &[AiStreamDelta]) -> Vec<SseEvent> {
+        let old: Vec<StreamDelta> = deltas.iter().map(ai_stream_delta_to_old).collect();
+        let deltas = old.as_slice();
         let mut events = Vec::new();
 
         for delta in deltas {

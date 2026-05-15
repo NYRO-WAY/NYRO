@@ -13,6 +13,9 @@ use serde_json::Value;
 
 use crate::cache::entry::CacheEntry;
 use crate::integrations::{HookContext, HookRegistry};
+use crate::protocol::ir::AiResponse;
+use crate::protocol::ir::compat::ai_stream_delta_to_old;
+use crate::protocol::types::StreamDelta;
 use crate::provider::inbound::InboundResponse;
 use crate::provider::vendor::ProviderCtx;
 use crate::proxy::client::ProxyClient;
@@ -166,7 +169,7 @@ pub(super) async fn handle_non_stream(
     let is_tool = !internal_resp.tool_calls.is_empty();
     let usage = internal_resp.usage.clone();
     let formatter = ingress.handler().make_response_formatter();
-    let output = formatter.format_response(&internal_resp);
+    let output = formatter.format_response(&AiResponse::from(internal_resp.clone()));
 
     let response_body_full = serde_json::to_string(&output).ok();
     let response_preview = response_body_full
@@ -292,13 +295,15 @@ pub(super) async fn handle_non_stream_via_upstream_stream(
             }
         };
         let text = String::from_utf8_lossy(&bytes);
-        if let Ok(deltas) = stream_parser.parse_chunk(&text) {
-            accumulator.apply_all(&deltas);
+        if let Ok(ai_deltas) = stream_parser.parse_chunk(&text) {
+            let old: Vec<StreamDelta> = ai_deltas.iter().map(ai_stream_delta_to_old).collect();
+            accumulator.apply_all(&old);
         }
     }
 
-    if let Ok(deltas) = stream_parser.finish() {
-        accumulator.apply_all(&deltas);
+    if let Ok(ai_deltas) = stream_parser.finish() {
+        let old: Vec<StreamDelta> = ai_deltas.iter().map(ai_stream_delta_to_old).collect();
+        accumulator.apply_all(&old);
     }
 
     let mut internal_resp = accumulator.into_internal_response();
@@ -316,7 +321,7 @@ pub(super) async fn handle_non_stream_via_upstream_stream(
     let is_tool = !internal_resp.tool_calls.is_empty();
     let usage = internal_resp.usage.clone();
     let formatter = ingress.handler().make_response_formatter();
-    let output = formatter.format_response(&internal_resp);
+    let output = formatter.format_response(&AiResponse::from(internal_resp.clone()));
 
     let response_preview = serde_json::to_string(&output)
         .ok()

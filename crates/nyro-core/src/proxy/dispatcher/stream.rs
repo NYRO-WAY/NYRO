@@ -19,6 +19,8 @@ use tokio::sync::broadcast;
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::cache::entry::CacheEntry;
+use crate::protocol::ir::compat::ai_stream_delta_to_old;
+use crate::protocol::ir::{AiResponse, AiStreamDelta};
 use crate::protocol::types::StreamDelta;
 use crate::proxy::client::ProxyClient;
 use crate::proxy::observability::headers_to_json;
@@ -138,11 +140,13 @@ pub(super) async fn handle_stream(
             let log_text = String::from_utf8_lossy(&log_buf);
             let mut log_parser = egress.handler().make_stream_parser();
             let mut accumulator = StreamResponseAccumulator::default();
-            if let Ok(deltas) = log_parser.parse_chunk(&log_text) {
-                accumulator.apply_all(&deltas);
+            if let Ok(ai_deltas) = log_parser.parse_chunk(&log_text) {
+                let old: Vec<StreamDelta> = ai_deltas.iter().map(ai_stream_delta_to_old).collect();
+                accumulator.apply_all(&old);
             }
-            if let Ok(deltas) = log_parser.finish() {
-                accumulator.apply_all(&deltas);
+            if let Ok(ai_deltas) = log_parser.finish() {
+                let old: Vec<StreamDelta> = ai_deltas.iter().map(ai_stream_delta_to_old).collect();
+                accumulator.apply_all(&old);
             }
 
             let mut internal = accumulator.into_internal_response();
@@ -155,7 +159,8 @@ pub(super) async fn handle_stream(
             }
 
             let aggregated_formatter = ingress.handler().make_response_formatter();
-            let aggregated_output = aggregated_formatter.format_response(&internal);
+            let aggregated_output =
+                aggregated_formatter.format_response(&AiResponse::from(internal.clone()));
             let aggregated_body_str = serde_json::to_string(&aggregated_output).ok();
 
             log_pt
@@ -215,7 +220,7 @@ pub(super) async fn handle_stream(
                     // P1: emit an explicit terminal event instead of silently breaking,
                     // so the client receives a defined stop_reason and does not hang.
                     tracing::warn!(error = %e, "upstream stream error; emitting terminal event");
-                    let error_deltas = [StreamDelta::Done {
+                    let error_deltas = [AiStreamDelta::Done {
                         stop_reason: "error".to_string(),
                     }];
                     let events = stream_formatter.format_deltas(&error_deltas);
@@ -226,9 +231,11 @@ pub(super) async fn handle_stream(
                 }
             };
             let text = String::from_utf8_lossy(&bytes);
-            if let Ok(deltas) = stream_parser.parse_chunk(&text) {
-                accumulator.apply_all(&deltas);
-                let events = stream_formatter.format_deltas(&deltas);
+            if let Ok(ai_deltas) = stream_parser.parse_chunk(&text) {
+                let old_deltas: Vec<StreamDelta> =
+                    ai_deltas.iter().map(ai_stream_delta_to_old).collect();
+                accumulator.apply_all(&old_deltas);
+                let events = stream_formatter.format_deltas(&ai_deltas);
                 for ev in events {
                     if tx.send(Ok(ev.to_sse_string())).await.is_err() {
                         return;
@@ -237,9 +244,11 @@ pub(super) async fn handle_stream(
             }
         }
 
-        if let Ok(deltas) = stream_parser.finish() {
-            accumulator.apply_all(&deltas);
-            let events = stream_formatter.format_deltas(&deltas);
+        if let Ok(ai_deltas) = stream_parser.finish() {
+            let old_deltas: Vec<StreamDelta> =
+                ai_deltas.iter().map(ai_stream_delta_to_old).collect();
+            accumulator.apply_all(&old_deltas);
+            let events = stream_formatter.format_deltas(&ai_deltas);
             for ev in events {
                 let _ = tx.send(Ok(ev.to_sse_string())).await;
             }
@@ -266,7 +275,8 @@ pub(super) async fn handle_stream(
         }
 
         let aggregated_formatter = ingress.handler().make_response_formatter();
-        let aggregated_output = aggregated_formatter.format_response(&internal);
+        let aggregated_output =
+            aggregated_formatter.format_response(&AiResponse::from(internal.clone()));
         let aggregated_body_str = serde_json::to_string(&aggregated_output).ok();
         log_ir
             .status(200)
@@ -283,7 +293,7 @@ pub(super) async fn handle_stream(
                 (cache_backend.as_ref(), cache_key_owned.as_deref())
             {
                 let formatter = ingress.handler().make_response_formatter();
-                let payload = formatter.format_response(&internal);
+                let payload = formatter.format_response(&AiResponse::from(internal.clone()));
                 let entry = CacheEntry {
                     payload,
                     status_code: 200,
@@ -321,7 +331,7 @@ pub(super) async fn handle_stream(
                 (vector_store.as_ref(), semantic_write_ctx_owned.as_ref())
             {
                 let formatter = ingress.handler().make_response_formatter();
-                let payload = formatter.format_response(&internal);
+                let payload = formatter.format_response(&AiResponse::from(internal.clone()));
                 let entry = CacheEntry {
                     payload,
                     status_code: 200,

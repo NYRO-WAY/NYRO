@@ -2,6 +2,8 @@ use std::collections::HashMap;
 
 use uuid::Uuid;
 
+use crate::protocol::ir::AiStreamDelta;
+use crate::protocol::ir::compat::ai_stream_delta_to_old;
 use crate::protocol::types::*;
 use crate::protocol::{SseEvent, StreamFormatter};
 
@@ -281,7 +283,9 @@ impl ResponsesStreamFormatter {
 }
 
 impl StreamFormatter for ResponsesStreamFormatter {
-    fn format_deltas(&mut self, deltas: &[StreamDelta]) -> Vec<SseEvent> {
+    fn format_deltas(&mut self, deltas: &[AiStreamDelta]) -> Vec<SseEvent> {
+        let old: Vec<StreamDelta> = deltas.iter().map(ai_stream_delta_to_old).collect();
+        let deltas = old.as_slice();
         let mut events = Vec::new();
 
         for delta in deltas {

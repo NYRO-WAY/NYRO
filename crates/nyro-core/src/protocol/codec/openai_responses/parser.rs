@@ -1,13 +1,15 @@
 use anyhow::Result;
 use serde_json::Value;
 
+use crate::protocol::ir::compat::old_stream_delta_to_new;
+use crate::protocol::ir::{AiResponse, AiStreamDelta};
 use crate::protocol::types::*;
 use crate::protocol::{ResponseParser, StreamParser};
 
 pub struct ResponsesResponseParser;
 
 impl ResponseParser for ResponsesResponseParser {
-    fn parse_response(&self, resp: Value) -> Result<InternalResponse> {
+    fn parse_response(&self, resp: Value) -> Result<AiResponse> {
         let id = resp
             .get("id")
             .and_then(|v| v.as_str())
@@ -86,7 +88,7 @@ impl ResponseParser for ResponsesResponseParser {
             ..TokenUsage::default()
         };
 
-        Ok(InternalResponse {
+        Ok(AiResponse::from(InternalResponse {
             id,
             model,
             content,
@@ -96,7 +98,7 @@ impl ResponseParser for ResponsesResponseParser {
             response_items: None,
             stop_reason,
             usage,
-        })
+        }))
     }
 }
 
@@ -121,7 +123,7 @@ impl ResponsesStreamParser {
 }
 
 impl StreamParser for ResponsesStreamParser {
-    fn parse_chunk(&mut self, raw: &str) -> Result<Vec<StreamDelta>> {
+    fn parse_chunk(&mut self, raw: &str) -> Result<Vec<AiStreamDelta>> {
         self.buffer.push_str(raw);
         let mut deltas = Vec::new();
 
@@ -152,10 +154,10 @@ impl StreamParser for ResponsesStreamParser {
             }
         }
 
-        Ok(deltas)
+        Ok(deltas.iter().map(old_stream_delta_to_new).collect())
     }
 
-    fn finish(&mut self) -> Result<Vec<StreamDelta>> {
+    fn finish(&mut self) -> Result<Vec<AiStreamDelta>> {
         if self.buffer.trim().is_empty() {
             return Ok(Vec::new());
         }
@@ -275,6 +277,7 @@ impl ResponsesStreamParser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::ir::AiStreamDelta;
     use crate::protocol::{ResponseParser, StreamParser};
 
     fn sse_event(event: &str, data: &str) -> String {
@@ -393,8 +396,10 @@ mod tests {
 
         let has_text = deltas
             .iter()
-            .any(|d| matches!(d, StreamDelta::TextDelta(t) if t == "hello"));
-        let has_done = deltas.iter().any(|d| matches!(d, StreamDelta::Done { .. }));
+            .any(|d| matches!(d, AiStreamDelta::TextDelta(t) if t == "hello"));
+        let has_done = deltas
+            .iter()
+            .any(|d| matches!(d, AiStreamDelta::Done { .. }));
         assert!(has_text, "expected TextDelta('hello'), got: {deltas:?}");
         assert!(has_done, "expected Done, got: {deltas:?}");
     }
@@ -429,7 +434,7 @@ mod tests {
         let reasoning: Vec<_> = deltas
             .iter()
             .filter_map(|d| {
-                if let StreamDelta::ReasoningDelta(t) = d {
+                if let AiStreamDelta::ThinkingDelta(t) = d {
                     Some(t.as_str())
                 } else {
                     None
@@ -438,13 +443,13 @@ mod tests {
             .collect();
         assert!(
             reasoning.contains(&"thinking step"),
-            "response.reasoning_summary_text.delta must produce ReasoningDelta, got: {deltas:?}"
+            "response.reasoning_summary_text.delta must produce ThinkingDelta, got: {deltas:?}"
         );
 
         let text: Vec<_> = deltas
             .iter()
             .filter_map(|d| {
-                if let StreamDelta::TextDelta(t) = d {
+                if let AiStreamDelta::TextDelta(t) = d {
                     Some(t.as_str())
                 } else {
                     None
@@ -462,7 +467,9 @@ mod tests {
         let sse = sse_data("[DONE]");
         let mut parser = ResponsesStreamParser::new();
         let deltas = parser.parse_chunk(&sse).unwrap();
-        let has_done = deltas.iter().any(|d| matches!(d, StreamDelta::Done { .. }));
+        let has_done = deltas
+            .iter()
+            .any(|d| matches!(d, AiStreamDelta::Done { .. }));
         assert!(
             has_done,
             "expected Done on [DONE] sentinel, got: {deltas:?}"

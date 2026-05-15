@@ -133,9 +133,10 @@ where
     // 2. codec parse
     let egress_handler = ctx.protocol.handler();
     let parser = egress_handler.make_response_parser();
-    let mut internal_resp = parser
+    let ai_resp = parser
         .parse_response(body)
         .map_err(GatewayError::internal)?;
+    let mut internal_resp: crate::protocol::types::InternalResponse = ai_resp.into();
 
     // 3. reasoning normalization
     crate::protocol::codec::reasoning::normalize_response_reasoning(&mut internal_resp);

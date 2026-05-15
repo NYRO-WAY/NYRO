@@ -6,6 +6,42 @@
 
 ---
 
+## [PR-4] Codec Parser + Formatter 全切换到 AiResponse / AiStreamDelta — 2026-05-15
+
+### 变更
+
+**4 个 trait 签名更新**
+- `ResponseParser::parse_response` 返回 `AiResponse`（原 `InternalResponse`）
+- `ResponseFormatter::format_response` 参数改为 `&AiResponse`
+- `StreamParser::parse_chunk` / `finish` 返回 `Vec<AiStreamDelta>`
+- `StreamFormatter::format_deltas` 参数改为 `&[AiStreamDelta]`
+
+**`compat.rs` 新增 StreamDelta 双向转换**
+- `old_stream_delta_to_new` — `&OldStreamDelta → AiStreamDelta`
+- `ai_stream_delta_to_old` — `&AiStreamDelta → OldStreamDelta`
+
+**4 套 Codec 实现（stream.rs + parser.rs + formatter.rs）**
+- Parsers：内部仍构造 `InternalResponse`，边界 `Ok(AiResponse::from(...))` 转换
+- Formatters：入口 `let resp: InternalResponse = resp.clone().into();` 转换
+- StreamParsers：内部构造 `Vec<StreamDelta>`，出口 `.map(old_stream_delta_to_new)` 转换
+- StreamFormatters：入口 `let old: Vec<StreamDelta> = deltas.iter().map(ai_stream_delta_to_old).collect();` 转换
+- Embeddings 存根签名同步更新
+
+**Dispatcher 适配（stream.rs + non_stream.rs + mod.rs）**
+- 所有 `format_response(&internal)` 改为 `format_response(&AiResponse::from(internal.clone()))`
+- 所有 `accumulator.apply_all(&deltas)` 在 `Vec<AiStreamDelta>` 上加 `ai_stream_delta_to_old` 转换
+- `replay_cached_stream` 中旧 `StreamDelta` 先转新再传给 formatter
+
+**Provider 层适配**
+- `LegacyStreamParserAdapter`：`parse_chunk` / `finish` 将 `Vec<AiStreamDelta>` 转换回 `Vec<StreamDelta>` 供 ProviderStreamParser 调用方
+- `pipeline.rs::parse_response`：codec 返回 `AiResponse` 后 `.into()` 转回 `InternalResponse`
+
+### 不变
+- `StreamResponseAccumulator` 仍用 `StreamDelta`（PR-5 会迁移）
+- Provider Vendor trait 签名不变（PR-5 迁移）
+
+---
+
 ## [PR-3] Codec Encoder 全切换到 AiRequest — 2026-05-15
 
 ### 变更

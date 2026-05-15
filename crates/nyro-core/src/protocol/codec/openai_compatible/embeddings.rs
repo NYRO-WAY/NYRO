@@ -36,7 +36,7 @@ use crate::protocol::ids::{EndpointCapabilities, OPENAI_EMBEDDINGS_V1, ProtocolE
 use crate::protocol::ir::{AiRequest, GenerationConfig, Message, StreamConfig};
 use crate::protocol::registry::EndpointRegistration;
 use crate::protocol::traits::*;
-use crate::protocol::types::{InternalResponse, StreamDelta, TokenUsage};
+use crate::protocol::types::TokenUsage;
 
 /// Key under which the complete original request body is kept as a
 /// fallback (used by `embeddings_proxy` in handler.rs).
@@ -199,7 +199,7 @@ impl EgressEncoder for EmbeddingsEncoder {
 struct EmbeddingsResponseParser;
 
 impl ResponseParser for EmbeddingsResponseParser {
-    fn parse_response(&self, _resp: Value) -> anyhow::Result<InternalResponse> {
+    fn parse_response(&self, _resp: Value) -> anyhow::Result<crate::protocol::ir::AiResponse> {
         unreachable!(
             "embeddings_proxy bypasses the codec pipeline; \
              revisit codec/openai/embeddings.rs before routing through it"
@@ -210,7 +210,7 @@ impl ResponseParser for EmbeddingsResponseParser {
 struct EmbeddingsResponseFormatter;
 
 impl ResponseFormatter for EmbeddingsResponseFormatter {
-    fn format_response(&self, _resp: &InternalResponse) -> Value {
+    fn format_response(&self, _resp: &crate::protocol::ir::AiResponse) -> Value {
         unreachable!(
             "embeddings_proxy bypasses the codec pipeline; \
              revisit codec/openai/embeddings.rs before routing through it"
@@ -221,10 +221,13 @@ impl ResponseFormatter for EmbeddingsResponseFormatter {
 struct EmbeddingsStreamParser;
 
 impl StreamParser for EmbeddingsStreamParser {
-    fn parse_chunk(&mut self, _raw: &str) -> anyhow::Result<Vec<StreamDelta>> {
+    fn parse_chunk(
+        &mut self,
+        _raw: &str,
+    ) -> anyhow::Result<Vec<crate::protocol::ir::AiStreamDelta>> {
         unreachable!("embeddings has streaming=false; check capabilities before calling")
     }
-    fn finish(&mut self) -> anyhow::Result<Vec<StreamDelta>> {
+    fn finish(&mut self) -> anyhow::Result<Vec<crate::protocol::ir::AiStreamDelta>> {
         unreachable!("embeddings has streaming=false; check capabilities before calling")
     }
 }
@@ -232,7 +235,7 @@ impl StreamParser for EmbeddingsStreamParser {
 struct EmbeddingsStreamFormatter;
 
 impl StreamFormatter for EmbeddingsStreamFormatter {
-    fn format_deltas(&mut self, _deltas: &[StreamDelta]) -> Vec<SseEvent> {
+    fn format_deltas(&mut self, _deltas: &[crate::protocol::ir::AiStreamDelta]) -> Vec<SseEvent> {
         unreachable!("embeddings has streaming=false; check capabilities before calling")
     }
     fn format_done(&mut self) -> Vec<SseEvent> {

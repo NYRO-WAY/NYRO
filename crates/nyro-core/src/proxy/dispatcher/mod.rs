@@ -995,14 +995,18 @@ fn replay_cached_stream(
     expose_headers: bool,
 ) -> Response {
     let mut formatter = ingress.handler().make_stream_formatter();
-    let deltas = internal_response_to_deltas(internal);
-    let deltas = if stream_replay_tps > 0 {
-        split_text_deltas(deltas, 4)
+    let old_deltas = internal_response_to_deltas(internal);
+    let old_deltas = if stream_replay_tps > 0 {
+        split_text_deltas(old_deltas, 4)
     } else {
-        deltas
+        old_deltas
     };
+    let ai_deltas: Vec<crate::protocol::ir::AiStreamDelta> = old_deltas
+        .iter()
+        .map(crate::protocol::ir::compat::old_stream_delta_to_new)
+        .collect();
     let mut payloads: Vec<String> = formatter
-        .format_deltas(&deltas)
+        .format_deltas(&ai_deltas)
         .into_iter()
         .map(|ev| ev.to_sse_string())
         .collect();

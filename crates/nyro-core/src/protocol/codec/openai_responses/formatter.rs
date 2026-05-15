@@ -2,12 +2,14 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::protocol::ResponseFormatter;
+use crate::protocol::ir::AiResponse;
 use crate::protocol::types::{InternalResponse, ResponseItem};
 
 pub struct ResponsesResponseFormatter;
 
 impl ResponseFormatter for ResponsesResponseFormatter {
-    fn format_response(&self, resp: &InternalResponse) -> Value {
+    fn format_response(&self, resp: &AiResponse) -> Value {
+        let resp: InternalResponse = resp.clone().into();
         let resp_id = if resp.id.is_empty() {
             format!("resp_{}", Uuid::new_v4().simple())
         } else {

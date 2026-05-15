@@ -17,8 +17,10 @@ use nyro_core::protocol::ids::{
     ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GENERATE_CONTENT_V1BETA, OPENAI_CHAT_COMPLETIONS_V1,
     OPENAI_RESPONSES_V1,
 };
+use nyro_core::protocol::ir::compat::old_stream_delta_to_new;
 use nyro_core::protocol::ir::{
-    AiRequest, ContentBlock as IrContentBlock, MessageContent as IrMessageContent, Role as IrRole,
+    AiRequest, AiResponse as IrAiResponse, AiStreamDelta as IrStreamDelta,
+    ContentBlock as IrContentBlock, MessageContent as IrMessageContent, Role as IrRole,
 };
 use nyro_core::protocol::types::{
     ContentBlock, InternalMessage, InternalRequest, InternalResponse, MessageContent, ResponseItem,
@@ -46,7 +48,7 @@ fn openai_to_anthropic_thinking_blocks() {
         },
     };
 
-    let out = AnthropicResponseFormatter.format_response(&resp);
+    let out = AnthropicResponseFormatter.format_response(&IrAiResponse::from(resp.clone()));
     let content = out
         .get("content")
         .and_then(|v| v.as_array())
@@ -180,7 +182,7 @@ fn openai_to_responses_reasoning_and_function_call_items() {
         usage: TokenUsage::default(),
     };
 
-    let out = ResponsesResponseFormatter.format_response(&resp);
+    let out = ResponsesResponseFormatter.format_response(&IrAiResponse::from(resp.clone()));
     let output = out
         .get("output")
         .and_then(|v| v.as_array())
@@ -225,7 +227,7 @@ fn openai_formatter_sets_tool_calls_finish_reason_when_tool_calls_present() {
     };
 
     let out = nyro_core::protocol::codec::openai_compatible::stream::OpenAIResponseFormatter
-        .format_response(&resp);
+        .format_response(&IrAiResponse::from(resp.clone()));
     let finish_reason = out
         .get("choices")
         .and_then(|v| v.as_array())
@@ -238,7 +240,7 @@ fn openai_formatter_sets_tool_calls_finish_reason_when_tool_calls_present() {
 #[test]
 fn openai_stream_formatter_sets_tool_calls_finish_reason_when_tool_calls_seen() {
     let mut fmt = OpenAIStreamFormatter::new();
-    let events = fmt.format_deltas(&[
+    let raw_deltas = [
         StreamDelta::MessageStart {
             id: "gen_1".to_string(),
             model: "gemini-2.5-flash".to_string(),
@@ -255,7 +257,9 @@ fn openai_stream_formatter_sets_tool_calls_finish_reason_when_tool_calls_seen() 
         StreamDelta::Done {
             stop_reason: "stop".to_string(),
         },
-    ]);
+    ];
+    let ai_deltas: Vec<IrStreamDelta> = raw_deltas.iter().map(old_stream_delta_to_new).collect();
+    let events = fmt.format_deltas(&ai_deltas);
     let last_json = events
         .iter()
         .filter_map(|e| serde_json::from_str::<serde_json::Value>(&e.data).ok())
@@ -1444,7 +1448,7 @@ fn openai_encoder_drops_orphan_assistant_tool_calls_without_results() {
 #[test]
 fn gemini_stream_formatter_keeps_tool_name_for_argument_deltas() {
     let mut fmt = GoogleStreamFormatter::new();
-    let deltas = vec![
+    let old_deltas = vec![
         StreamDelta::MessageStart {
             id: "x".to_string(),
             model: "m".to_string(),
@@ -1459,6 +1463,7 @@ fn gemini_stream_formatter_keeps_tool_name_for_argument_deltas() {
             arguments: "{\"command\":\"ls -la\"}".to_string(),
         },
     ];
+    let deltas: Vec<IrStreamDelta> = old_deltas.iter().map(old_stream_delta_to_new).collect();
     let events = fmt.format_deltas(&deltas);
     let mut saw_named_call = false;
     let mut saw_command_arg = false;
@@ -1496,7 +1501,7 @@ fn gemini_stream_formatter_keeps_tool_name_for_argument_deltas() {
 #[test]
 fn gemini_stream_formatter_normalizes_common_tool_argument_aliases() {
     let mut fmt = GoogleStreamFormatter::new();
-    let deltas = vec![
+    let old_deltas = vec![
         StreamDelta::MessageStart {
             id: "x".to_string(),
             model: "m".to_string(),
@@ -1511,6 +1516,7 @@ fn gemini_stream_formatter_normalizes_common_tool_argument_aliases() {
             arguments: "{\"include_pattern\":\"**/*.py\",\"search_root\":\"/tmp/work\",\"exclude_pattern\":\"**/.venv/**\"}".to_string(),
         },
     ];
+    let deltas: Vec<IrStreamDelta> = old_deltas.iter().map(old_stream_delta_to_new).collect();
     let events = fmt.format_deltas(&deltas);
     let payload = events
         .iter()
@@ -1822,17 +1828,17 @@ data: {\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":7,\"ou
 
     for delta in &deltas {
         match delta {
-            StreamDelta::MessageStart { id, model } => {
+            IrStreamDelta::MessageStart { id, model } => {
                 saw_start = true;
                 assert_eq!(id, "resp_1");
                 assert_eq!(model, "gpt-5.4");
             }
-            StreamDelta::TextDelta(t) => text_concat.push_str(t),
-            StreamDelta::Usage(u) => {
+            IrStreamDelta::TextDelta(t) => text_concat.push_str(t),
+            IrStreamDelta::Usage(u) => {
                 usage_input = u.input_tokens;
                 usage_output = u.output_tokens;
             }
-            StreamDelta::Done { stop_reason } => done_reason = Some(stop_reason.clone()),
+            IrStreamDelta::Done { stop_reason } => done_reason = Some(stop_reason.clone()),
             _ => {}
         }
     }
@@ -1863,12 +1869,12 @@ data: {\"output_index\":0,\"delta\":\"}\"}\n\
     let mut arg_concat = String::new();
     for delta in &deltas {
         match delta {
-            StreamDelta::ToolCallStart { id, name, .. } => {
+            IrStreamDelta::ToolCallStart { id, name, .. } => {
                 got_start = true;
                 assert_eq!(id, "call_xyz");
                 assert_eq!(name, "ls");
             }
-            StreamDelta::ToolCallDelta { arguments, .. } => arg_concat.push_str(arguments),
+            IrStreamDelta::ToolCallDelta { arguments, .. } => arg_concat.push_str(arguments),
             _ => {}
         }
     }

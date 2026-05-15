@@ -1,6 +1,7 @@
 //! Provider-level stream parser trait and legacy adapter.
 
 use crate::error::GatewayError;
+use crate::protocol::ir::compat::ai_stream_delta_to_old;
 use crate::protocol::types::StreamDelta;
 
 /// Provider-level streaming parser. Wraps the codec's `StreamParser` and
@@ -19,22 +20,22 @@ pub trait ProviderStreamParser: Send {
 
 /// Wraps the codec-level `Box<dyn StreamParser>` behind `ProviderStreamParser`.
 ///
-/// Vendor-level stream hooks (`on_stream_raw_chunk` / `on_stream_delta`) are
-/// not yet wired here; that is a PR-16 concern once the dispatcher calls this
-/// trait directly.
+/// Converts the codec's `AiStreamDelta` output back to the old `StreamDelta`
+/// so vendor-level code that still uses `ProviderStreamParser` keeps working.
 pub struct LegacyStreamParserAdapter(pub Box<dyn crate::protocol::StreamParser>);
 
 impl ProviderStreamParser for LegacyStreamParserAdapter {
     fn parse_chunk(&mut self, chunk: &str) -> Result<Option<Vec<StreamDelta>>, GatewayError> {
-        let deltas = self.0.parse_chunk(chunk).map_err(GatewayError::internal)?;
-        if deltas.is_empty() {
+        let ai_deltas = self.0.parse_chunk(chunk).map_err(GatewayError::internal)?;
+        if ai_deltas.is_empty() {
             Ok(None)
         } else {
-            Ok(Some(deltas))
+            Ok(Some(ai_deltas.iter().map(ai_stream_delta_to_old).collect()))
         }
     }
 
     fn finish(&mut self) -> anyhow::Result<Vec<StreamDelta>> {
-        self.0.finish()
+        let ai_deltas = self.0.finish()?;
+        Ok(ai_deltas.iter().map(ai_stream_delta_to_old).collect())
     }
 }

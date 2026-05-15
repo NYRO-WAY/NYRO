@@ -60,26 +60,26 @@ pub trait EgressEncoder {
 // ── Provider response → internal ──
 
 pub trait ResponseParser: Send {
-    fn parse_response(&self, resp: serde_json::Value) -> anyhow::Result<types::InternalResponse>;
+    fn parse_response(&self, resp: serde_json::Value) -> anyhow::Result<ir::AiResponse>;
 }
 
 // ── Internal → client response ──
 
 pub trait ResponseFormatter: Send {
-    fn format_response(&self, resp: &types::InternalResponse) -> serde_json::Value;
+    fn format_response(&self, resp: &ir::AiResponse) -> serde_json::Value;
 }
 
 // ── Streaming: provider → internal deltas ──
 
 pub trait StreamParser: Send {
-    fn parse_chunk(&mut self, raw: &str) -> anyhow::Result<Vec<types::StreamDelta>>;
-    fn finish(&mut self) -> anyhow::Result<Vec<types::StreamDelta>>;
+    fn parse_chunk(&mut self, raw: &str) -> anyhow::Result<Vec<ir::AiStreamDelta>>;
+    fn finish(&mut self) -> anyhow::Result<Vec<ir::AiStreamDelta>>;
 }
 
 // ── Streaming: internal deltas → client SSE ──
 
 pub trait StreamFormatter: Send {
-    fn format_deltas(&mut self, deltas: &[types::StreamDelta]) -> Vec<SseEvent>;
+    fn format_deltas(&mut self, deltas: &[ir::AiStreamDelta]) -> Vec<SseEvent>;
     fn format_done(&mut self) -> Vec<SseEvent>;
     fn usage(&self) -> types::TokenUsage;
 }

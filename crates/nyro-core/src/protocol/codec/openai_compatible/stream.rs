@@ -2,6 +2,8 @@ use anyhow::Result;
 use serde_json::Value;
 use uuid::Uuid;
 
+use crate::protocol::ir::compat::{ai_stream_delta_to_old, old_stream_delta_to_new};
+use crate::protocol::ir::{AiResponse, AiStreamDelta};
 use crate::protocol::types::*;
 use crate::protocol::*;
 
@@ -10,7 +12,7 @@ use crate::protocol::*;
 pub struct OpenAIResponseParser;
 
 impl ResponseParser for OpenAIResponseParser {
-    fn parse_response(&self, resp: Value) -> Result<InternalResponse> {
+    fn parse_response(&self, resp: Value) -> Result<AiResponse> {
         let id = resp
             .get("id")
             .and_then(|v| v.as_str())
@@ -64,7 +66,7 @@ impl ResponseParser for OpenAIResponseParser {
 
         let usage = extract_usage(&resp);
 
-        Ok(InternalResponse {
+        Ok(AiResponse::from(InternalResponse {
             id,
             model,
             content,
@@ -74,7 +76,7 @@ impl ResponseParser for OpenAIResponseParser {
             response_items: None,
             stop_reason,
             usage,
-        })
+        }))
     }
 }
 
@@ -83,7 +85,8 @@ impl ResponseParser for OpenAIResponseParser {
 pub struct OpenAIResponseFormatter;
 
 impl ResponseFormatter for OpenAIResponseFormatter {
-    fn format_response(&self, resp: &InternalResponse) -> Value {
+    fn format_response(&self, resp: &AiResponse) -> Value {
+        let resp: InternalResponse = resp.clone().into();
         let finish_reason = if !resp.tool_calls.is_empty() {
             Some("tool_calls")
         } else {
@@ -166,7 +169,7 @@ impl OpenAIStreamParser {
 }
 
 impl StreamParser for OpenAIStreamParser {
-    fn parse_chunk(&mut self, raw: &str) -> Result<Vec<StreamDelta>> {
+    fn parse_chunk(&mut self, raw: &str) -> Result<Vec<AiStreamDelta>> {
         self.buffer.push_str(raw);
         let mut deltas = Vec::new();
 
@@ -190,17 +193,21 @@ impl StreamParser for OpenAIStreamParser {
             }
         }
 
-        Ok(deltas)
+        Ok(deltas.iter().map(old_stream_delta_to_new).collect())
     }
 
-    fn finish(&mut self) -> Result<Vec<StreamDelta>> {
-        let mut deltas = Vec::new();
+    fn finish(&mut self) -> Result<Vec<AiStreamDelta>> {
+        let mut ai_deltas: Vec<AiStreamDelta> = Vec::new();
         if !self.buffer.trim().is_empty() {
             let remaining = std::mem::take(&mut self.buffer);
-            deltas.extend(self.parse_chunk(&format!("{remaining}\n\n"))?);
+            ai_deltas.extend(self.parse_chunk(&format!("{remaining}\n\n"))?);
         }
-        deltas.extend(self.flush_pending_text());
-        Ok(deltas)
+        ai_deltas.extend(
+            self.flush_pending_text()
+                .iter()
+                .map(old_stream_delta_to_new),
+        );
+        Ok(ai_deltas)
     }
 }
 
@@ -378,7 +385,9 @@ impl OpenAIStreamFormatter {
 }
 
 impl StreamFormatter for OpenAIStreamFormatter {
-    fn format_deltas(&mut self, deltas: &[StreamDelta]) -> Vec<SseEvent> {
+    fn format_deltas(&mut self, deltas: &[AiStreamDelta]) -> Vec<SseEvent> {
+        let old: Vec<StreamDelta> = deltas.iter().map(ai_stream_delta_to_old).collect();
+        let deltas = old.as_slice();
         let mut events = Vec::new();
         for delta in deltas {
             match delta {
@@ -547,6 +556,7 @@ pub(crate) fn extract_reasoning_from_message(message: &Value) -> Option<String> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::ir::{AiResponse, AiStreamDelta};
     use crate::protocol::{ResponseParser, StreamParser};
 
     fn data_sse(json: &str) -> String {
@@ -612,7 +622,7 @@ mod tests {
 
         let has_tool_start = deltas
             .iter()
-            .any(|d| matches!(d, StreamDelta::ToolCallStart { id, name, .. } if id == "call_abc" && name == "get_weather"));
+            .any(|d| matches!(d, AiStreamDelta::ToolCallStart { id, name, .. } if id == "call_abc" && name == "get_weather"));
         assert!(
             has_tool_start,
             "expected ToolCallStart with id+name, got: {deltas:?}"
@@ -621,7 +631,7 @@ mod tests {
         let args: String = deltas
             .iter()
             .filter_map(|d| {
-                if let StreamDelta::ToolCallDelta { arguments, .. } = d {
+                if let AiStreamDelta::ToolCallDelta { arguments, .. } = d {
                     Some(arguments.as_str())
                 } else {
                     None
@@ -653,7 +663,7 @@ mod tests {
         let reasoning: Vec<_> = deltas
             .iter()
             .filter_map(|d| {
-                if let StreamDelta::ReasoningDelta(t) = d {
+                if let AiStreamDelta::ThinkingDelta(t) = d {
                     Some(t.as_str())
                 } else {
                     None
@@ -663,13 +673,13 @@ mod tests {
         let full_reasoning = reasoning.concat();
         assert!(
             full_reasoning.contains("reasoning"),
-            "expected reasoning content in ReasoningDelta, got: {full_reasoning}"
+            "expected reasoning content in ThinkingDelta, got: {full_reasoning}"
         );
 
         let text: Vec<_> = deltas
             .iter()
             .filter_map(|d| {
-                if let StreamDelta::TextDelta(t) = d {
+                if let AiStreamDelta::TextDelta(t) = d {
                     Some(t.as_str())
                 } else {
                     None
@@ -698,14 +708,14 @@ mod tests {
 
         let has_text = deltas
             .iter()
-            .any(|d| matches!(d, StreamDelta::TextDelta(t) if t.contains("hello")));
+            .any(|d| matches!(d, AiStreamDelta::TextDelta(t) if t.contains("hello")));
         let has_reasoning = deltas
             .iter()
-            .any(|d| matches!(d, StreamDelta::ReasoningDelta(_)));
+            .any(|d| matches!(d, AiStreamDelta::ThinkingDelta(_)));
         assert!(has_text, "expected TextDelta('hello'), got: {deltas:?}");
         assert!(
             !has_reasoning,
-            "should not have ReasoningDelta when no think tags, got: {deltas:?}"
+            "should not have ThinkingDelta when no think tags, got: {deltas:?}"
         );
     }
     #[test]
@@ -765,7 +775,8 @@ mod tests {
                 ..TokenUsage::default()
             },
         };
-        let formatted = OpenAIResponseFormatter.format_response(&internal);
+        let formatted =
+            OpenAIResponseFormatter.format_response(&AiResponse::from(internal.clone()));
         let msg = &formatted["choices"][0]["message"];
         assert_eq!(msg["content"].as_str(), Some("visible text"));
         assert_eq!(
@@ -794,7 +805,7 @@ mod tests {
         let reasoning: String = deltas
             .iter()
             .filter_map(|d| {
-                if let StreamDelta::ReasoningDelta(t) = d {
+                if let AiStreamDelta::ThinkingDelta(t) = d {
                     Some(t.as_str())
                 } else {
                     None
@@ -803,17 +814,17 @@ mod tests {
             .collect();
         assert!(
             reasoning.contains("thinking"),
-            "expected 'thinking' in ReasoningDelta, got: {reasoning}"
+            "expected 'thinking' in ThinkingDelta, got: {reasoning}"
         );
         assert!(
             reasoning.contains("done"),
-            "expected 'done' in ReasoningDelta, got: {reasoning}"
+            "expected 'done' in ThinkingDelta, got: {reasoning}"
         );
 
         let text: String = deltas
             .iter()
             .filter_map(|d| {
-                if let StreamDelta::TextDelta(t) = d {
+                if let AiStreamDelta::TextDelta(t) = d {
                     Some(t.as_str())
                 } else {
                     None

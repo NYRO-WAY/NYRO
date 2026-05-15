@@ -13,10 +13,11 @@ use crate::protocol::ir::request::{
     StreamConfig, ToolCall, ToolChoice, ToolSpec,
 };
 use crate::protocol::ir::response::AiResponse;
+use crate::protocol::ir::stream::StreamDelta as AiStreamDelta;
 use crate::protocol::types::{
     ContentBlock as OldContentBlock, ImageSource, InternalMessage, InternalRequest,
     InternalResponse, MessageContent as OldMessageContent, Role as OldRole,
-    ToolCall as OldToolCall, ToolDef,
+    StreamDelta as OldStreamDelta, ToolCall as OldToolCall, ToolDef,
 };
 use serde_json::Value;
 
@@ -341,10 +342,97 @@ impl From<AiResponse> for InternalResponse {
     }
 }
 
+// ── StreamDelta ↔ AiStreamDelta conversions (PR-4) ───────────────────────────
+
+/// Convert an old `StreamDelta` to the new IR `AiStreamDelta`.
+pub fn old_stream_delta_to_new(d: &OldStreamDelta) -> AiStreamDelta {
+    match d {
+        OldStreamDelta::MessageStart { id, model } => AiStreamDelta::MessageStart {
+            id: id.clone(),
+            model: model.clone(),
+        },
+        OldStreamDelta::ReasoningDelta(s) => AiStreamDelta::ThinkingDelta(s.clone()),
+        OldStreamDelta::ReasoningSignature(s) => AiStreamDelta::ThinkingSignature(s.clone()),
+        OldStreamDelta::TextDelta(s) => AiStreamDelta::TextDelta(s.clone()),
+        OldStreamDelta::ToolCallStart { index, id, name } => AiStreamDelta::ToolCallStart {
+            index: *index,
+            id: id.clone(),
+            name: name.clone(),
+        },
+        OldStreamDelta::ToolCallDelta { index, arguments } => AiStreamDelta::ToolCallDelta {
+            index: *index,
+            arguments: arguments.clone(),
+        },
+        OldStreamDelta::Usage(u) => AiStreamDelta::Usage(u.clone()),
+        OldStreamDelta::Done { stop_reason } => AiStreamDelta::Done {
+            stop_reason: stop_reason.clone(),
+        },
+        OldStreamDelta::RawEvent { event_type, data } => AiStreamDelta::Unknown {
+            raw: format!("event: {event_type}\ndata: {data}"),
+        },
+    }
+}
+
+/// Convert a new IR `AiStreamDelta` back to the old `StreamDelta`.
+pub fn ai_stream_delta_to_old(d: &AiStreamDelta) -> OldStreamDelta {
+    match d {
+        AiStreamDelta::MessageStart { id, model } => OldStreamDelta::MessageStart {
+            id: id.clone(),
+            model: model.clone(),
+        },
+        AiStreamDelta::TextDelta(s) => OldStreamDelta::TextDelta(s.clone()),
+        AiStreamDelta::ThinkingDelta(s) => OldStreamDelta::ReasoningDelta(s.clone()),
+        AiStreamDelta::ThinkingSignature(s) => OldStreamDelta::ReasoningSignature(s.clone()),
+        AiStreamDelta::ToolCallStart { index, id, name } => OldStreamDelta::ToolCallStart {
+            index: *index,
+            id: id.clone(),
+            name: name.clone(),
+        },
+        AiStreamDelta::ToolCallDelta { index, arguments } => OldStreamDelta::ToolCallDelta {
+            index: *index,
+            arguments: arguments.clone(),
+        },
+        AiStreamDelta::ToolCallComplete { index, tool_call } => {
+            // No direct old equivalent; synthesise a ToolCallDelta with empty args to
+            // signal completion so the accumulator at least captures the call.
+            OldStreamDelta::ToolCallDelta {
+                index: *index,
+                arguments: tool_call.arguments.clone(),
+            }
+        }
+        AiStreamDelta::Usage(u) => OldStreamDelta::Usage(u.clone()),
+        AiStreamDelta::Done { stop_reason } => OldStreamDelta::Done {
+            stop_reason: stop_reason.clone(),
+        },
+        AiStreamDelta::StreamError { .. } => OldStreamDelta::Done {
+            stop_reason: "error".to_string(),
+        },
+        AiStreamDelta::UnexpectedEof => OldStreamDelta::Done {
+            stop_reason: "error".to_string(),
+        },
+        AiStreamDelta::Unknown { raw } => {
+            // raw format: "event: <type>\ndata: <json>"
+            let mut lines = raw.splitn(2, '\n');
+            let event_type = lines
+                .next()
+                .and_then(|l| l.strip_prefix("event: "))
+                .unwrap_or("unknown")
+                .to_string();
+            let data_str = lines
+                .next()
+                .and_then(|l| l.strip_prefix("data: "))
+                .unwrap_or("{}");
+            let data = serde_json::from_str(data_str)
+                .unwrap_or_else(|_| Value::String(data_str.to_string()));
+            OldStreamDelta::RawEvent { event_type, data }
+        }
+    }
+}
+
 // ── By-ref helpers used by encoders after PR-3 ───────────────────────────────
 
 /// Convert an IR `Message` to the old `InternalMessage` format (borrows; clones fields).
-pub(crate) fn ai_msg_to_old_ref(msg: &Message) -> InternalMessage {
+pub fn ai_msg_to_old_ref(msg: &Message) -> InternalMessage {
     let extra = match &msg.meta {
         Some(Value::Object(obj)) => obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
         _ => Default::default(),
@@ -425,7 +513,7 @@ fn block_to_old_ref(b: &ContentBlock) -> Option<OldContentBlock> {
 }
 
 /// Convert an IR `ToolChoice` to a raw JSON `Value` for legacy encoders.
-pub(crate) fn ai_tool_choice_to_value(tc: &ToolChoice) -> Value {
+pub fn ai_tool_choice_to_value(tc: &ToolChoice) -> Value {
     match tc {
         ToolChoice::Auto => Value::String("auto".into()),
         ToolChoice::None => Value::String("none".into()),
@@ -438,7 +526,7 @@ pub(crate) fn ai_tool_choice_to_value(tc: &ToolChoice) -> Value {
 }
 
 /// Convert an IR `ToolSpec` to the old `ToolDef` format.
-pub(crate) fn ai_tool_spec_to_old_ref(ts: &ToolSpec) -> ToolDef {
+pub fn ai_tool_spec_to_old_ref(ts: &ToolSpec) -> ToolDef {
     ToolDef {
         name: ts.name.clone(),
         description: ts.description.clone(),
