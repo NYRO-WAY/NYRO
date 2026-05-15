@@ -5,39 +5,59 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 
 use crate::protocol::EgressEncoder;
+use crate::protocol::ir::AiRequest;
+use crate::protocol::ir::compat::{
+    ai_msg_to_old_ref, ai_tool_choice_to_value, ai_tool_spec_to_old_ref,
+};
 use crate::protocol::types::*;
 
 pub struct OpenAIEncoder;
 
 impl EgressEncoder for OpenAIEncoder {
-    fn encode_request(&self, req: &InternalRequest) -> Result<(Value, HeaderMap)> {
-        let normalized_messages =
-            normalize_messages_for_openai(&req.messages, req.tools.as_deref());
+    fn encode_request(&self, req: &AiRequest) -> Result<(Value, HeaderMap)> {
+        let old_messages: Vec<InternalMessage> =
+            req.messages.iter().map(ai_msg_to_old_ref).collect();
+        let old_tools: Vec<ToolDef> = req
+            .tools
+            .as_deref()
+            .unwrap_or(&[])
+            .iter()
+            .map(ai_tool_spec_to_old_ref)
+            .collect();
+        let tools_opt: Option<&[ToolDef]> = if old_tools.is_empty() {
+            None
+        } else {
+            Some(&old_tools)
+        };
+
+        let normalized_messages = normalize_messages_for_openai(&old_messages, tools_opt);
         let messages: Vec<Value> = normalized_messages
             .iter()
             .map(encode_message)
             .collect::<Result<Vec<_>>>()?;
 
+        let ingress = &req.meta.vendor.ingress;
+
         let mut body = serde_json::json!({
             "model": req.model,
             "messages": messages,
-            "stream": req.stream,
+            "stream": req.stream.enabled,
         });
 
         let obj = body.as_object_mut().unwrap();
 
-        if let Some(t) = req.temperature {
+        if let Some(t) = req.generation.temperature {
             obj.insert("temperature".into(), t.into());
         }
-        if let Some(m) = req.max_tokens {
+        if let Some(m) = req.generation.max_tokens {
             obj.insert("max_tokens".into(), m.into());
         }
-        if let Some(p) = req.top_p {
+        if let Some(p) = req.generation.top_p {
             obj.insert("top_p".into(), p.into());
         }
 
-        if let Some(ref tools) = req.tools {
-            let tools_val: Vec<Value> = tools
+        if !old_tools.is_empty() {
+            let tools_val: Vec<Value> = old_tools
                 .iter()
                 .map(|t| {
                     serde_json::json!({
@@ -53,14 +73,12 @@ impl EgressEncoder for OpenAIEncoder {
             obj.insert("tools".into(), Value::Array(tools_val));
         }
         if let Some(ref tc) = req.tool_choice {
-            obj.insert("tool_choice".into(), tc.clone());
+            obj.insert("tool_choice".into(), ai_tool_choice_to_value(tc));
         }
 
-        // ── PR-08 fields forwarded from extra ─────────────────────────────────
         // Always include_usage when streaming.
-        if req.stream {
-            let stream_opts = req
-                .extra
+        if req.stream.enabled {
+            let stream_opts = ingress
                 .get("stream_options")
                 .cloned()
                 .unwrap_or_else(|| serde_json::json!({"include_usage": true}));
@@ -83,13 +101,13 @@ impl EgressEncoder for OpenAIEncoder {
             "n",
             "user",
         ] {
-            if let Some(v) = req.extra.get(*key) {
+            if let Some(v) = ingress.get(*key) {
                 obj.entry(key.to_string()).or_insert_with(|| v.clone());
             }
         }
 
         // Passthrough any remaining unknown extra fields.
-        for (k, v) in &req.extra {
+        for (k, v) in ingress {
             obj.entry(k.clone()).or_insert_with(|| v.clone());
         }
 

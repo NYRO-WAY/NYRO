@@ -58,8 +58,9 @@ where
     // 4. codec encode
     let egress_handler = ctx.protocol.handler();
     let encoder = egress_handler.make_encoder();
+    let ai_req: crate::protocol::ir::AiRequest = req.clone().into();
     let (mut body, mut extra_headers) = encoder
-        .encode_request(req)
+        .encode_request(&ai_req)
         .map_err(GatewayError::internal)?;
 
     // 5. post_encode hook

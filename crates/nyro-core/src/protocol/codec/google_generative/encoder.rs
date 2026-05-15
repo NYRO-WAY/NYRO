@@ -3,19 +3,25 @@ use reqwest::header::HeaderMap;
 use serde_json::Value;
 
 use crate::protocol::EgressEncoder;
+use crate::protocol::ir::AiRequest;
+use crate::protocol::ir::compat::ai_msg_to_old_ref;
 use crate::protocol::types::*;
 
 pub struct GoogleEncoder;
 
 impl EgressEncoder for GoogleEncoder {
-    fn encode_request(&self, req: &InternalRequest) -> Result<(Value, HeaderMap)> {
+    fn encode_request(&self, req: &AiRequest) -> Result<(Value, HeaderMap)> {
+        let old_messages: Vec<InternalMessage> =
+            req.messages.iter().map(ai_msg_to_old_ref).collect();
+        let ingress = &req.meta.vendor.ingress;
+
         // ── System instruction ────────────────────────────────────────────────
         let system_val: Option<Value> =
-            if let Some(v) = req.extra.get("__google_raw_system_instruction") {
+            if let Some(v) = ingress.get("__google_raw_system_instruction") {
                 Some(v.clone())
             } else {
                 let mut system_parts: Vec<Value> = Vec::new();
-                for msg in &req.messages {
+                for msg in &old_messages {
                     if msg.role == Role::System {
                         system_parts.push(serde_json::json!({"text": msg.content.as_text()}));
                     }
@@ -29,7 +35,7 @@ impl EgressEncoder for GoogleEncoder {
 
         // ── Contents ─────────────────────────────────────────────────────────
         let mut contents: Vec<Value> = Vec::new();
-        for msg in &req.messages {
+        for msg in &old_messages {
             if msg.role == Role::System {
                 continue;
             }
@@ -44,22 +50,20 @@ impl EgressEncoder for GoogleEncoder {
         }
 
         // ── generationConfig ──────────────────────────────────────────────────
-        // Start from extra (full preserved config) and layer InternalRequest
-        // overrides on top so model-override and routing changes still apply.
         let mut gen_config: serde_json::Map<String, Value> =
-            if let Some(Value::Object(m)) = req.extra.get("__google_generation_config") {
+            if let Some(Value::Object(m)) = ingress.get("__google_generation_config") {
                 m.clone()
             } else {
                 serde_json::Map::new()
             };
 
-        if let Some(t) = req.temperature {
+        if let Some(t) = req.generation.temperature {
             gen_config.insert("temperature".into(), t.into());
         }
-        if let Some(m) = req.max_tokens {
+        if let Some(m) = req.generation.max_tokens {
             gen_config.insert("maxOutputTokens".into(), m.into());
         }
-        if let Some(p) = req.top_p {
+        if let Some(p) = req.generation.top_p {
             gen_config.insert("topP".into(), p.into());
         }
 
@@ -68,8 +72,7 @@ impl EgressEncoder for GoogleEncoder {
         }
 
         // ── Tools ─────────────────────────────────────────────────────────────
-        // Prefer raw tools (preserves built-ins) if present.
-        if let Some(raw) = req.extra.get("__google_raw_tools") {
+        if let Some(raw) = ingress.get("__google_raw_tools") {
             obj.insert("tools".into(), raw.clone());
         } else if let Some(ref tools) = req.tools {
             let mut fn_decls: Vec<Value> = Vec::new();
@@ -109,14 +112,14 @@ impl EgressEncoder for GoogleEncoder {
             }
         }
 
-        // ── PR-11 extra passthrough fields ────────────────────────────────────
-        if let Some(v) = req.extra.get("__google_tool_config") {
+        // ── Extra passthrough fields ───────────────────────────────────────────
+        if let Some(v) = ingress.get("__google_tool_config") {
             obj.insert("toolConfig".into(), v.clone());
         }
-        if let Some(v) = req.extra.get("__google_safety_settings") {
+        if let Some(v) = ingress.get("__google_safety_settings") {
             obj.insert("safetySettings".into(), v.clone());
         }
-        if let Some(v) = req.extra.get("__google_cached_content") {
+        if let Some(v) = ingress.get("__google_cached_content") {
             obj.insert("cachedContent".into(), v.clone());
         }
 

@@ -51,10 +51,8 @@ pub trait IngressDecoder {
 // ── Gateway → Provider ──
 
 pub trait EgressEncoder {
-    fn encode_request(
-        &self,
-        req: &types::InternalRequest,
-    ) -> anyhow::Result<(serde_json::Value, HeaderMap)>;
+    fn encode_request(&self, req: &ir::AiRequest)
+    -> anyhow::Result<(serde_json::Value, HeaderMap)>;
 
     fn egress_path(&self, model: &str, stream: bool) -> String;
 }

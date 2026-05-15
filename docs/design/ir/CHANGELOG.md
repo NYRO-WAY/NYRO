@@ -6,6 +6,38 @@
 
 ---
 
+## [PR-3] Codec Encoder 全切换到 AiRequest — 2026-05-15
+
+### 变更
+
+**`EgressEncoder` trait**
+- `encode_request` 参数类型由 `&InternalRequest` → `&AiRequest`
+
+**4 大 Encoder 重写**
+- `OpenAIEncoder` — 直接读取 `AiRequest`；`req.extra` → `req.meta.vendor.ingress`；标量字段改用 `req.generation.*`
+- `ResponsesEncoder` — 同上；消息先通过 `ai_msg_to_old_ref` 转换后复用原有逻辑
+- `AnthropicEncoder` — 同上；`__anthropic_raw_*` 字段从 `ingress` 读取
+- `GoogleEncoder` — 同上；`__google_*` 字段从 `ingress` 读取
+
+**`EmbeddingsEncoder` 更新**
+- 参数同步改为 `&AiRequest`；`req.extra` → `req.meta.vendor.ingress`
+
+**`compat.rs` 新增 by-ref 辅助**
+- `ai_msg_to_old_ref` / `ai_tool_choice_to_value` / `ai_tool_spec_to_old_ref`
+
+**`pipeline.rs` 适配**
+- `build_request` 步骤 4 加一行：`let ai_req = req.clone().into();` 后调用 `encoder.encode_request(&ai_req)`
+
+**集成测试更新**
+- `protocol_registry.rs`：直接使用 decoder 返回的 `AiRequest` 传给 encoder（移除 `.into()` 中转）
+- `protocol_conversion.rs`：`InternalRequest` 构造的测试改为 `.encode_request(&req.clone().into())`
+
+### 不变
+- Parser / StreamParser / Formatter / StreamFormatter 均未修改
+- `compat.rs` 核心双向转换逻辑不变
+
+---
+
 ## [PR-2] Codec Decoder 全切换到 AiRequest — 2026-05-15
 
 ### 变更

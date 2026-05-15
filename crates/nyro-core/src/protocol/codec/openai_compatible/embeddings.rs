@@ -36,7 +36,7 @@ use crate::protocol::ids::{EndpointCapabilities, OPENAI_EMBEDDINGS_V1, ProtocolE
 use crate::protocol::ir::{AiRequest, GenerationConfig, Message, StreamConfig};
 use crate::protocol::registry::EndpointRegistration;
 use crate::protocol::traits::*;
-use crate::protocol::types::{InternalRequest, InternalResponse, StreamDelta, TokenUsage};
+use crate::protocol::types::{InternalResponse, StreamDelta, TokenUsage};
 
 /// Key under which the complete original request body is kept as a
 /// fallback (used by `embeddings_proxy` in handler.rs).
@@ -164,41 +164,29 @@ impl IngressDecoder for EmbeddingsDecoder {
 struct EmbeddingsEncoder;
 
 impl EgressEncoder for EmbeddingsEncoder {
-    fn encode_request(&self, req: &InternalRequest) -> anyhow::Result<(Value, HeaderMap)> {
-        // Build the egress body from explicit parsed fields.
-        // Override `model` because routing may have changed it.
+    fn encode_request(&self, req: &AiRequest) -> anyhow::Result<(Value, HeaderMap)> {
+        let ingress = &req.meta.vendor.ingress;
         let mut obj = serde_json::Map::new();
 
         obj.insert("model".into(), Value::String(req.model.clone()));
 
-        if let Some(input) = req.extra.get("__emb_input") {
+        if let Some(input) = ingress.get("__emb_input") {
             obj.insert("input".into(), input.clone());
-        } else if let Some(pb) = req.extra.get(EMBEDDINGS_BODY_KEY) {
-            // Fallback: take input from the original passthrough body.
+        } else if let Some(pb) = ingress.get(EMBEDDINGS_BODY_KEY) {
             if let Some(inp) = pb.get("input") {
                 obj.insert("input".into(), inp.clone());
             }
         }
 
-        if let Some(dims) = req.extra.get("__emb_dimensions") {
+        if let Some(dims) = ingress.get("__emb_dimensions") {
             obj.insert("dimensions".into(), dims.clone());
         }
-        if let Some(ef) = req.extra.get("__emb_encoding_format") {
+        if let Some(ef) = ingress.get("__emb_encoding_format") {
             obj.insert("encoding_format".into(), ef.clone());
         }
-        if let Some(user) = req.extra.get("__emb_user") {
+        if let Some(user) = ingress.get("__emb_user") {
             obj.insert("user".into(), user.clone());
         }
-
-        // ── Vendor extensions – egress segment ───────────────────────────────
-        // CAPS.unknown_field_policy = Drop; vendor fields are suppressed.
-        // If a future per-provider override sets Passthrough, emit them here:
-        //
-        //   if policy == VendorFieldPolicy::Passthrough {
-        //       if let Some(Value::Object(vi)) = req.extra.get("__vendor_ingress") {
-        //           for (k, v) in vi { obj.insert(k.clone(), v.clone()); }
-        //       }
-        //   }
 
         Ok((Value::Object(obj), HeaderMap::new()))
     }
