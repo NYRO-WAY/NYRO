@@ -214,7 +214,18 @@ fn block_to_old(b: ContentBlock) -> Option<OldContentBlock> {
             MediaSource::Base64 { media_type, data } => Some(OldContentBlock::Image {
                 source: crate::protocol::types::ImageSource { media_type, data },
             }),
-            _ => None,
+            MediaSource::Url(url) => Some(OldContentBlock::Image {
+                source: crate::protocol::types::ImageSource {
+                    media_type: "image/url".to_string(),
+                    data: url,
+                },
+            }),
+            MediaSource::FileId { file_id, .. } => Some(OldContentBlock::Image {
+                source: crate::protocol::types::ImageSource {
+                    media_type: "image/file_id".to_string(),
+                    data: file_id,
+                },
+            }),
         },
         ContentBlock::Thinking {
             thinking,

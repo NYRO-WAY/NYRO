@@ -45,7 +45,7 @@ use crate::protocol::ids::{OPENAI_CHAT_COMPLETIONS_V1, ProtocolEndpoint};
 // ── Client → Gateway ──
 
 pub trait IngressDecoder {
-    fn decode_request(&self, body: serde_json::Value) -> anyhow::Result<types::InternalRequest>;
+    fn decode_request(&self, body: serde_json::Value) -> anyhow::Result<ir::AiRequest>;
 }
 
 // ── Gateway → Provider ──

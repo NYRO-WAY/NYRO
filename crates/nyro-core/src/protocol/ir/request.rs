@@ -329,20 +329,6 @@ pub struct GenerationConfig {
     pub presence_penalty: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub frequency_penalty: Option<f64>,
-
-    // ── Fields pending migration to ProtocolExt (PR-2) ───────────────────────
-    // These belong in `OpenAIChatExt` / `AnthropicExt` / `GoogleExt` per
-    // FIELD_HOMING.md §3-6.  Kept here temporarily so existing codec encoders
-    // continue to compile.  Remove in PR-2 when decoders are rewritten.
-    /// TODO(PR-2): Move to `OpenAIChatExt.logit_bias`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub logit_bias: Option<std::collections::HashMap<String, f64>>,
-    /// TODO(PR-2): Move to `OpenAIChatExt.n`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub n: Option<u32>,
-    /// TODO(PR-2): Move to `AnthropicExt.top_k` / `GoogleExt.top_k`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub top_k: Option<u32>,
 }
 
 // ── Reasoning config ──────────────────────────────────────────────────────────

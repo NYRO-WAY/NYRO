@@ -8,7 +8,7 @@ use serde_json::Value;
 
 use crate::Gateway;
 use crate::protocol::ids::OPENAI_CHAT_COMPLETIONS_V1;
-use crate::protocol::ir::{AiRequest, RawEnvelope};
+use crate::protocol::ir::RawEnvelope;
 use crate::proxy::context::RequestContext;
 use crate::proxy::dispatcher::{dispatch_pipeline, error_response};
 
@@ -34,10 +34,9 @@ pub async fn handler(
         "/v1/chat/completions",
     );
     let decoder = OPENAI_CHAT_COMPLETIONS_V1.handler().make_decoder();
-    let internal = match decoder.decode_request(body) {
+    let request = match decoder.decode_request(body) {
         Ok(r) => r,
         Err(e) => return error_response(400, &format!("invalid request: {e}")),
     };
-    let request: AiRequest = internal.into();
     dispatch_pipeline(gw, headers, envelope, request, OPENAI_CHAT_COMPLETIONS_V1).await
 }

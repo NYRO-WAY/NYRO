@@ -1,22 +1,35 @@
+//! Anthropic Messages ingress decoder — produces `AiRequest` directly.
+//!
+//! Cache-control and exotic blocks (Document, InputAudio) are now carried
+//! natively in `ContentBlock`. Raw wire values are also preserved in
+//! `meta.vendor.ingress` so the old Anthropic encoder (pre-PR-3) can still
+//! round-trip them.
+
 use anyhow::Result;
 use serde_json::Value;
 
 use crate::protocol::IngressDecoder;
 use crate::protocol::ids::ANTHROPIC_MESSAGES_2023_06_01;
-use crate::protocol::types::*;
+use crate::protocol::ir::DocumentSource as IrDocumentSource;
+use crate::protocol::ir::{
+    AiRequest, AnthropicExt, CacheTtl, ContentBlock, GenerationConfig, MediaSource, Message,
+    MessageContent, ProtocolExt, ReasoningConfig, Role, StreamConfig, ToolCall, ToolChoice,
+    ToolSpec,
+};
 
-use super::types::*;
+use super::types::{
+    AnthropicContent, AnthropicContentBlock, AnthropicImageSource, AnthropicMessage,
+    AnthropicRequest, AnthropicSystem, CacheControl as WireCacheControl,
+    DocumentSource as WireDocumentSource,
+};
 
 pub struct AnthropicDecoder;
 
 impl IngressDecoder for AnthropicDecoder {
-    fn decode_request(&self, body: Value) -> Result<InternalRequest> {
+    fn decode_request(&self, body: Value) -> Result<AiRequest> {
         let req: AnthropicRequest = serde_json::from_value(body)?;
 
-        // ── Cache-control / exotic-block detection ────────────────────────────
-        // If any message contains cache_control or non-standard blocks
-        // (Document, InputAudio), preserve the original wire-format so the
-        // encoder can round-trip them faithfully.
+        // ── Cache-control / exotic-block detection (for raw preservation) ──────
         let needs_raw_msgs = req.messages.iter().any(|m| {
             if let AnthropicContent::Blocks(blocks) = &m.content {
                 blocks
@@ -40,7 +53,7 @@ impl IngressDecoder for AnthropicDecoder {
             .map(|ts| ts.iter().any(|t| t.cache_control.is_some()))
             .unwrap_or(false);
 
-        // Snapshot raw anthropic wire values before consuming req.
+        // Snapshot raw wire values before consuming req.
         let raw_messages: Option<Value> = if needs_raw_msgs {
             serde_json::to_value(&req.messages).ok()
         } else {
@@ -61,8 +74,9 @@ impl IngressDecoder for AnthropicDecoder {
             None
         };
 
-        // ── Decode messages ───────────────────────────────────────────────────
-        let mut messages = Vec::new();
+        // ── System prompt ─────────────────────────────────────────────────────
+        // Extracted as the leading system message (backward compat with old encoders).
+        let mut messages: Vec<Message> = Vec::new();
 
         if let Some(system) = &req.system {
             let text = match system {
@@ -80,12 +94,12 @@ impl IngressDecoder for AnthropicDecoder {
                     .join("\n"),
             };
             if !text.is_empty() {
-                messages.push(InternalMessage {
+                messages.push(Message {
                     role: Role::System,
                     content: MessageContent::Text(text),
                     tool_calls: None,
                     tool_call_id: None,
-                    extra: Default::default(),
+                    meta: None,
                 });
             }
         }
@@ -94,90 +108,146 @@ impl IngressDecoder for AnthropicDecoder {
             messages.extend(decode_message(msg)?);
         }
 
-        // ── Decode tools ──────────────────────────────────────────────────────
-        let tools = req.tools.map(|tools| {
-            tools
-                .into_iter()
-                .filter_map(|t| {
-                    // Built-in tools (computer_use, text_editor, bash) have no
-                    // input_schema; represent them with a sentinel name so the
-                    // encoder can reconstruct them.
-                    if let Some(tool_type) = &t.tool_type {
-                        return Some(ToolDef {
-                            name: format!("__builtin__{}", tool_type),
-                            description: t.description,
-                            parameters: t.input_schema.unwrap_or(Value::Object(Default::default())),
-                        });
+        // ── Tools ─────────────────────────────────────────────────────────────
+        let mut user_tools: Vec<ToolSpec> = Vec::new();
+        let mut server_tools: Vec<Value> = Vec::new();
+
+        if let Some(tools) = req.tools {
+            for t in tools {
+                if let Some(ref tool_type) = t.tool_type {
+                    // Built-in / server tool — preserve as raw Value in AnthropicExt.
+                    let mut raw = serde_json::Map::new();
+                    raw.insert("type".to_string(), Value::String(tool_type.clone()));
+                    if let Some(d) = &t.description {
+                        raw.insert("description".to_string(), Value::String(d.clone()));
                     }
-                    t.input_schema.map(|schema| ToolDef {
+                    if let Some(s) = &t.input_schema {
+                        raw.insert("input_schema".to_string(), s.clone());
+                    }
+                    server_tools.push(Value::Object(raw));
+                    // Also keep sentinel ToolSpec so dispatcher knows about it.
+                    user_tools.push(ToolSpec {
+                        name: format!("__builtin__{}", tool_type),
+                        description: t.description,
+                        parameters: t.input_schema.unwrap_or(Value::Object(Default::default())),
+                        strict: None,
+                        cache_control: t.cache_control.as_ref().map(map_cache_control),
+                        meta: None,
+                    });
+                } else if let Some(schema) = t.input_schema {
+                    user_tools.push(ToolSpec {
                         name: t.name,
                         description: t.description,
                         parameters: schema,
-                    })
-                })
-                .collect()
-        });
+                        strict: None,
+                        cache_control: t.cache_control.as_ref().map(map_cache_control),
+                        meta: None,
+                    });
+                }
+            }
+        }
 
-        // ── Build extra map ───────────────────────────────────────────────────
-        let mut extra: std::collections::HashMap<String, Value> = Default::default();
+        // ── tool_choice ───────────────────────────────────────────────────────
+        let tool_choice = req.tool_choice.map(parse_tool_choice);
+
+        // ── Reasoning config ──────────────────────────────────────────────────
+        let reasoning = if let Some(ref thinking) = req.thinking {
+            let enabled = thinking.kind == "enabled";
+            ReasoningConfig {
+                enabled,
+                budget_tokens: thinking.budget_tokens,
+                ..Default::default()
+            }
+        } else {
+            ReasoningConfig::default()
+        };
+
+        // ── AnthropicExt ──────────────────────────────────────────────────────
+        let ant_ext = AnthropicExt {
+            top_k: req.top_k,
+            container: req.container.as_ref().map(|c| Value::String(c.clone())),
+            service_tier: req.service_tier.clone(),
+            server_tools: if server_tools.is_empty() {
+                None
+            } else {
+                Some(server_tools)
+            },
+            ..Default::default()
+        };
+
+        // ── Vendor ingress bag — backward compat for old Anthropic encoder ────
+        let mut ingress = std::collections::HashMap::new();
 
         if let Some(v) = raw_messages {
-            extra.insert("__anthropic_raw_messages".into(), v);
+            ingress.insert("__anthropic_raw_messages".into(), v);
         }
         if let Some(v) = raw_system {
-            extra.insert("__anthropic_raw_system".into(), v);
+            ingress.insert("__anthropic_raw_system".into(), v);
         }
         if let Some(v) = raw_tools {
-            extra.insert("__anthropic_raw_tools".into(), v);
+            ingress.insert("__anthropic_raw_tools".into(), v);
         }
-
-        // PR-10 named extra fields ─────────────────────────────────────────────
-        if let Some(thinking) = req.thinking
-            && let Ok(v) = serde_json::to_value(&thinking)
+        if let Some(ref thinking) = req.thinking
+            && let Ok(v) = serde_json::to_value(thinking)
         {
-            extra.insert("__anthropic_thinking".into(), v);
+            ingress.insert("__anthropic_thinking".into(), v);
         }
-        if let Some(cm) = req.context_management
-            && let Ok(v) = serde_json::to_value(&cm)
+        if let Some(ref cm) = req.context_management
+            && let Ok(v) = serde_json::to_value(cm)
         {
-            extra.insert("__anthropic_context_management".into(), v);
+            ingress.insert("__anthropic_context_management".into(), v);
         }
-        if let Some(c) = req.container {
-            extra.insert("__anthropic_container".into(), Value::String(c));
+        if let Some(ref c) = req.container {
+            ingress.insert("__anthropic_container".into(), Value::String(c.clone()));
         }
-        if let Some(st) = req.service_tier {
-            extra.insert("__anthropic_service_tier".into(), Value::String(st));
+        if let Some(ref st) = req.service_tier {
+            ingress.insert("__anthropic_service_tier".into(), Value::String(st.clone()));
         }
-        if let Some(meta) = req.metadata {
-            extra.insert("__anthropic_metadata".into(), meta);
+        if let Some(ref meta) = req.metadata {
+            ingress.insert("__anthropic_metadata".into(), meta.clone());
         }
-        if let Some(stops) = req.stop_sequences
-            && let Ok(v) = serde_json::to_value(&stops)
+        if let Some(ref stops) = req.stop_sequences
+            && let Ok(v) = serde_json::to_value(stops)
         {
-            extra.insert("__anthropic_stop_sequences".into(), v);
+            ingress.insert("__anthropic_stop_sequences".into(), v);
         }
         if let Some(k) = req.top_k {
-            extra.insert("__anthropic_top_k".into(), Value::Number(k.into()));
+            ingress.insert("__anthropic_top_k".into(), Value::Number(k.into()));
         }
 
-        Ok(InternalRequest {
-            messages,
-            model: req.model,
-            stream: req.stream,
+        // ── Build AiRequest ───────────────────────────────────────────────────
+        let tools_opt = if user_tools.is_empty() {
+            None
+        } else {
+            Some(user_tools)
+        };
+
+        let mut ai_req = AiRequest::new(req.model, messages);
+        ai_req.generation = GenerationConfig {
             temperature: req.temperature,
             max_tokens: Some(req.max_tokens),
             top_p: req.top_p,
-            tools,
-            tool_choice: req.tool_choice,
-            source_protocol: ANTHROPIC_MESSAGES_2023_06_01,
-            extra,
-        })
+            stop: req.stop_sequences,
+            ..Default::default()
+        };
+        ai_req.stream = StreamConfig {
+            enabled: req.stream,
+            include_usage: false,
+        };
+        ai_req.tools = tools_opt;
+        ai_req.tool_choice = tool_choice;
+        ai_req.reasoning = reasoning;
+        ai_req.ext = Some(ProtocolExt::Anthropic(ant_ext));
+        ai_req.meta.source_protocol = Some(ANTHROPIC_MESSAGES_2023_06_01);
+        ai_req.meta.vendor.ingress = ingress;
+
+        Ok(ai_req)
     }
 }
 
 // ── Message decoding helpers ──────────────────────────────────────────────────
 
-fn decode_message(msg: AnthropicMessage) -> Result<Vec<InternalMessage>> {
+fn decode_message(msg: AnthropicMessage) -> Result<Vec<Message>> {
     let role = match msg.role.as_str() {
         "user" => Role::User,
         "assistant" => Role::Assistant,
@@ -193,62 +263,95 @@ fn decode_message(msg: AnthropicMessage) -> Result<Vec<InternalMessage>> {
     let (content, tool_calls, tool_call_id) = match msg.content {
         AnthropicContent::Text(t) => (MessageContent::Text(t), None, None),
         AnthropicContent::Blocks(blocks) => {
-            let mut content_blocks = Vec::new();
-            let mut tcs = Vec::new();
-            let mut tc_id = None;
+            let mut content_blocks: Vec<ContentBlock> = Vec::new();
+            let mut tcs: Vec<ToolCall> = Vec::new();
+            let mut tc_id: Option<String> = None;
 
             for block in blocks {
                 match block {
-                    AnthropicContentBlock::Text { text, .. } => {
-                        content_blocks.push(ContentBlock::Text { text });
+                    AnthropicContentBlock::Text {
+                        text,
+                        cache_control,
+                        ..
+                    } => {
+                        content_blocks.push(ContentBlock::Text {
+                            text,
+                            cache_control: cache_control.as_ref().map(map_cache_control),
+                        });
                     }
                     AnthropicContentBlock::Thinking {
                         thinking,
                         signature,
                         ..
                     } => {
-                        content_blocks.push(ContentBlock::Reasoning {
-                            text: thinking,
+                        content_blocks.push(ContentBlock::Thinking {
+                            thinking,
                             signature,
                         });
                     }
-                    AnthropicContentBlock::Image { source, .. } => {
+                    AnthropicContentBlock::Image {
+                        source,
+                        cache_control,
+                        ..
+                    } => {
                         content_blocks.push(ContentBlock::Image {
-                            source: ImageSource {
-                                media_type: source.media_type.unwrap_or_default(),
-                                data: source.data.unwrap_or_default(),
-                            },
+                            source: map_image_source(source),
+                            cache_control: cache_control.as_ref().map(map_cache_control),
                         });
                     }
                     AnthropicContentBlock::ToolUse {
-                        id, name, input, ..
+                        id,
+                        name,
+                        input,
+                        cache_control,
+                        ..
                     } => {
                         tcs.push(ToolCall {
                             id: id.clone(),
                             name: name.clone(),
                             arguments: input.to_string(),
                         });
-                        content_blocks.push(ContentBlock::ToolUse { id, name, input });
+                        content_blocks.push(ContentBlock::ToolUse {
+                            id,
+                            name,
+                            input,
+                            cache_control: cache_control.as_ref().map(map_cache_control),
+                        });
                     }
                     AnthropicContentBlock::ToolResult {
                         tool_use_id,
                         content,
+                        cache_control,
                         ..
                     } => {
                         tc_id = Some(tool_use_id.clone());
                         content_blocks.push(ContentBlock::ToolResult {
                             tool_use_id,
                             content: content.unwrap_or(Value::Null),
+                            is_error: None,
+                            cache_control: cache_control.as_ref().map(map_cache_control),
                         });
                     }
-                    AnthropicContentBlock::Document { title, .. } => {
-                        // Best-effort IR representation; encoder uses raw bytes.
-                        let text = title.unwrap_or_else(|| "[document]".to_string());
-                        content_blocks.push(ContentBlock::Text { text });
+                    AnthropicContentBlock::Document {
+                        source,
+                        title,
+                        context,
+                        cache_control,
+                        ..
+                    } => {
+                        content_blocks.push(ContentBlock::Document {
+                            source: map_doc_source(source),
+                            title,
+                            context,
+                            cache_control: cache_control.as_ref().map(map_cache_control),
+                        });
                     }
-                    AnthropicContentBlock::InputAudio { .. } => {
-                        content_blocks.push(ContentBlock::Text {
-                            text: "[audio]".to_string(),
+                    AnthropicContentBlock::InputAudio { source, .. } => {
+                        content_blocks.push(ContentBlock::Audio {
+                            source: MediaSource::Base64 {
+                                media_type: source.media_type,
+                                data: source.data,
+                            },
                         });
                     }
                 }
@@ -257,14 +360,14 @@ fn decode_message(msg: AnthropicMessage) -> Result<Vec<InternalMessage>> {
             let tool_calls_opt = if tcs.is_empty() { None } else { Some(tcs) };
 
             if content_blocks.len() == 1
-                && let ContentBlock::Text { text } = &content_blocks[0]
+                && let ContentBlock::Text { text, .. } = &content_blocks[0]
             {
-                return Ok(vec![InternalMessage {
+                return Ok(vec![Message {
                     role,
                     content: MessageContent::Text(text.clone()),
                     tool_calls: tool_calls_opt,
                     tool_call_id: tc_id,
-                    extra: Default::default(),
+                    meta: None,
                 }]);
             }
 
@@ -276,17 +379,17 @@ fn decode_message(msg: AnthropicMessage) -> Result<Vec<InternalMessage>> {
         }
     };
 
-    Ok(vec![InternalMessage {
+    Ok(vec![Message {
         role,
         content,
         tool_calls,
         tool_call_id,
-        extra: Default::default(),
+        meta: None,
     }])
 }
 
-fn decode_user_blocks(blocks: Vec<AnthropicContentBlock>) -> Result<Vec<InternalMessage>> {
-    let mut messages: Vec<InternalMessage> = Vec::new();
+fn decode_user_blocks(blocks: Vec<AnthropicContentBlock>) -> Result<Vec<Message>> {
+    let mut messages: Vec<Message> = Vec::new();
     let mut user_blocks: Vec<ContentBlock> = Vec::new();
 
     for block in blocks {
@@ -301,64 +404,162 @@ fn decode_user_blocks(blocks: Vec<AnthropicContentBlock>) -> Result<Vec<Internal
                     Value::Null => String::new(),
                     other => other.to_string(),
                 };
-                messages.push(InternalMessage {
+                messages.push(Message {
                     role: Role::Tool,
                     content: MessageContent::Text(tool_text),
                     tool_calls: None,
                     tool_call_id: Some(tool_use_id),
-                    extra: Default::default(),
+                    meta: None,
                 });
             }
-            AnthropicContentBlock::Text { text, .. } => {
-                user_blocks.push(ContentBlock::Text { text })
+            AnthropicContentBlock::Text {
+                text,
+                cache_control,
+                ..
+            } => {
+                user_blocks.push(ContentBlock::Text {
+                    text,
+                    cache_control: cache_control.as_ref().map(map_cache_control),
+                });
             }
             AnthropicContentBlock::Thinking {
                 thinking,
                 signature,
                 ..
-            } => user_blocks.push(ContentBlock::Reasoning {
-                text: thinking,
-                signature,
-            }),
-            AnthropicContentBlock::Image { source, .. } => user_blocks.push(ContentBlock::Image {
-                source: ImageSource {
-                    media_type: source.media_type.unwrap_or_default(),
-                    data: source.data.unwrap_or_default(),
-                },
-            }),
+            } => {
+                user_blocks.push(ContentBlock::Thinking {
+                    thinking,
+                    signature,
+                });
+            }
+            AnthropicContentBlock::Image {
+                source,
+                cache_control,
+                ..
+            } => {
+                user_blocks.push(ContentBlock::Image {
+                    source: map_image_source(source),
+                    cache_control: cache_control.as_ref().map(map_cache_control),
+                });
+            }
             AnthropicContentBlock::ToolUse {
-                id, name, input, ..
-            } => user_blocks.push(ContentBlock::ToolUse { id, name, input }),
-            AnthropicContentBlock::Document { title, .. } => user_blocks.push(ContentBlock::Text {
-                text: title.unwrap_or_else(|| "[document]".to_string()),
-            }),
-            AnthropicContentBlock::InputAudio { .. } => user_blocks.push(ContentBlock::Text {
-                text: "[audio]".to_string(),
-            }),
+                id,
+                name,
+                input,
+                cache_control,
+                ..
+            } => {
+                user_blocks.push(ContentBlock::ToolUse {
+                    id,
+                    name,
+                    input,
+                    cache_control: cache_control.as_ref().map(map_cache_control),
+                });
+            }
+            AnthropicContentBlock::Document {
+                source,
+                title,
+                context,
+                cache_control,
+                ..
+            } => {
+                user_blocks.push(ContentBlock::Document {
+                    source: map_doc_source(source),
+                    title,
+                    context,
+                    cache_control: cache_control.as_ref().map(map_cache_control),
+                });
+            }
+            AnthropicContentBlock::InputAudio { source, .. } => {
+                user_blocks.push(ContentBlock::Audio {
+                    source: MediaSource::Base64 {
+                        media_type: source.media_type,
+                        data: source.data,
+                    },
+                });
+            }
         }
     }
 
     if !user_blocks.is_empty() {
-        let content = if user_blocks.len() == 1 {
-            if let ContentBlock::Text { text } = &user_blocks[0] {
-                MessageContent::Text(text.clone())
-            } else {
-                MessageContent::Blocks(user_blocks)
-            }
+        let content = if user_blocks.len() == 1
+            && let ContentBlock::Text { text, .. } = &user_blocks[0]
+        {
+            MessageContent::Text(text.clone())
         } else {
             MessageContent::Blocks(user_blocks)
         };
         messages.insert(
             0,
-            InternalMessage {
+            Message {
                 role: Role::User,
                 content,
                 tool_calls: None,
                 tool_call_id: None,
-                extra: Default::default(),
+                meta: None,
             },
         );
     }
 
     Ok(messages)
+}
+
+// ── Type-mapping helpers ──────────────────────────────────────────────────────
+
+fn map_cache_control(_cc: &WireCacheControl) -> crate::protocol::ir::CacheControl {
+    // Anthropic only has "ephemeral" TTL.
+    crate::protocol::ir::CacheControl {
+        ttl: CacheTtl::Ephemeral5m,
+        breakpoint_priority: 0,
+    }
+}
+
+fn map_image_source(src: AnthropicImageSource) -> MediaSource {
+    match src.source_type.as_str() {
+        "base64" => MediaSource::Base64 {
+            media_type: src.media_type.unwrap_or_default(),
+            data: src.data.unwrap_or_default(),
+        },
+        "url" => MediaSource::Url(src.url.unwrap_or_default()),
+        _ => MediaSource::Base64 {
+            media_type: src.media_type.unwrap_or_default(),
+            data: src.data.unwrap_or_default(),
+        },
+    }
+}
+
+fn map_doc_source(src: WireDocumentSource) -> IrDocumentSource {
+    match src.kind.as_str() {
+        "base64" => IrDocumentSource::Base64Pdf {
+            data: src.data.unwrap_or_default(),
+        },
+        "text" => IrDocumentSource::PlainText {
+            data: src.data.unwrap_or_default(),
+        },
+        "url" => IrDocumentSource::Url(src.url.unwrap_or_default()),
+        "content" => IrDocumentSource::Blocks {
+            content: Vec::new(), // encoder uses raw JSON; best-effort stub
+        },
+        _ => IrDocumentSource::PlainText {
+            data: src.data.unwrap_or_default(),
+        },
+    }
+}
+
+fn parse_tool_choice(v: Value) -> ToolChoice {
+    match v.get("type").and_then(|t| t.as_str()) {
+        Some("auto") => ToolChoice::Auto,
+        Some("any") => ToolChoice::Required,
+        Some("none") => ToolChoice::None,
+        Some("tool") => {
+            if let Some(name) = v.get("name").and_then(|n| n.as_str()) {
+                ToolChoice::Named {
+                    name: name.to_string(),
+                }
+            } else {
+                ToolChoice::Raw(v)
+            }
+        }
+        _ => ToolChoice::Raw(v),
+    }
 }

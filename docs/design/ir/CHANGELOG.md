@@ -6,6 +6,51 @@
 
 ---
 
+## [PR-2] Codec Decoder 全切换到 AiRequest — 2026-05-15
+
+### 变更
+
+**`IngressDecoder` trait**
+- `decode_request` 返回类型由 `InternalRequest` → `AiRequest`
+
+**`GenerationConfig` 清理**
+- 移除临时字段 `logit_bias`、`n`、`top_k`（已归属 `ProtocolExt`）
+
+**4 大 Decoder 重写**
+- `OpenAIDecoder` — 直出 `AiRequest`；`ProtocolExt::OpenAiChat(OpenAIChatExt)`
+  - `audio / modalities / logit_bias / n / prediction / stream_options` 进 `OpenAIChatExt`
+  - `service_tier / user` 进 `meta.vendor.ingress`（老 encoder 向后兼容）
+  - `reasoning_effort` → `ReasoningConfig`；`stop` → `GenerationConfig.stop`
+- `ResponsesDecoder` — 直出 `AiRequest`；`ProtocolExt::OpenAiResponses(OpenAIResponsesExt)`
+  - `background / previous_response_id / truncation / include` 进 `OpenAIResponsesExt`
+  - `reasoning` 字段 → `ReasoningConfig`；`reasoning_content` 附加到 `Message.meta`
+- `AnthropicDecoder` — 直出 `AiRequest`；`ProtocolExt::Anthropic(AnthropicExt)`
+  - `ContentBlock` 全面升级：`Thinking`、`Document`、`Audio`、`cache_control` 原生支持
+  - 内置工具进 `AnthropicExt.server_tools`；用户工具进 `AiRequest.tools`（带 `cache_control`）
+  - `thinking` → `ReasoningConfig`；`stop_sequences` → `GenerationConfig.stop`
+  - 原始 wire JSON 保留在 `meta.vendor.ingress`（`__anthropic_raw_*`，兼容旧 encoder）
+- `GoogleDecoder` — 直出 `AiRequest`；`ProtocolExt::Google(GoogleExt)`
+  - `decode_with_model` 签名同步更新（model + stream 由 URL 路径注入）
+  - `executableCode / codeExecutionResult` → `ContentBlock::ExecutableCode / CodeExecutionResult`
+  - `thought=true` Part → `ContentBlock::Thinking`
+  - `generationConfig` 扩展字段进 `GoogleExt`；`safety_settings` → `AiRequest.safety_settings`
+  - `__google_*` 原始字段保留在 `meta.vendor.ingress`（兼容旧 encoder）
+
+**`EmbeddingsDecoder` 更新**
+- 返回类型同步改为 `AiRequest`；`__emb_*` 键保留在 `meta.vendor.ingress`
+
+**5 个 Ingress Handler + Dispatcher**
+- 移除 `let request: AiRequest = internal.into()` 一行（decoder 直出 `AiRequest`）
+
+**`compat.rs` 修复**
+- `block_to_old` 补充 `MediaSource::Url` / `MediaSource::FileId` → `OldContentBlock::Image` 映射
+
+### 不变
+- Encoder / Parser / Formatter 均未修改；通过 `AiRequest → InternalRequest`（compat.rs）继续工作
+- `compat.rs` 双向转换逻辑核心不变
+
+---
+
 ## 模板
 
 ```

@@ -33,6 +33,7 @@ use serde_json::Value;
 
 use crate::protocol::SseEvent;
 use crate::protocol::ids::{EndpointCapabilities, OPENAI_EMBEDDINGS_V1, ProtocolEndpoint};
+use crate::protocol::ir::{AiRequest, GenerationConfig, Message, StreamConfig};
 use crate::protocol::registry::EndpointRegistration;
 use crate::protocol::traits::*;
 use crate::protocol::types::{InternalRequest, InternalResponse, StreamDelta, TokenUsage};
@@ -102,7 +103,7 @@ inventory::submit! {
 struct EmbeddingsDecoder;
 
 impl IngressDecoder for EmbeddingsDecoder {
-    fn decode_request(&self, body: Value) -> anyhow::Result<InternalRequest> {
+    fn decode_request(&self, body: Value) -> anyhow::Result<AiRequest> {
         let obj = body
             .as_object()
             .ok_or_else(|| anyhow::anyhow!("embeddings request must be a JSON object"))?;
@@ -115,30 +116,26 @@ impl IngressDecoder for EmbeddingsDecoder {
             .map(ToString::to_string)
             .ok_or_else(|| anyhow::anyhow!("model is required for embeddings"))?;
 
-        let mut extra: HashMap<String, Value> = HashMap::new();
+        // ── Vendor ingress bag (backward compat for EmbeddingsEncoder) ─────────
+        let mut ingress: HashMap<String, Value> = HashMap::new();
 
         // Keep the original body so `embeddings_proxy` can forward it.
-        extra.insert(EMBEDDINGS_BODY_KEY.to_string(), body.clone());
+        ingress.insert(EMBEDDINGS_BODY_KEY.to_string(), body.clone());
 
-        // ── Parse known fields ────────────────────────────────────────────────
-        // `input` can be: string | string[] | integer[] | integer[][]
         if let Some(input) = obj.get("input") {
-            extra.insert("__emb_input".into(), input.clone());
+            ingress.insert("__emb_input".into(), input.clone());
         }
         if let Some(dims) = obj.get("dimensions") {
-            extra.insert("__emb_dimensions".into(), dims.clone());
+            ingress.insert("__emb_dimensions".into(), dims.clone());
         }
         if let Some(ef) = obj.get("encoding_format") {
-            extra.insert("__emb_encoding_format".into(), ef.clone());
+            ingress.insert("__emb_encoding_format".into(), ef.clone());
         }
         if let Some(user) = obj.get("user") {
-            extra.insert("__emb_user".into(), user.clone());
+            ingress.insert("__emb_user".into(), user.clone());
         }
 
-        // ── Vendor extensions – ingress segment ───────────────────────────────
         // Collect unknown fields into __vendor_ingress.
-        // Policy is VendorFieldPolicy::Drop, so the encoder will not forward
-        // them unless the policy is relaxed per-provider in the future.
         let mut vendor_ingress = serde_json::Map::new();
         for (k, v) in obj {
             if !KNOWN_EMBEDDINGS_FIELDS.contains(&k.as_str()) {
@@ -146,21 +143,19 @@ impl IngressDecoder for EmbeddingsDecoder {
             }
         }
         if !vendor_ingress.is_empty() {
-            extra.insert("__vendor_ingress".into(), Value::Object(vendor_ingress));
+            ingress.insert("__vendor_ingress".into(), Value::Object(vendor_ingress));
         }
 
-        Ok(InternalRequest {
-            messages: Vec::new(),
-            model,
-            stream: false,
-            temperature: None,
-            max_tokens: None,
-            top_p: None,
-            tools: None,
-            tool_choice: None,
-            source_protocol: OPENAI_EMBEDDINGS_V1,
-            extra,
-        })
+        let mut ai_req = AiRequest::new(model, Vec::<Message>::new());
+        ai_req.generation = GenerationConfig::default();
+        ai_req.stream = StreamConfig {
+            enabled: false,
+            include_usage: false,
+        };
+        ai_req.meta.source_protocol = Some(OPENAI_EMBEDDINGS_V1);
+        ai_req.meta.vendor.ingress = ingress;
+
+        Ok(ai_req)
     }
 }
 

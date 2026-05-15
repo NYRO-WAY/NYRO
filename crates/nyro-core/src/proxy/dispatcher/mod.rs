@@ -677,7 +677,7 @@ pub async fn dispatch(
     let envelope = RawEnvelope::new(Some(body.clone()), flat_headers, method, path);
 
     let decoder = ingress.handler().make_decoder();
-    let internal = match decoder.decode_request(body) {
+    let request = match decoder.decode_request(body) {
         Ok(r) => r,
         Err(e) => {
             let ingress_str = ingress.to_string();
@@ -701,7 +701,6 @@ pub async fn dispatch(
         }
     };
 
-    let request: AiRequest = internal.into();
     dispatch_pipeline(gw, headers, envelope, request, ingress).await
 }
 

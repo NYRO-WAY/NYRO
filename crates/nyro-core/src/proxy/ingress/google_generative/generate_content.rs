@@ -9,7 +9,7 @@ use serde_json::Value;
 use crate::Gateway;
 use crate::protocol::codec::google_generative::decoder::GoogleDecoder;
 use crate::protocol::ids::GOOGLE_GENERATE_CONTENT_V1BETA;
-use crate::protocol::ir::{AiRequest, RawEnvelope};
+use crate::protocol::ir::RawEnvelope;
 use crate::proxy::context::RequestContext;
 use crate::proxy::dispatcher::{dispatch_pipeline, error_response};
 
@@ -36,11 +36,10 @@ pub async fn handler(
         })
         .collect();
     let envelope = RawEnvelope::new(Some(body.clone()), flat_headers, "POST", &path);
-    let internal = match GoogleDecoder.decode_with_model(body, &model, is_stream) {
+    let request = match GoogleDecoder.decode_with_model(body, &model, is_stream) {
         Ok(r) => r,
         Err(e) => return error_response(400, &format!("invalid Gemini request: {e}")),
     };
-    let request: AiRequest = internal.into();
     dispatch_pipeline(
         gw,
         headers,
