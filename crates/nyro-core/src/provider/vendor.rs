@@ -77,7 +77,6 @@ use crate::provider::inbound::InboundResponse;
 use crate::provider::metadata::VendorMetadata;
 use crate::provider::outbound::OutboundRequest;
 use crate::provider::registry::VendorScope;
-use crate::provider::stream::ProviderStreamParser;
 use crate::provider::vendor_ext::VendorCtx;
 
 // ── ProviderCtx ──────────────────────────────────────────────────────────────
@@ -209,9 +208,6 @@ pub trait Vendor: Send + Sync + 'static {
         resp: InboundResponse,
         ctx: &ProviderCtx<'_>,
     ) -> Result<AiResponse, GatewayError>;
-
-    /// Return a stream parser for SSE responses.
-    fn stream_parser(&self, ctx: &ProviderCtx<'_>) -> Box<dyn ProviderStreamParser + Send>;
 
     /// Map a non-2xx upstream response to a `GatewayError`.
     fn map_error(&self, status: u16, body: Value) -> GatewayError;

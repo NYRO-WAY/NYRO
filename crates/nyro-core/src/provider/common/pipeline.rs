@@ -3,8 +3,7 @@
 //!
 //! # Usage
 //!
-//! Delegate `build_request`, `parse_response`, and `stream_parser` to the
-//! free functions here:
+//! Delegate `build_request` and `parse_response` to the free functions here:
 //!
 //! ```rust,ignore
 //! use crate::provider::common::pipeline;
@@ -12,11 +11,8 @@
 //! async fn build_request(&self, req, ctx) -> Result<OutboundRequest> {
 //!     pipeline::build_request(self, req, ctx).await
 //! }
-//! async fn parse_response(&self, resp, ctx) -> Result<InternalResponse> {
+//! async fn parse_response(&self, resp, ctx) -> Result<AiResponse> {
 //!     pipeline::parse_response(self, resp, ctx).await
-//! }
-//! fn stream_parser(&self, ctx) -> Box<dyn ProviderStreamParser + Send> {
-//!     pipeline::stream_parser(ctx)
 //! }
 //! ```
 
@@ -148,17 +144,6 @@ where
     Ok(ai_resp)
 }
 
-/// Standard `stream_parser` factory: wraps the codec's stream parser in a
-/// `LegacyStreamParserAdapter`.
-pub fn stream_parser(
-    ctx: &crate::provider::vendor::ProviderCtx<'_>,
-) -> Box<dyn crate::provider::stream::ProviderStreamParser + Send> {
-    let egress_handler = ctx.protocol.handler();
-    Box::new(crate::provider::stream::LegacyStreamParserAdapter(
-        egress_handler.make_stream_parser(),
-    ))
-}
-
 /// PassThrough request builder: skips the IR codec entirely.
 ///
 /// Used when [`crate::proxy::planner::ProtocolMode::Native`] is in effect
@@ -237,7 +222,6 @@ mod tests {
     use crate::provider::inbound::InboundResponse;
     use crate::provider::outbound::OutboundRequest;
     use crate::provider::registry::VendorScope;
-    use crate::provider::stream::ProviderStreamParser;
     use crate::provider::vendor::{ProviderCtx, Vendor};
     use crate::provider::vendor_ext::VendorCtx;
     use async_trait::async_trait;
@@ -287,9 +271,6 @@ mod tests {
         ) -> Result<AiResponse, GatewayError> {
             unreachable!()
         }
-        fn stream_parser(&self, _ctx: &ProviderCtx<'_>) -> Box<dyn ProviderStreamParser + Send> {
-            unreachable!()
-        }
         fn map_error(&self, status: u16, _body: Value) -> GatewayError {
             GatewayError::upstream_status("fake-test", status, None)
         }
@@ -335,9 +316,6 @@ mod tests {
             _resp: InboundResponse,
             _ctx: &ProviderCtx<'_>,
         ) -> Result<AiResponse, GatewayError> {
-            unreachable!()
-        }
-        fn stream_parser(&self, _ctx: &ProviderCtx<'_>) -> Box<dyn ProviderStreamParser + Send> {
             unreachable!()
         }
         fn map_error(&self, status: u16, _body: Value) -> GatewayError {

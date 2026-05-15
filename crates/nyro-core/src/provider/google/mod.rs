@@ -13,7 +13,6 @@ use crate::provider::metadata::{
 };
 use crate::provider::outbound::OutboundRequest;
 use crate::provider::registry::{ExtensionRegistration, VendorRegistration, VendorScope};
-use crate::provider::stream::ProviderStreamParser;
 use crate::provider::vendor::{ProviderCtx, Vendor};
 use crate::provider::vendor_ext::{VendorCtx, VendorExtension};
 
@@ -97,9 +96,6 @@ impl Vendor for GoogleVendor {
         ctx: &ProviderCtx<'_>,
     ) -> Result<AiResponse, GatewayError> {
         pipeline::parse_response(self, resp, ctx).await
-    }
-    fn stream_parser(&self, ctx: &ProviderCtx<'_>) -> Box<dyn ProviderStreamParser + Send> {
-        pipeline::stream_parser(ctx)
     }
     fn map_error(&self, status: u16, body: Value) -> GatewayError {
         let msg = body

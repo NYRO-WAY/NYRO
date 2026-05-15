@@ -2,10 +2,9 @@ use anyhow::Result;
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::protocol::ir::compat::{ai_stream_delta_to_old, old_stream_delta_to_new};
+use crate::protocol::ir::request::ToolCall;
 use crate::protocol::ir::usage::Usage;
 use crate::protocol::ir::{AiResponse, AiStreamDelta};
-use crate::protocol::types::{StreamDelta, ToolCall};
 use crate::protocol::*;
 
 // ── Non-streaming response parser ──
@@ -70,14 +69,7 @@ impl ResponseParser for OpenAIResponseParser {
         let mut ai_resp = AiResponse::new(id, model);
         ai_resp.content = content;
         ai_resp.reasoning_content = reasoning_content;
-        ai_resp.tool_calls = tool_calls
-            .into_iter()
-            .map(|tc| crate::protocol::ir::request::ToolCall {
-                id: tc.id,
-                name: tc.name,
-                arguments: tc.arguments,
-            })
-            .collect();
+        ai_resp.tool_calls = tool_calls;
         ai_resp.stop_reason = stop_reason;
         ai_resp.usage = usage;
         Ok(ai_resp)
@@ -184,7 +176,7 @@ impl StreamParser for OpenAIStreamParser {
                 if let Some(data) = line.strip_prefix("data: ") {
                     let data = data.trim();
                     if data == "[DONE]" {
-                        deltas.push(StreamDelta::Done {
+                        deltas.push(AiStreamDelta::Done {
                             stop_reason: "stop".to_string(),
                         });
                         continue;
@@ -196,7 +188,7 @@ impl StreamParser for OpenAIStreamParser {
             }
         }
 
-        Ok(deltas.iter().map(old_stream_delta_to_new).collect())
+        Ok(deltas)
     }
 
     fn finish(&mut self) -> Result<Vec<AiStreamDelta>> {
@@ -205,17 +197,13 @@ impl StreamParser for OpenAIStreamParser {
             let remaining = std::mem::take(&mut self.buffer);
             ai_deltas.extend(self.parse_chunk(&format!("{remaining}\n\n"))?);
         }
-        ai_deltas.extend(
-            self.flush_pending_text()
-                .iter()
-                .map(old_stream_delta_to_new),
-        );
+        ai_deltas.extend(self.flush_pending_text());
         Ok(ai_deltas)
     }
 }
 
 impl OpenAIStreamParser {
-    fn parse_openai_chunk(&mut self, chunk: &Value, deltas: &mut Vec<StreamDelta>) {
+    fn parse_openai_chunk(&mut self, chunk: &Value, deltas: &mut Vec<AiStreamDelta>) {
         if !self.started
             && let (Some(id), Some(model)) = (
                 chunk.get("id").and_then(|v| v.as_str()),
@@ -223,7 +211,7 @@ impl OpenAIStreamParser {
             )
         {
             self.started = true;
-            deltas.push(StreamDelta::MessageStart {
+            deltas.push(AiStreamDelta::MessageStart {
                 id: id.to_string(),
                 model: model.to_string(),
             });
@@ -236,7 +224,7 @@ impl OpenAIStreamParser {
         else {
             let u = extract_usage(chunk);
             if u.prompt_tokens > 0 || u.completion_tokens > 0 {
-                deltas.push(StreamDelta::Usage(u));
+                deltas.push(AiStreamDelta::Usage(u));
             }
             return;
         };
@@ -245,7 +233,7 @@ impl OpenAIStreamParser {
             if let Some(reasoning) = extract_reasoning_from_message(delta)
                 && !reasoning.is_empty()
             {
-                deltas.push(StreamDelta::ReasoningDelta(reasoning));
+                deltas.push(AiStreamDelta::ThinkingDelta(reasoning));
             }
             if let Some(text) = delta.get("content").and_then(|v| v.as_str()) {
                 self.parse_text_with_think_tags(text, deltas);
@@ -261,7 +249,7 @@ impl OpenAIStreamParser {
                                 .and_then(|v| v.as_str())
                                 .unwrap_or("")
                                 .to_string();
-                            deltas.push(StreamDelta::ToolCallStart {
+                            deltas.push(AiStreamDelta::ToolCallStart {
                                 index: idx,
                                 id,
                                 name: name.to_string(),
@@ -270,7 +258,7 @@ impl OpenAIStreamParser {
                         if let Some(args) = func.get("arguments").and_then(|v| v.as_str())
                             && !args.is_empty()
                         {
-                            deltas.push(StreamDelta::ToolCallDelta {
+                            deltas.push(AiStreamDelta::ToolCallDelta {
                                 index: idx,
                                 arguments: args.to_string(),
                             });
@@ -281,18 +269,18 @@ impl OpenAIStreamParser {
         }
 
         if let Some(reason) = choice.get("finish_reason").and_then(|v| v.as_str()) {
-            deltas.push(StreamDelta::Done {
+            deltas.push(AiStreamDelta::Done {
                 stop_reason: reason.to_string(),
             });
         }
 
         let u = extract_usage(chunk);
         if u.prompt_tokens > 0 || u.completion_tokens > 0 {
-            deltas.push(StreamDelta::Usage(u));
+            deltas.push(AiStreamDelta::Usage(u));
         }
     }
 
-    fn parse_text_with_think_tags(&mut self, text: &str, deltas: &mut Vec<StreamDelta>) {
+    fn parse_text_with_think_tags(&mut self, text: &str, deltas: &mut Vec<AiStreamDelta>) {
         if text.is_empty() {
             return;
         }
@@ -303,7 +291,7 @@ impl OpenAIStreamParser {
                 if let Some(end_idx) = self.think_buffer.find("</think>") {
                     let thought = self.think_buffer[..end_idx].trim().to_string();
                     if !thought.is_empty() {
-                        deltas.push(StreamDelta::ReasoningDelta(thought));
+                        deltas.push(AiStreamDelta::ThinkingDelta(thought));
                     }
                     self.think_buffer = self.think_buffer[end_idx + "</think>".len()..].to_string();
                     self.in_think_block = false;
@@ -315,7 +303,7 @@ impl OpenAIStreamParser {
             if let Some(start_idx) = self.think_buffer.find("<think>") {
                 let before = self.think_buffer[..start_idx].to_string();
                 if !before.is_empty() {
-                    deltas.push(StreamDelta::TextDelta(before));
+                    deltas.push(AiStreamDelta::TextDelta(before));
                 }
                 self.think_buffer = self.think_buffer[start_idx + "<think>".len()..].to_string();
                 self.in_think_block = true;
@@ -326,7 +314,7 @@ impl OpenAIStreamParser {
             if self.think_buffer.len() > keep {
                 let emit = self.think_buffer[..self.think_buffer.len() - keep].to_string();
                 if !emit.is_empty() {
-                    deltas.push(StreamDelta::TextDelta(emit));
+                    deltas.push(AiStreamDelta::TextDelta(emit));
                 }
                 self.think_buffer = self.think_buffer[self.think_buffer.len() - keep..].to_string();
             }
@@ -334,7 +322,7 @@ impl OpenAIStreamParser {
         }
     }
 
-    fn flush_pending_text(&mut self) -> Vec<StreamDelta> {
+    fn flush_pending_text(&mut self) -> Vec<AiStreamDelta> {
         if self.think_buffer.is_empty() {
             return vec![];
         }
@@ -343,10 +331,10 @@ impl OpenAIStreamParser {
             fallback.push_str(&self.think_buffer);
             self.think_buffer.clear();
             self.in_think_block = false;
-            vec![StreamDelta::TextDelta(fallback)]
+            vec![AiStreamDelta::TextDelta(fallback)]
         } else {
             let remaining = std::mem::take(&mut self.think_buffer);
-            vec![StreamDelta::TextDelta(remaining)]
+            vec![AiStreamDelta::TextDelta(remaining)]
         }
     }
 }
@@ -389,12 +377,10 @@ impl OpenAIStreamFormatter {
 
 impl StreamFormatter for OpenAIStreamFormatter {
     fn format_deltas(&mut self, deltas: &[AiStreamDelta]) -> Vec<SseEvent> {
-        let old: Vec<StreamDelta> = deltas.iter().map(ai_stream_delta_to_old).collect();
-        let deltas = old.as_slice();
         let mut events = Vec::new();
         for delta in deltas {
             match delta {
-                StreamDelta::MessageStart { id, model } => {
+                AiStreamDelta::MessageStart { id, model } => {
                     self.id = id.clone();
                     self.model = model.clone();
                     let chunk = serde_json::json!({
@@ -405,7 +391,7 @@ impl StreamFormatter for OpenAIStreamFormatter {
                     });
                     events.push(SseEvent::new(None, chunk.to_string()));
                 }
-                StreamDelta::ReasoningDelta(text) => {
+                AiStreamDelta::ThinkingDelta(text) => {
                     let chunk = serde_json::json!({
                         "id": self.id,
                         "object": "chat.completion.chunk",
@@ -414,8 +400,8 @@ impl StreamFormatter for OpenAIStreamFormatter {
                     });
                     events.push(SseEvent::new(None, chunk.to_string()));
                 }
-                StreamDelta::ReasoningSignature(_) => {}
-                StreamDelta::TextDelta(text) => {
+                AiStreamDelta::ThinkingSignature(_) => {}
+                AiStreamDelta::TextDelta(text) => {
                     let chunk = serde_json::json!({
                         "id": self.id,
                         "object": "chat.completion.chunk",
@@ -424,7 +410,7 @@ impl StreamFormatter for OpenAIStreamFormatter {
                     });
                     events.push(SseEvent::new(None, chunk.to_string()));
                 }
-                StreamDelta::ToolCallStart { index, id, name } => {
+                AiStreamDelta::ToolCallStart { index, id, name } => {
                     self.saw_tool_call = true;
                     let chunk = serde_json::json!({
                         "id": self.id,
@@ -436,7 +422,7 @@ impl StreamFormatter for OpenAIStreamFormatter {
                     });
                     events.push(SseEvent::new(None, chunk.to_string()));
                 }
-                StreamDelta::ToolCallDelta { index, arguments } => {
+                AiStreamDelta::ToolCallDelta { index, arguments } => {
                     self.saw_tool_call = true;
                     let chunk = serde_json::json!({
                         "id": self.id,
@@ -448,11 +434,10 @@ impl StreamFormatter for OpenAIStreamFormatter {
                     });
                     events.push(SseEvent::new(None, chunk.to_string()));
                 }
-                StreamDelta::Usage(u) => {
+                AiStreamDelta::Usage(u) => {
                     self.usage = u.clone();
                 }
-                StreamDelta::RawEvent { .. } => {}
-                StreamDelta::Done { stop_reason } => {
+                AiStreamDelta::Done { stop_reason } => {
                     let final_reason = if self.saw_tool_call {
                         "tool_calls".to_string()
                     } else {
@@ -472,6 +457,7 @@ impl StreamFormatter for OpenAIStreamFormatter {
                     events.push(SseEvent::new(None, chunk.to_string()));
                     events.push(SseEvent::new(None, "[DONE]"));
                 }
+                _ => {}
             }
         }
         events

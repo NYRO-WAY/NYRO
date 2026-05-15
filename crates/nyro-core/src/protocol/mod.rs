@@ -30,7 +30,6 @@
 //! and [`registry::ProtocolRegistry::parse_protocol`] for Protocol-level resolution.
 
 pub mod codec;
-pub mod types;
 
 pub mod ids;
 pub mod ir;

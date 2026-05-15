@@ -10,7 +10,6 @@
 //! ├── metadata.rs         — VendorMetadata types
 //! ├── outbound.rs         — OutboundRequest (wire-format outbound)
 //! ├── inbound.rs          — InboundResponse (wire-format inbound)
-//! ├── stream.rs           — ProviderStreamParser trait
 //! ├── common/
 //! │   ├── openai_compat.rs — Bearer auth, URL helpers, openai_compat_vendor! macro
 //! │   └── pipeline.rs      — standard 7-step request/response pipeline
@@ -22,7 +21,6 @@ pub mod inbound;
 pub mod metadata;
 pub mod outbound;
 pub mod registry;
-pub mod stream;
 pub mod vendor;
 pub mod vendor_ext;
 
@@ -49,7 +47,6 @@ pub use metadata::{
 };
 pub use outbound::OutboundRequest;
 pub use registry::{ExtensionRegistration, VendorRegistration, VendorRegistry, VendorScope};
-pub use stream::{LegacyStreamParserAdapter, ProviderStreamParser};
 pub use vendor::ProviderCtx;
 pub use vendor::Vendor;
 pub use vendor_ext::{VendorCtx, VendorExtension};

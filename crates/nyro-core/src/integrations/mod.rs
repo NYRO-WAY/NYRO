@@ -19,7 +19,7 @@
 //!     ResponseHook, ResponseHookRegistration,
 //! };
 //! use nyro_core::error::GatewayError;
-//! use nyro_core::protocol::types::{InternalRequest, InternalResponse};
+//! use nyro_core::protocol::ir::{AiRequest, AiResponse};
 //! use async_trait::async_trait;
 //!
 //! struct MyAuditHook;

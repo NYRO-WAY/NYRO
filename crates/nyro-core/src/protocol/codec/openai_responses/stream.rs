@@ -3,9 +3,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 
 use crate::protocol::ir::AiStreamDelta;
-use crate::protocol::ir::compat::ai_stream_delta_to_old;
 use crate::protocol::ir::usage::Usage;
-use crate::protocol::types::StreamDelta;
 use crate::protocol::{SseEvent, StreamFormatter};
 
 struct PendingFunctionCall {
@@ -285,20 +283,18 @@ impl ResponsesStreamFormatter {
 
 impl StreamFormatter for ResponsesStreamFormatter {
     fn format_deltas(&mut self, deltas: &[AiStreamDelta]) -> Vec<SseEvent> {
-        let old: Vec<StreamDelta> = deltas.iter().map(ai_stream_delta_to_old).collect();
-        let deltas = old.as_slice();
         let mut events = Vec::new();
 
         for delta in deltas {
             match delta {
-                StreamDelta::MessageStart { id, model } => {
+                AiStreamDelta::MessageStart { id, model } => {
                     if !id.is_empty() {
                         self.resp_id = id.clone();
                     }
                     self.model = model.clone();
                     self.ensure_started(&mut events);
                 }
-                StreamDelta::ReasoningDelta(text) => {
+                AiStreamDelta::ThinkingDelta(text) => {
                     self.ensure_started(&mut events);
                     if self.reasoning_item_id.is_none() {
                         let item_id = format!("rs_{}", Uuid::new_v4().simple());
@@ -333,8 +329,8 @@ impl StreamFormatter for ResponsesStreamFormatter {
                         ev.to_string(),
                     ));
                 }
-                StreamDelta::ReasoningSignature(_) => {}
-                StreamDelta::TextDelta(text) => {
+                AiStreamDelta::ThinkingSignature(_) => {}
+                AiStreamDelta::TextDelta(text) => {
                     self.ensure_started(&mut events);
                     self.accumulated_text.push_str(text);
                     let ev = serde_json::json!({
@@ -349,7 +345,7 @@ impl StreamFormatter for ResponsesStreamFormatter {
                         ev.to_string(),
                     ));
                 }
-                StreamDelta::ToolCallStart { index, id, name } => {
+                AiStreamDelta::ToolCallStart { index, id, name } => {
                     self.ensure_started(&mut events);
                     let output_index = self.next_output_index;
                     self.next_output_index += 1;
@@ -386,7 +382,7 @@ impl StreamFormatter for ResponsesStreamFormatter {
                         added.to_string(),
                     ));
                 }
-                StreamDelta::ToolCallDelta { index, arguments } => {
+                AiStreamDelta::ToolCallDelta { index, arguments } => {
                     if let Some(pos) = self.tool_index_map.get(index).copied()
                         && let Some(call) = self.tool_calls.get_mut(pos)
                     {
@@ -403,7 +399,7 @@ impl StreamFormatter for ResponsesStreamFormatter {
                         ));
                     }
                 }
-                StreamDelta::Usage(u) => {
+                AiStreamDelta::Usage(u) => {
                     if u.prompt_tokens > 0 {
                         self.usage.prompt_tokens = u.prompt_tokens;
                     }
@@ -420,13 +416,13 @@ impl StreamFormatter for ResponsesStreamFormatter {
                         self.usage.server_tool_use = u.server_tool_use.clone();
                     }
                 }
-                StreamDelta::RawEvent { .. } => {}
-                StreamDelta::Done { .. } => {
+                AiStreamDelta::Done { .. } => {
                     if !self.completed {
                         self.completed = true;
                         events.extend(self.emit_completed());
                     }
                 }
+                _ => {}
             }
         }
 

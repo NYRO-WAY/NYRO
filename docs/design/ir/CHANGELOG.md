@@ -6,6 +6,47 @@
 
 ---
 
+## [PR-B] Stream Parser 直产 AiStreamDelta + 删除遗留文件 — 2026-05-16
+
+### 重命名 / 变更
+
+**4 个 codec stream parser（`openai_compatible/stream.rs`、`anthropic_messages/stream.rs`、`google_generative/stream.rs`、`openai_responses/parser.rs`）**
+- 内部状态机从产出 `types::StreamDelta` 改为直产 `ir::AiStreamDelta`，消除 `old_stream_delta_to_new` 转换层
+- `StreamDelta::ReasoningDelta` → `AiStreamDelta::ThinkingDelta`
+- `StreamDelta::ReasoningSignature` → `AiStreamDelta::ThinkingSignature`
+- `StreamDelta::RawEvent { event_type, data }` → `AiStreamDelta::Unknown { raw }` （格式：`"event: TYPE\ndata: DATA"`）
+
+**4 个 codec stream formatter（`openai_compatible/stream.rs`、`anthropic_messages/stream.rs`、`google_generative/stream.rs`、`openai_responses/stream.rs`）**
+- `format_deltas` 直接 match `AiStreamDelta` 变体，消除 `ai_stream_delta_to_old` 转换层
+
+**`parse_response` 中的 `types::ToolCall` 临时变量**（`openai_compatible`、`anthropic_messages`、`google_generative`、`openai_responses`）：改为直接构造 `ir::request::ToolCall`，去除 `.map(|tc| ir::request::ToolCall {...})` 转换
+
+### 删除
+
+- `crates/nyro-core/src/protocol/types.rs` — 整文件删除（`StreamDelta`、`ToolCall` 已无消费方）
+- `crates/nyro-core/src/protocol/ir/compat.rs` — 整文件删除（`old_stream_delta_to_new`、`ai_stream_delta_to_old` 不再被调用）
+- `crates/nyro-core/src/provider/stream.rs` — 整文件删除（`ProviderStreamParser` trait、`LegacyStreamParserAdapter`）
+
+### 清理
+
+- `protocol/mod.rs`：移除 `pub mod types;`
+- `protocol/ir/mod.rs`：移除 `pub mod compat;`，更新模块 doc comment
+- `provider/mod.rs`：移除 `pub mod stream;` 及 `LegacyStreamParserAdapter`/`ProviderStreamParser` re-export
+- `provider/vendor.rs`：从 `Vendor` trait 移除 `fn stream_parser()`
+- `provider/common/pipeline.rs`：移除 `stream_parser()` 工厂函数及相关 doc comment
+- 全部 13 个 vendor `mod.rs`：移除 `stream_parser()` impl 及 `ProviderStreamParser` import
+- `tests/passthrough_fidelity.rs`：移除 `ProviderStreamParser` import 及两处 `unreachable!()` stub
+- `integrations/mod.rs`：更新 doc comment 中的废弃类型引用
+
+### 完成态
+
+- 仓内不再有 `protocol/types.rs` / `protocol/ir/compat.rs` / `provider/stream.rs`
+- 不再有 `LegacyStreamParserAdapter` 或 `ProviderStreamParser`
+- IR 路径全栈端到端：`Decoder → AiRequest → Encoder → wire → Provider → wire → Parser → AiResponse / AiStreamDelta`，无任何中间老类型
+- 五个文件净删除，约 1600 行遗留代码清零
+
+---
+
 ## [PR-A] TokenUsage 重塑 + Encoder 直吃 IR — 2026-05-15
 
 ### 新增

@@ -1,10 +1,9 @@
 use anyhow::Result;
 use serde_json::Value;
 
-use crate::protocol::ir::compat::old_stream_delta_to_new;
+use crate::protocol::ir::request::ToolCall;
 use crate::protocol::ir::usage::Usage;
 use crate::protocol::ir::{AiResponse, AiStreamDelta};
-use crate::protocol::types::{StreamDelta, ToolCall};
 use crate::protocol::{ResponseParser, StreamParser};
 
 pub struct ResponsesResponseParser;
@@ -91,14 +90,7 @@ impl ResponseParser for ResponsesResponseParser {
 
         let mut ai_resp = AiResponse::new(id, model);
         ai_resp.content = content;
-        ai_resp.tool_calls = tool_calls
-            .into_iter()
-            .map(|tc| crate::protocol::ir::request::ToolCall {
-                id: tc.id,
-                name: tc.name,
-                arguments: tc.arguments,
-            })
-            .collect();
+        ai_resp.tool_calls = tool_calls;
         ai_resp.stop_reason = stop_reason;
         ai_resp.usage = usage;
         Ok(ai_resp)
@@ -145,7 +137,7 @@ impl StreamParser for ResponsesStreamParser {
                 };
                 let data = data.trim();
                 if data == "[DONE]" {
-                    deltas.push(StreamDelta::Done {
+                    deltas.push(AiStreamDelta::Done {
                         stop_reason: "stop".to_string(),
                     });
                     continue;
@@ -157,7 +149,7 @@ impl StreamParser for ResponsesStreamParser {
             }
         }
 
-        Ok(deltas.iter().map(old_stream_delta_to_new).collect())
+        Ok(deltas)
     }
 
     fn finish(&mut self) -> Result<Vec<AiStreamDelta>> {
@@ -170,7 +162,12 @@ impl StreamParser for ResponsesStreamParser {
 }
 
 impl ResponsesStreamParser {
-    fn parse_event(&mut self, event: Option<&str>, payload: &Value, deltas: &mut Vec<StreamDelta>) {
+    fn parse_event(
+        &mut self,
+        event: Option<&str>,
+        payload: &Value,
+        deltas: &mut Vec<AiStreamDelta>,
+    ) {
         match event.unwrap_or("") {
             "response.created" | "response.in_progress" => {
                 if self.started {
@@ -189,14 +186,14 @@ impl ResponsesStreamParser {
                     .to_string();
                 if !id.is_empty() || !model.is_empty() {
                     self.started = true;
-                    deltas.push(StreamDelta::MessageStart { id, model });
+                    deltas.push(AiStreamDelta::MessageStart { id, model });
                 }
             }
             "response.output_text.delta" => {
                 if let Some(text) = payload.get("delta").and_then(|v| v.as_str())
                     && !text.is_empty()
                 {
-                    deltas.push(StreamDelta::TextDelta(text.to_string()));
+                    deltas.push(AiStreamDelta::TextDelta(text.to_string()));
                 }
             }
             "response.reasoning_summary_text.delta" => {
@@ -206,7 +203,7 @@ impl ResponsesStreamParser {
                 if let Some(text) = payload.get("delta").and_then(|v| v.as_str())
                     && !text.is_empty()
                 {
-                    deltas.push(StreamDelta::ReasoningDelta(text.to_string()));
+                    deltas.push(AiStreamDelta::ThinkingDelta(text.to_string()));
                 }
             }
             "response.function_call_arguments.delta" => {
@@ -217,7 +214,7 @@ impl ResponsesStreamParser {
                 if let Some(arguments) = payload.get("delta").and_then(|v| v.as_str())
                     && !arguments.is_empty()
                 {
-                    deltas.push(StreamDelta::ToolCallDelta {
+                    deltas.push(AiStreamDelta::ToolCallDelta {
                         index,
                         arguments: arguments.to_string(),
                     });
@@ -242,7 +239,7 @@ impl ResponsesStreamParser {
                         .unwrap_or("")
                         .to_string();
                     if !id.is_empty() && !name.is_empty() {
-                        deltas.push(StreamDelta::ToolCallStart { index, id, name });
+                        deltas.push(AiStreamDelta::ToolCallStart { index, id, name });
                     }
                 }
             }
@@ -262,9 +259,9 @@ impl ResponsesStreamParser {
                     ..Usage::default()
                 };
                 if usage.prompt_tokens > 0 || usage.completion_tokens > 0 {
-                    deltas.push(StreamDelta::Usage(usage));
+                    deltas.push(AiStreamDelta::Usage(usage));
                 }
-                deltas.push(StreamDelta::Done {
+                deltas.push(AiStreamDelta::Done {
                     stop_reason: response
                         .get("status")
                         .and_then(|v| v.as_str())

@@ -2,10 +2,9 @@ use anyhow::Result;
 use serde_json::Value;
 use std::collections::HashMap;
 
-use crate::protocol::ir::compat::{ai_stream_delta_to_old, old_stream_delta_to_new};
+use crate::protocol::ir::request::ToolCall;
 use crate::protocol::ir::usage::Usage;
 use crate::protocol::ir::{AiResponse, AiStreamDelta};
-use crate::protocol::types::{StreamDelta, ToolCall};
 use crate::protocol::*;
 
 // ── Non-streaming response parser ──
@@ -70,14 +69,7 @@ impl ResponseParser for GoogleResponseParser {
 
         let mut ai_resp = AiResponse::new(format!("gen-{}", uuid::Uuid::new_v4().simple()), model);
         ai_resp.content = text;
-        ai_resp.tool_calls = tool_calls
-            .into_iter()
-            .map(|tc| crate::protocol::ir::request::ToolCall {
-                id: tc.id,
-                name: tc.name,
-                arguments: tc.arguments,
-            })
-            .collect();
+        ai_resp.tool_calls = tool_calls;
         ai_resp.stop_reason = stop_reason;
         ai_resp.usage = usage;
         Ok(ai_resp)
@@ -166,7 +158,7 @@ impl StreamParser for GoogleStreamParser {
             }
         }
 
-        Ok(deltas.iter().map(old_stream_delta_to_new).collect())
+        Ok(deltas)
     }
 
     fn finish(&mut self) -> Result<Vec<AiStreamDelta>> {
@@ -178,7 +170,7 @@ impl StreamParser for GoogleStreamParser {
     }
 }
 
-fn parse_gemini_chunk(chunk: &Value, deltas: &mut Vec<StreamDelta>, first: &mut bool) {
+fn parse_gemini_chunk(chunk: &Value, deltas: &mut Vec<AiStreamDelta>, first: &mut bool) {
     if *first {
         *first = false;
         let model = chunk
@@ -186,7 +178,7 @@ fn parse_gemini_chunk(chunk: &Value, deltas: &mut Vec<StreamDelta>, first: &mut 
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_string();
-        deltas.push(StreamDelta::MessageStart {
+        deltas.push(AiStreamDelta::MessageStart {
             id: format!("gen-{}", uuid::Uuid::new_v4().simple()),
             model,
         });
@@ -206,7 +198,7 @@ fn parse_gemini_chunk(chunk: &Value, deltas: &mut Vec<StreamDelta>, first: &mut 
             if let Some(text) = part.get("text").and_then(|t| t.as_str())
                 && !text.is_empty()
             {
-                deltas.push(StreamDelta::TextDelta(text.to_string()));
+                deltas.push(AiStreamDelta::TextDelta(text.to_string()));
             }
             if let Some(fc) = part.get("functionCall") {
                 let name = fc
@@ -215,14 +207,14 @@ fn parse_gemini_chunk(chunk: &Value, deltas: &mut Vec<StreamDelta>, first: &mut 
                     .unwrap_or("")
                     .to_string();
                 let id = format!("call_{}", uuid::Uuid::new_v4().simple());
-                deltas.push(StreamDelta::ToolCallStart {
+                deltas.push(AiStreamDelta::ToolCallStart {
                     index: 0,
                     id,
                     name: name.clone(),
                 });
                 let args = fc.get("args").map(|a| a.to_string()).unwrap_or_default();
                 if !args.is_empty() && args != "{}" {
-                    deltas.push(StreamDelta::ToolCallDelta {
+                    deltas.push(AiStreamDelta::ToolCallDelta {
                         index: 0,
                         arguments: args,
                     });
@@ -240,14 +232,14 @@ fn parse_gemini_chunk(chunk: &Value, deltas: &mut Vec<StreamDelta>, first: &mut 
             "MAX_TOKENS" => "length",
             other => other,
         };
-        deltas.push(StreamDelta::Done {
+        deltas.push(AiStreamDelta::Done {
             stop_reason: normalized.to_string(),
         });
     }
 
     let u = extract_gemini_usage(chunk);
     if u.prompt_tokens > 0 || u.completion_tokens > 0 {
-        deltas.push(StreamDelta::Usage(u));
+        deltas.push(AiStreamDelta::Usage(u));
     }
 }
 
@@ -279,16 +271,14 @@ impl GoogleStreamFormatter {
 
 impl StreamFormatter for GoogleStreamFormatter {
     fn format_deltas(&mut self, deltas: &[AiStreamDelta]) -> Vec<SseEvent> {
-        let old: Vec<StreamDelta> = deltas.iter().map(ai_stream_delta_to_old).collect();
-        let deltas = old.as_slice();
         let mut events = Vec::new();
 
         for delta in deltas {
             match delta {
-                StreamDelta::MessageStart { model, .. } => {
+                AiStreamDelta::MessageStart { model, .. } => {
                     self.model = model.clone();
                 }
-                StreamDelta::ReasoningDelta(text) => {
+                AiStreamDelta::ThinkingDelta(text) => {
                     let chunk = serde_json::json!({
                         "candidates": [{
                             "content": {"role": "model", "parts": [{"text": text}]},
@@ -297,8 +287,8 @@ impl StreamFormatter for GoogleStreamFormatter {
                     });
                     events.push(SseEvent::new(None, chunk.to_string()));
                 }
-                StreamDelta::ReasoningSignature(_) => {}
-                StreamDelta::TextDelta(text) => {
+                AiStreamDelta::ThinkingSignature(_) => {}
+                AiStreamDelta::TextDelta(text) => {
                     let chunk = serde_json::json!({
                         "candidates": [{
                             "content": {"role": "model", "parts": [{"text": text}]},
@@ -307,11 +297,11 @@ impl StreamFormatter for GoogleStreamFormatter {
                     });
                     events.push(SseEvent::new(None, chunk.to_string()));
                 }
-                StreamDelta::ToolCallStart { index, id: _, name } => {
+                AiStreamDelta::ToolCallStart { index, id: _, name } => {
                     self.tool_names.insert(*index, name.clone());
                     self.tool_arg_buffers.insert(*index, String::new());
                 }
-                StreamDelta::ToolCallDelta { index, arguments } => {
+                AiStreamDelta::ToolCallDelta { index, arguments } => {
                     let Some(name) = self.tool_names.get(index).cloned() else {
                         continue;
                     };
@@ -330,7 +320,7 @@ impl StreamFormatter for GoogleStreamFormatter {
                     });
                     events.push(SseEvent::new(None, chunk.to_string()));
                 }
-                StreamDelta::Usage(u) => {
+                AiStreamDelta::Usage(u) => {
                     if u.prompt_tokens > 0 {
                         self.usage.prompt_tokens = u.prompt_tokens;
                     }
@@ -338,8 +328,7 @@ impl StreamFormatter for GoogleStreamFormatter {
                         self.usage.completion_tokens = u.completion_tokens;
                     }
                 }
-                StreamDelta::RawEvent { .. } => {}
-                StreamDelta::Done { stop_reason } => {
+                AiStreamDelta::Done { stop_reason } => {
                     let gemini_reason = match stop_reason.as_str() {
                         "stop" => "STOP",
                         "length" => "MAX_TOKENS",
@@ -358,6 +347,7 @@ impl StreamFormatter for GoogleStreamFormatter {
                     });
                     events.push(SseEvent::new(None, chunk.to_string()));
                 }
+                _ => {}
             }
         }
 

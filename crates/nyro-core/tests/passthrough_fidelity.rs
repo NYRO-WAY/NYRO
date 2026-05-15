@@ -33,7 +33,6 @@ use nyro_core::protocol::ir::{AiRequest, AiResponse};
 use nyro_core::provider::inbound::InboundResponse;
 use nyro_core::provider::outbound::OutboundRequest;
 use nyro_core::provider::registry::VendorScope;
-use nyro_core::provider::stream::ProviderStreamParser;
 use nyro_core::provider::vendor::{ProviderCtx, Vendor};
 use nyro_core::provider::vendor_ext::VendorCtx;
 use nyro_core::proxy::context::RequestContext;
@@ -146,9 +145,6 @@ impl Vendor for BearerVendor {
         _resp: InboundResponse,
         _ctx: &ProviderCtx<'_>,
     ) -> Result<AiResponse, GatewayError> {
-        unreachable!()
-    }
-    fn stream_parser(&self, _ctx: &ProviderCtx<'_>) -> Box<dyn ProviderStreamParser + Send> {
         unreachable!()
     }
     fn map_error(&self, status: u16, _body: Value) -> GatewayError {
@@ -477,9 +473,6 @@ fn vendor_declared_mutations_defaults_are_conservative() {
             _: InboundResponse,
             _: &ProviderCtx<'_>,
         ) -> Result<AiResponse, GatewayError> {
-            unreachable!()
-        }
-        fn stream_parser(&self, _: &ProviderCtx<'_>) -> Box<dyn ProviderStreamParser + Send> {
             unreachable!()
         }
         fn map_error(&self, s: u16, _: Value) -> GatewayError {

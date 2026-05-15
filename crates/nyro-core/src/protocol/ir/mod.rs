@@ -1,4 +1,4 @@
-//! New Internal Representation (IR) for the Nyro AI Gateway.
+//! Internal Representation (IR) for the Nyro AI Gateway.
 //!
 //! # Design principles
 //!
@@ -7,15 +7,11 @@
 //!    See `docs/design/ir/FIELD_HOMING.md` for the authoritative decision table.
 //! 2. **Lossless envelope** — `RawEnvelope` keeps a snapshot of the original
 //!    request body + headers for pass-through and audit.
-//! 3. **Parallel deployment** — old `InternalRequest`/`InternalResponse` in
-//!    `protocol/types.rs` stay as `#[deprecated]` shims via `From` impls in
-//!    `compat.rs`.  No breaking change until all codec PRs are done.
-//! 4. **Repair, not validate** — `repair.rs` performs single-direction
+//! 3. **Repair, not validate** — `repair.rs` performs single-direction
 //!    mutations (fill missing `tool_call_id`, fix orphaned refs) without
 //!    rejecting the request.
 
 pub mod cache;
-pub mod compat;
 pub mod envelope;
 pub mod error;
 pub mod ext;

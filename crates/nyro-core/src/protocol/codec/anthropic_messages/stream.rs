@@ -2,10 +2,9 @@ use anyhow::Result;
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::protocol::ir::compat::{ai_stream_delta_to_old, old_stream_delta_to_new};
+use crate::protocol::ir::request::ToolCall;
 use crate::protocol::ir::usage::{ServerToolUsage, Usage};
 use crate::protocol::ir::{AiResponse, AiStreamDelta};
-use crate::protocol::types::{StreamDelta, ToolCall};
 use crate::protocol::*;
 
 // ── Non-streaming response parser ──
@@ -101,14 +100,7 @@ impl ResponseParser for AnthropicResponseParser {
         ai_resp.content = content_text;
         ai_resp.reasoning_content = reasoning_content;
         ai_resp.reasoning_signature = reasoning_signature;
-        ai_resp.tool_calls = tool_calls
-            .into_iter()
-            .map(|tc| crate::protocol::ir::request::ToolCall {
-                id: tc.id,
-                name: tc.name,
-                arguments: tc.arguments,
-            })
-            .collect();
+        ai_resp.tool_calls = tool_calls;
         ai_resp.stop_reason = stop_reason;
         ai_resp.usage = usage;
         Ok(ai_resp)
@@ -233,7 +225,7 @@ impl StreamParser for AnthropicStreamParser {
             }
         }
 
-        Ok(deltas.iter().map(old_stream_delta_to_new).collect())
+        Ok(deltas)
     }
 
     fn finish(&mut self) -> Result<Vec<AiStreamDelta>> {
@@ -245,7 +237,7 @@ impl StreamParser for AnthropicStreamParser {
     }
 }
 
-fn parse_anthropic_event(event_type: Option<&str>, data: &Value, deltas: &mut Vec<StreamDelta>) {
+fn parse_anthropic_event(event_type: Option<&str>, data: &Value, deltas: &mut Vec<AiStreamDelta>) {
     match event_type {
         Some("message_start") => {
             if let Some(msg) = data.get("message") {
@@ -267,9 +259,9 @@ fn parse_anthropic_event(event_type: Option<&str>, data: &Value, deltas: &mut Ve
                     || u.cache_creation_tokens.is_some()
                     || u.server_tool_use.is_some()
                 {
-                    deltas.push(StreamDelta::Usage(u));
+                    deltas.push(AiStreamDelta::Usage(u));
                 }
-                deltas.push(StreamDelta::MessageStart { id, model });
+                deltas.push(AiStreamDelta::MessageStart { id, model });
             }
         }
         Some("content_block_start") => {
@@ -287,7 +279,7 @@ fn parse_anthropic_event(event_type: Option<&str>, data: &Value, deltas: &mut Ve
                             .and_then(|v| v.as_str())
                             .unwrap_or("")
                             .to_string();
-                        deltas.push(StreamDelta::ToolCallStart {
+                        deltas.push(AiStreamDelta::ToolCallStart {
                             index: idx,
                             id,
                             name,
@@ -297,9 +289,8 @@ fn parse_anthropic_event(event_type: Option<&str>, data: &Value, deltas: &mut Ve
                     // mcp_tool_use, etc.) and any future block types not yet known:
                     // forward verbatim so downstream clients receive the full event.
                     _ => {
-                        deltas.push(StreamDelta::RawEvent {
-                            event_type: "content_block_start".to_string(),
-                            data: data.clone(),
+                        deltas.push(AiStreamDelta::Unknown {
+                            raw: format!("event: content_block_start\ndata: {data}"),
                         });
                     }
                 }
@@ -310,7 +301,7 @@ fn parse_anthropic_event(event_type: Option<&str>, data: &Value, deltas: &mut Ve
                 match delta.get("type").and_then(|t| t.as_str()) {
                     Some("text_delta") => {
                         if let Some(text) = delta.get("text").and_then(|t| t.as_str()) {
-                            deltas.push(StreamDelta::TextDelta(text.to_string()));
+                            deltas.push(AiStreamDelta::TextDelta(text.to_string()));
                         }
                     }
                     Some("thinking_delta") => {
@@ -320,7 +311,7 @@ fn parse_anthropic_event(event_type: Option<&str>, data: &Value, deltas: &mut Ve
                             .and_then(|t| t.as_str())
                             .filter(|text| !text.is_empty())
                         {
-                            deltas.push(StreamDelta::ReasoningDelta(text.to_string()));
+                            deltas.push(AiStreamDelta::ThinkingDelta(text.to_string()));
                         }
                     }
                     Some("signature_delta") => {
@@ -329,14 +320,14 @@ fn parse_anthropic_event(event_type: Option<&str>, data: &Value, deltas: &mut Ve
                             .and_then(|t| t.as_str())
                             .filter(|signature| !signature.is_empty())
                         {
-                            deltas.push(StreamDelta::ReasoningSignature(signature.to_string()));
+                            deltas.push(AiStreamDelta::ThinkingSignature(signature.to_string()));
                         }
                     }
                     Some("input_json_delta") => {
                         if let Some(json) = delta.get("partial_json").and_then(|t| t.as_str()) {
                             let idx =
                                 data.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-                            deltas.push(StreamDelta::ToolCallDelta {
+                            deltas.push(AiStreamDelta::ToolCallDelta {
                                 index: idx,
                                 arguments: json.to_string(),
                             });
@@ -346,9 +337,8 @@ fn parse_anthropic_event(event_type: Option<&str>, data: &Value, deltas: &mut Ve
                     // citations_delta, code_execution_tool_result_delta):
                     // forward verbatim.
                     _ => {
-                        deltas.push(StreamDelta::RawEvent {
-                            event_type: "content_block_delta".to_string(),
-                            data: data.clone(),
+                        deltas.push(AiStreamDelta::Unknown {
+                            raw: format!("event: content_block_delta\ndata: {data}"),
                         });
                     }
                 }
@@ -366,7 +356,7 @@ fn parse_anthropic_event(event_type: Option<&str>, data: &Value, deltas: &mut Ve
                 || u.cache_creation_tokens.is_some()
                 || u.server_tool_use.is_some()
             {
-                deltas.push(StreamDelta::Usage(u));
+                deltas.push(AiStreamDelta::Usage(u));
             }
             if let Some(delta) = data.get("delta")
                 && let Some(reason) = delta.get("stop_reason").and_then(|v| v.as_str())
@@ -376,17 +366,16 @@ fn parse_anthropic_event(event_type: Option<&str>, data: &Value, deltas: &mut Ve
                     "tool_use" => "tool_calls",
                     other => other,
                 };
-                deltas.push(StreamDelta::Done {
+                deltas.push(AiStreamDelta::Done {
                     stop_reason: normalized.to_string(),
                 });
             }
         }
         Some("ping") | Some("content_block_stop") | Some("message_stop") => {}
         // Unknown top-level event types: forward verbatim so no data is dropped.
-        Some(_) => {
-            deltas.push(StreamDelta::RawEvent {
-                event_type: event_type.unwrap_or("unknown").to_string(),
-                data: data.clone(),
+        Some(ev) => {
+            deltas.push(AiStreamDelta::Unknown {
+                raw: format!("event: {ev}\ndata: {data}"),
             });
         }
         None => {}
@@ -455,18 +444,16 @@ impl AnthropicStreamFormatter {
 
 impl StreamFormatter for AnthropicStreamFormatter {
     fn format_deltas(&mut self, deltas: &[AiStreamDelta]) -> Vec<SseEvent> {
-        let old: Vec<StreamDelta> = deltas.iter().map(ai_stream_delta_to_old).collect();
-        let deltas = old.as_slice();
         let mut events = Vec::new();
 
         for delta in deltas {
             match delta {
-                StreamDelta::MessageStart { id, model } => {
+                AiStreamDelta::MessageStart { id, model } => {
                     self.id = id.clone();
                     self.model = model.clone();
                     self.ensure_message_start(&mut events);
                 }
-                StreamDelta::ReasoningDelta(text) => {
+                AiStreamDelta::ThinkingDelta(text) => {
                     self.ensure_message_start(&mut events);
                     self.close_text_block_if_open(&mut events);
                     if !self.in_thinking_block {
@@ -491,7 +478,7 @@ impl StreamFormatter for AnthropicStreamFormatter {
                         delta_ev.to_string(),
                     ));
                 }
-                StreamDelta::ReasoningSignature(signature) => {
+                AiStreamDelta::ThinkingSignature(signature) => {
                     self.ensure_message_start(&mut events);
                     self.close_text_block_if_open(&mut events);
                     if !self.in_thinking_block {
@@ -516,7 +503,7 @@ impl StreamFormatter for AnthropicStreamFormatter {
                         delta_ev.to_string(),
                     ));
                 }
-                StreamDelta::TextDelta(text) => {
+                AiStreamDelta::TextDelta(text) => {
                     if !self.in_text_block && text.trim().is_empty() {
                         continue;
                     }
@@ -545,7 +532,7 @@ impl StreamFormatter for AnthropicStreamFormatter {
                         delta_ev.to_string(),
                     ));
                 }
-                StreamDelta::ToolCallStart { index: _, id, name } => {
+                AiStreamDelta::ToolCallStart { index: _, id, name } => {
                     self.ensure_message_start(&mut events);
                     self.close_thinking_block_if_open(&mut events);
                     self.close_text_block_if_open(&mut events);
@@ -566,7 +553,7 @@ impl StreamFormatter for AnthropicStreamFormatter {
                     ));
                     self.in_tool_block = true;
                 }
-                StreamDelta::ToolCallDelta {
+                AiStreamDelta::ToolCallDelta {
                     index: _,
                     arguments,
                 } => {
@@ -580,7 +567,7 @@ impl StreamFormatter for AnthropicStreamFormatter {
                         delta_ev.to_string(),
                     ));
                 }
-                StreamDelta::Usage(u) => {
+                AiStreamDelta::Usage(u) => {
                     if u.prompt_tokens > 0 {
                         self.usage.prompt_tokens = u.prompt_tokens;
                     }
@@ -597,7 +584,7 @@ impl StreamFormatter for AnthropicStreamFormatter {
                         self.usage.server_tool_use = u.server_tool_use.clone();
                     }
                 }
-                StreamDelta::Done { stop_reason } => {
+                AiStreamDelta::Done { stop_reason } => {
                     self.ensure_message_start(&mut events);
                     self.close_thinking_block_if_open(&mut events);
                     self.close_text_block_if_open(&mut events);
@@ -622,11 +609,22 @@ impl StreamFormatter for AnthropicStreamFormatter {
                         r#"{"type":"message_stop"}"#,
                     ));
                 }
-                // Verbatim pass-through for Anthropic server-tool events and any
-                // future event types not yet handled by the codec.
-                StreamDelta::RawEvent { event_type, data } => {
-                    events.push(SseEvent::new(Some(event_type.as_str()), data.to_string()));
+                // Pass-through: raw is in SSE format "event: TYPE\ndata: DATA".
+                AiStreamDelta::Unknown { raw } => {
+                    let mut ev_type = None;
+                    let mut ev_data = String::new();
+                    for line in raw.lines() {
+                        if let Some(t) = line.strip_prefix("event: ") {
+                            ev_type = Some(t.to_string());
+                        } else if let Some(d) = line.strip_prefix("data: ") {
+                            ev_data = d.to_string();
+                        }
+                    }
+                    if let Some(et) = ev_type {
+                        events.push(SseEvent::new(Some(et.as_str()), ev_data));
+                    }
                 }
+                _ => {}
             }
         }
 
