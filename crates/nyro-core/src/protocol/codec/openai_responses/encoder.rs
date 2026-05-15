@@ -14,7 +14,9 @@ use reqwest::header::HeaderMap;
 use serde_json::Value;
 
 use crate::protocol::EgressEncoder;
-use crate::protocol::types::*;
+use crate::protocol::ir::AiRequest;
+use crate::protocol::ir::compat::{ai_msg_to_old_ref, ai_tool_choice_to_value};
+use crate::protocol::types::{InternalMessage, Role};
 
 /// Encoder for the OpenAI Responses API (`POST /v1/responses`).
 ///
@@ -26,11 +28,16 @@ pub struct ResponsesEncoder;
 const SKIP_FROM_EXTRA: &[&str] = &["messages", "input", "instructions", "stream", "model"];
 
 impl EgressEncoder for ResponsesEncoder {
-    fn encode_request(&self, req: &InternalRequest) -> Result<(Value, HeaderMap)> {
+    fn encode_request(&self, req: &AiRequest) -> Result<(Value, HeaderMap)> {
+        let old_messages: Vec<InternalMessage> =
+            req.messages.iter().map(ai_msg_to_old_ref).collect();
+
+        let ingress = &req.meta.vendor.ingress;
+
         let mut instructions: Vec<String> = Vec::new();
         let mut input: Vec<Value> = Vec::new();
 
-        for message in &req.messages {
+        for message in &old_messages {
             match message.role {
                 Role::System => {
                     let text = message.content.as_text();
@@ -88,8 +95,7 @@ impl EgressEncoder for ResponsesEncoder {
         };
 
         // Determine `store` — default false unless the request explicitly set it.
-        let store = req
-            .extra
+        let store = ingress
             .get("store")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
@@ -103,23 +109,19 @@ impl EgressEncoder for ResponsesEncoder {
         });
         let obj = body.as_object_mut().unwrap();
 
-        if let Some(t) = req.temperature {
+        if let Some(t) = req.generation.temperature {
             obj.insert("temperature".into(), t.into());
         }
-        if let Some(p) = req.top_p {
+        if let Some(p) = req.generation.top_p {
             obj.insert("top_p".into(), p.into());
         }
-        // max_tokens is intentionally NOT forwarded as max_output_tokens here.
-        // The Codex backend rejects this field; callers that need a token cap
-        // must set it explicitly via req.extra["max_output_tokens"].
 
         // ── Tools (function + built-in) ───────────────────────────────────────
         if let Some(ref tools) = req.tools {
             let tools_val: Vec<Value> = tools
                 .iter()
                 .map(|t| {
-                    if let Some(_builtin_type) = t.name.strip_prefix("__builtin__") {
-                        // Reconstruct built-in tool from the raw parameters blob.
+                    if t.name.starts_with("__builtin__") {
                         t.parameters.clone()
                     } else {
                         serde_json::json!({
@@ -134,10 +136,9 @@ impl EgressEncoder for ResponsesEncoder {
             obj.insert("tools".into(), Value::Array(tools_val));
         }
         if let Some(ref tc) = req.tool_choice {
-            obj.insert("tool_choice".into(), tc.clone());
+            obj.insert("tool_choice".into(), ai_tool_choice_to_value(tc));
         }
 
-        // ── PR-09 named extra fields ──────────────────────────────────────────
         for key in &[
             "background",
             "previous_response_id",
@@ -150,13 +151,13 @@ impl EgressEncoder for ResponsesEncoder {
             "service_tier",
             "user",
         ] {
-            if let Some(v) = req.extra.get(*key) {
+            if let Some(v) = ingress.get(*key) {
                 obj.entry(key.to_string()).or_insert_with(|| v.clone());
             }
         }
 
         // Passthrough remaining unknown extra fields.
-        for (k, v) in &req.extra {
+        for (k, v) in ingress {
             if SKIP_FROM_EXTRA.contains(&k.as_str()) {
                 continue;
             }

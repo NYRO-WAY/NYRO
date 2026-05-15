@@ -3,19 +3,25 @@ use reqwest::header::{HeaderMap, HeaderValue};
 use serde_json::Value;
 
 use crate::protocol::EgressEncoder;
+use crate::protocol::ir::AiRequest;
+use crate::protocol::ir::compat::{ai_msg_to_old_ref, ai_tool_choice_to_value};
 use crate::protocol::types::*;
 
 pub struct AnthropicEncoder;
 
 impl EgressEncoder for AnthropicEncoder {
-    fn encode_request(&self, req: &InternalRequest) -> Result<(Value, HeaderMap)> {
+    fn encode_request(&self, req: &AiRequest) -> Result<(Value, HeaderMap)> {
+        let old_messages: Vec<InternalMessage> =
+            req.messages.iter().map(ai_msg_to_old_ref).collect();
+        let ingress = &req.meta.vendor.ingress;
+
         // ── System ────────────────────────────────────────────────────────────
         // Prefer __anthropic_raw_system (preserves cache_control) if present.
-        let system_val: Option<Value> = if let Some(v) = req.extra.get("__anthropic_raw_system") {
+        let system_val: Option<Value> = if let Some(v) = ingress.get("__anthropic_raw_system") {
             Some(v.clone())
         } else {
             let mut system_text = String::new();
-            for msg in &req.messages {
+            for msg in &old_messages {
                 if msg.role == Role::System {
                     if !system_text.is_empty() {
                         system_text.push('\n');
@@ -33,11 +39,11 @@ impl EgressEncoder for AnthropicEncoder {
         // ── Messages ──────────────────────────────────────────────────────────
         // Prefer __anthropic_raw_messages (preserves cache_control / exotic
         // blocks) if present; otherwise reconstruct from InternalMessage.
-        let messages_val: Value = if let Some(v) = req.extra.get("__anthropic_raw_messages") {
+        let messages_val: Value = if let Some(v) = ingress.get("__anthropic_raw_messages") {
             v.clone()
         } else {
             let mut raw_messages = Vec::new();
-            for msg in &req.messages {
+            for msg in &old_messages {
                 if msg.role == Role::System {
                     continue;
                 }
@@ -46,13 +52,13 @@ impl EgressEncoder for AnthropicEncoder {
             Value::Array(normalize_anthropic_messages(raw_messages))
         };
 
-        let max_tokens = req.max_tokens.unwrap_or(4096);
+        let max_tokens = req.generation.max_tokens.unwrap_or(4096);
 
         let mut body = serde_json::json!({
             "model": req.model,
             "messages": messages_val,
             "max_tokens": max_tokens,
-            "stream": req.stream,
+            "stream": req.stream.enabled,
         });
 
         let obj = body.as_object_mut().unwrap();
@@ -60,23 +66,22 @@ impl EgressEncoder for AnthropicEncoder {
         if let Some(sv) = system_val {
             obj.insert("system".into(), sv);
         }
-        if let Some(t) = req.temperature {
+        if let Some(t) = req.generation.temperature {
             obj.insert("temperature".into(), t.into());
         }
-        if let Some(p) = req.top_p {
+        if let Some(p) = req.generation.top_p {
             obj.insert("top_p".into(), p.into());
         }
 
         // ── Tools ─────────────────────────────────────────────────────────────
         // Prefer raw tools (preserves cache_control) if present.
-        if let Some(raw_tools) = req.extra.get("__anthropic_raw_tools") {
+        if let Some(raw_tools) = ingress.get("__anthropic_raw_tools") {
             obj.insert("tools".into(), raw_tools.clone());
         } else if let Some(ref tools) = req.tools {
             let tools_val: Vec<Value> = tools
                 .iter()
                 .map(|t| {
                     if let Some(builtin_type) = t.name.strip_prefix("__builtin__") {
-                        // Reconstruct built-in tool entry.
                         let mut entry = serde_json::json!({
                             "type": builtin_type,
                             "name": builtin_type,
@@ -101,17 +106,16 @@ impl EgressEncoder for AnthropicEncoder {
         }
 
         // ── Tool choice ───────────────────────────────────────────────────────
-        if let Some(mapped_tool_choice) = req
-            .tool_choice
-            .as_ref()
-            .and_then(map_tool_choice_for_anthropic)
-        {
-            obj.insert("tool_choice".into(), mapped_tool_choice);
+        if let Some(ref tc) = req.tool_choice {
+            let raw = ai_tool_choice_to_value(tc);
+            if let Some(mapped) = map_tool_choice_for_anthropic(&raw) {
+                obj.insert("tool_choice".into(), mapped);
+            }
         }
 
-        // ── PR-10 extra fields ────────────────────────────────────────────────
+        // ── Extra fields ──────────────────────────────────────────────────────
         for key in &["__anthropic_thinking", "__anthropic_context_management"] {
-            if let Some(v) = req.extra.get(*key) {
+            if let Some(v) = ingress.get(*key) {
                 let field_name = key.trim_start_matches("__anthropic_");
                 obj.insert(field_name.into(), v.clone());
             }
@@ -123,7 +127,7 @@ impl EgressEncoder for AnthropicEncoder {
             "__anthropic_stop_sequences",
             "__anthropic_top_k",
         ] {
-            if let Some(v) = req.extra.get(*key) {
+            if let Some(v) = ingress.get(*key) {
                 let field_name = key.trim_start_matches("__anthropic_");
                 obj.insert(field_name.into(), v.clone());
             }

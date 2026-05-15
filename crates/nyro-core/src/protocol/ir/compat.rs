@@ -10,13 +10,15 @@
 
 use crate::protocol::ir::request::{
     AiRequest, ContentBlock, GenerationConfig, MediaSource, Message, MessageContent, Role,
-    StreamConfig, ToolCall, ToolSpec,
+    StreamConfig, ToolCall, ToolChoice, ToolSpec,
 };
 use crate::protocol::ir::response::AiResponse;
 use crate::protocol::types::{
-    ContentBlock as OldContentBlock, InternalMessage, InternalRequest, InternalResponse,
-    MessageContent as OldMessageContent, Role as OldRole, ToolCall as OldToolCall, ToolDef,
+    ContentBlock as OldContentBlock, ImageSource, InternalMessage, InternalRequest,
+    InternalResponse, MessageContent as OldMessageContent, Role as OldRole,
+    ToolCall as OldToolCall, ToolDef,
 };
+use serde_json::Value;
 
 // ── InternalRequest → AiRequest ───────────────────────────────────────────────
 
@@ -336,6 +338,111 @@ impl From<AiResponse> for InternalResponse {
             stop_reason: new.stop_reason,
             usage: new.usage,
         }
+    }
+}
+
+// ── By-ref helpers used by encoders after PR-3 ───────────────────────────────
+
+/// Convert an IR `Message` to the old `InternalMessage` format (borrows; clones fields).
+pub(crate) fn ai_msg_to_old_ref(msg: &Message) -> InternalMessage {
+    let extra = match &msg.meta {
+        Some(Value::Object(obj)) => obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+        _ => Default::default(),
+    };
+    InternalMessage {
+        role: role_to_old(msg.role),
+        content: content_to_old_ref(&msg.content),
+        tool_calls: msg.tool_calls.as_ref().map(|tcs| {
+            tcs.iter()
+                .map(|tc| OldToolCall {
+                    id: tc.id.clone(),
+                    name: tc.name.clone(),
+                    arguments: tc.arguments.clone(),
+                })
+                .collect()
+        }),
+        tool_call_id: msg.tool_call_id.clone(),
+        extra,
+    }
+}
+
+fn content_to_old_ref(c: &MessageContent) -> OldMessageContent {
+    match c {
+        MessageContent::Text(t) => OldMessageContent::Text(t.clone()),
+        MessageContent::Blocks(bs) => {
+            OldMessageContent::Blocks(bs.iter().filter_map(block_to_old_ref).collect())
+        }
+    }
+}
+
+fn block_to_old_ref(b: &ContentBlock) -> Option<OldContentBlock> {
+    match b {
+        ContentBlock::Text { text, .. } => Some(OldContentBlock::Text { text: text.clone() }),
+        ContentBlock::Image { source, .. } => match source {
+            MediaSource::Base64 { media_type, data } => Some(OldContentBlock::Image {
+                source: ImageSource {
+                    media_type: media_type.clone(),
+                    data: data.clone(),
+                },
+            }),
+            MediaSource::Url(url) => Some(OldContentBlock::Image {
+                source: ImageSource {
+                    media_type: "image/url".to_string(),
+                    data: url.clone(),
+                },
+            }),
+            MediaSource::FileId { file_id, .. } => Some(OldContentBlock::Image {
+                source: ImageSource {
+                    media_type: "image/file_id".to_string(),
+                    data: file_id.clone(),
+                },
+            }),
+        },
+        ContentBlock::Thinking {
+            thinking,
+            signature,
+        } => Some(OldContentBlock::Reasoning {
+            text: thinking.clone(),
+            signature: signature.clone(),
+        }),
+        ContentBlock::ToolUse {
+            id, name, input, ..
+        } => Some(OldContentBlock::ToolUse {
+            id: id.clone(),
+            name: name.clone(),
+            input: input.clone(),
+        }),
+        ContentBlock::ToolResult {
+            tool_use_id,
+            content,
+            ..
+        } => Some(OldContentBlock::ToolResult {
+            tool_use_id: tool_use_id.clone(),
+            content: content.clone(),
+        }),
+        _ => None,
+    }
+}
+
+/// Convert an IR `ToolChoice` to a raw JSON `Value` for legacy encoders.
+pub(crate) fn ai_tool_choice_to_value(tc: &ToolChoice) -> Value {
+    match tc {
+        ToolChoice::Auto => Value::String("auto".into()),
+        ToolChoice::None => Value::String("none".into()),
+        ToolChoice::Required => Value::String("required".into()),
+        ToolChoice::Named { name } => {
+            serde_json::json!({ "type": "function", "function": { "name": name } })
+        }
+        ToolChoice::Raw(v) => v.clone(),
+    }
+}
+
+/// Convert an IR `ToolSpec` to the old `ToolDef` format.
+pub(crate) fn ai_tool_spec_to_old_ref(ts: &ToolSpec) -> ToolDef {
+    ToolDef {
+        name: ts.name.clone(),
+        description: ts.description.clone(),
+        parameters: ts.parameters.clone(),
     }
 }
 

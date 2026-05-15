@@ -136,7 +136,7 @@ fn anthropic_encoder_replays_reasoning_extra_as_thinking_block() {
     };
 
     let (body, _) = AnthropicEncoder
-        .encode_request(&req)
+        .encode_request(&req.clone().into())
         .expect("encode anthropic body");
     let blocks = body["messages"][0]["content"]
         .as_array()
@@ -515,9 +515,8 @@ fn anthropic_thinking_block_round_trips_with_signature() {
             if thinking == "review prior tool output" && signature.as_deref() == Some("sig_123")
     ));
 
-    let req_old: InternalRequest = req.into();
     let (encoded, _) = AnthropicEncoder
-        .encode_request(&req_old)
+        .encode_request(&req.clone().into())
         .expect("encode anthropic request");
     let block = encoded
         .get("messages")
@@ -560,7 +559,7 @@ fn openai_encoder_injects_synthetic_tool_call_before_orphan_tool_result() {
     };
 
     let (body, _) = OpenAIEncoder
-        .encode_request(&req)
+        .encode_request(&req.clone().into())
         .expect("encode openai body");
     let messages = body
         .get("messages")
@@ -623,7 +622,7 @@ fn openai_encoder_injects_adjacent_tool_call_for_non_adjacent_match() {
     };
 
     let (body, _) = OpenAIEncoder
-        .encode_request(&req)
+        .encode_request(&req.clone().into())
         .expect("encode openai body");
     let messages = body
         .get("messages")
@@ -696,7 +695,7 @@ fn openai_encoder_drops_intermediate_assistant_text_before_tool_result() {
     };
 
     let (body, _) = OpenAIEncoder
-        .encode_request(&req)
+        .encode_request(&req.clone().into())
         .expect("encode openai body");
     let messages = body
         .get("messages")
@@ -781,7 +780,7 @@ fn openai_encoder_remaps_duplicate_tool_call_ids() {
     };
 
     let (body, _) = OpenAIEncoder
-        .encode_request(&req)
+        .encode_request(&req.clone().into())
         .expect("encode openai body");
     let messages = body
         .get("messages")
@@ -840,7 +839,7 @@ fn anthropic_encoder_maps_required_tool_choice_to_any() {
     };
 
     let (body, _) = AnthropicEncoder
-        .encode_request(&req)
+        .encode_request(&req.clone().into())
         .expect("encode anthropic body");
     assert_eq!(
         body.get("tool_choice")
@@ -879,7 +878,7 @@ fn anthropic_encoder_maps_function_tool_choice_to_tool_name() {
     };
 
     let (body, _) = AnthropicEncoder
-        .encode_request(&req)
+        .encode_request(&req.clone().into())
         .expect("encode anthropic body");
     assert_eq!(
         body.get("tool_choice")
@@ -951,7 +950,7 @@ fn anthropic_encoder_merges_consecutive_roles_and_drops_empty_text() {
     };
 
     let (body, _) = AnthropicEncoder
-        .encode_request(&req)
+        .encode_request(&req.clone().into())
         .expect("encode anthropic body");
     let msgs = body
         .get("messages")
@@ -1022,7 +1021,7 @@ fn anthropic_encoder_normalizes_tool_use_ids_for_tool_and_result() {
     };
 
     let (body, _) = AnthropicEncoder
-        .encode_request(&req)
+        .encode_request(&req.clone().into())
         .expect("encode anthropic body");
     let msgs = body
         .get("messages")
@@ -1123,7 +1122,9 @@ fn openai_encoder_remaps_reused_tool_result_id_with_synthetic_adjacent_call() {
         extra: Default::default(),
     };
 
-    let (body, _) = OpenAIEncoder.encode_request(&req).expect("encode");
+    let (body, _) = OpenAIEncoder
+        .encode_request(&req.clone().into())
+        .expect("encode");
     let msgs = body
         .get("messages")
         .and_then(|v| v.as_array())
@@ -1196,7 +1197,9 @@ fn openai_encoder_rewrites_multi_tool_call_history_to_adjacent_pairs() {
         extra: Default::default(),
     };
 
-    let (body, _) = OpenAIEncoder.encode_request(&req).expect("encode");
+    let (body, _) = OpenAIEncoder
+        .encode_request(&req.clone().into())
+        .expect("encode");
     let msgs = body
         .get("messages")
         .and_then(|v| v.as_array())
@@ -1312,7 +1315,7 @@ fn openai_encoder_preserves_reasoning_content_across_parallel_tool_calls() {
     };
 
     let (body, _) = OpenAIEncoder
-        .encode_request(&req)
+        .encode_request(&req.clone().into())
         .expect("encode openai body");
     let msgs = body
         .get("messages")
@@ -1414,7 +1417,9 @@ fn openai_encoder_drops_orphan_assistant_tool_calls_without_results() {
         extra: Default::default(),
     };
 
-    let (body, _) = OpenAIEncoder.encode_request(&req).expect("encode");
+    let (body, _) = OpenAIEncoder
+        .encode_request(&req.clone().into())
+        .expect("encode");
     let msgs = body
         .get("messages")
         .and_then(|v| v.as_array())
@@ -1584,7 +1589,9 @@ fn gemini_encoder_sanitizes_unsupported_json_schema_fields() {
         extra: Default::default(),
     };
 
-    let (body, _) = GoogleEncoder.encode_request(&req).expect("encode");
+    let (body, _) = GoogleEncoder
+        .encode_request(&req.clone().into())
+        .expect("encode");
     let params = body
         .get("tools")
         .and_then(|v| v.as_array())
@@ -1632,7 +1639,9 @@ fn responses_encoder_targets_slash_v1_responses_and_forces_stream() {
         false,
     );
 
-    let (body, _) = ResponsesEncoder.encode_request(&req).expect("encode");
+    let (body, _) = ResponsesEncoder
+        .encode_request(&req.clone().into())
+        .expect("encode");
     assert_eq!(
         body.get("stream").and_then(|v| v.as_bool()),
         Some(true),
@@ -1671,7 +1680,9 @@ fn responses_encoder_splits_system_to_instructions_and_user_to_input_text() {
         false,
     );
 
-    let (body, _) = ResponsesEncoder.encode_request(&req).expect("encode");
+    let (body, _) = ResponsesEncoder
+        .encode_request(&req.clone().into())
+        .expect("encode");
     assert_eq!(
         body.get("instructions").and_then(|v| v.as_str()),
         Some("be terse")
@@ -1721,7 +1732,9 @@ fn responses_encoder_emits_function_call_and_function_call_output_items() {
         false,
     );
 
-    let (body, _) = ResponsesEncoder.encode_request(&req).expect("encode");
+    let (body, _) = ResponsesEncoder
+        .encode_request(&req.clone().into())
+        .expect("encode");
     let input = body.get("input").and_then(|v| v.as_array()).expect("input");
     assert_eq!(
         input.len(),
@@ -1774,7 +1787,9 @@ fn responses_encoder_drops_max_output_tokens_for_codex_compat() {
     );
     req.max_tokens = Some(128);
 
-    let (body, _) = ResponsesEncoder.encode_request(&req).expect("encode");
+    let (body, _) = ResponsesEncoder
+        .encode_request(&req.clone().into())
+        .expect("encode");
     assert!(
         body.get("max_output_tokens").is_none(),
         "codex backend rejects max_output_tokens; callers needing a cap must use extra"
@@ -1923,7 +1938,7 @@ fn codex_parallel_calls_with_intermediate_text_anthropic_egress() {
     normalize_request_tool_results(&mut req);
 
     let (encoded, _) = AnthropicEncoder
-        .encode_request(&req)
+        .encode_request(&req.clone().into())
         .expect("encode anthropic body");
     let msgs = encoded
         .get("messages")

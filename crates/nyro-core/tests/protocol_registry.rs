@@ -13,7 +13,6 @@ use nyro_core::protocol::ids::{
 };
 use nyro_core::protocol::ir::Role;
 use nyro_core::protocol::registry::ProtocolRegistry;
-use nyro_core::protocol::types::InternalRequest;
 use serde_json::json;
 
 #[test]
@@ -174,10 +173,9 @@ fn encoder_round_trips_body_for_every_handler() {
         let body = sample_body(id);
         let h = reg.get(&id).unwrap();
         let internal = h.make_decoder().decode_request(body).unwrap();
-        let internal_old: InternalRequest = internal.clone().into();
         let (out_body, headers) = h
             .make_encoder()
-            .encode_request(&internal_old)
+            .encode_request(&internal)
             .unwrap_or_else(|e| panic!("encoder failed for {id}: {e}"));
         assert!(
             out_body.is_object(),
@@ -263,12 +261,11 @@ fn embeddings_decoder_round_trips_body() {
     assert_eq!(internal.model, "text-embedding-3-small");
     assert!(!internal.stream.enabled);
 
-    let internal_old: InternalRequest = internal.clone().into();
     let (encoded, _headers) = reg
         .get(&OPENAI_EMBEDDINGS_V1)
         .unwrap()
         .make_encoder()
-        .encode_request(&internal_old)
+        .encode_request(&internal)
         .unwrap();
     assert_eq!(encoded, body, "encoder must round-trip the original body");
 }
