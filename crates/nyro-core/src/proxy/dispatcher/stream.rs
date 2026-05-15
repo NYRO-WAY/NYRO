@@ -19,9 +19,7 @@ use tokio::sync::broadcast;
 use tokio_stream::wrappers::ReceiverStream;
 
 use crate::cache::entry::CacheEntry;
-use crate::protocol::ir::compat::ai_stream_delta_to_old;
-use crate::protocol::ir::{AiResponse, AiStreamDelta};
-use crate::protocol::types::StreamDelta;
+use crate::protocol::ir::AiStreamDelta;
 use crate::proxy::client::ProxyClient;
 use crate::proxy::observability::headers_to_json;
 
@@ -141,32 +139,28 @@ pub(super) async fn handle_stream(
             let mut log_parser = egress.handler().make_stream_parser();
             let mut accumulator = StreamResponseAccumulator::default();
             if let Ok(ai_deltas) = log_parser.parse_chunk(&log_text) {
-                let old: Vec<StreamDelta> = ai_deltas.iter().map(ai_stream_delta_to_old).collect();
-                accumulator.apply_all(&old);
+                accumulator.apply_all(&ai_deltas);
             }
             if let Ok(ai_deltas) = log_parser.finish() {
-                let old: Vec<StreamDelta> = ai_deltas.iter().map(ai_stream_delta_to_old).collect();
-                accumulator.apply_all(&old);
+                accumulator.apply_all(&ai_deltas);
             }
 
-            let mut internal = accumulator.into_internal_response();
-            if internal.id.is_empty() {
-                internal.id = format!("msg_{}", uuid::Uuid::new_v4().simple());
+            let mut ai_resp = accumulator.into_ai_response();
+            if ai_resp.id.is_empty() {
+                ai_resp.id = format!("msg_{}", uuid::Uuid::new_v4().simple());
             }
-            if internal.model.is_empty() {
-                // actual_model is embedded inside log_pt
-                internal.model = log_pt.actual_model.clone();
+            if ai_resp.model.is_empty() {
+                ai_resp.model = log_pt.actual_model.clone();
             }
 
             let aggregated_formatter = ingress.handler().make_response_formatter();
-            let aggregated_output =
-                aggregated_formatter.format_response(&AiResponse::from(internal.clone()));
+            let aggregated_output = aggregated_formatter.format_response(&ai_resp);
             let aggregated_body_str = serde_json::to_string(&aggregated_output).ok();
 
             log_pt
                 .status(200)
-                .usage(internal.usage.clone())
-                .maybe_tool(!internal.tool_calls.is_empty())
+                .usage(ai_resp.usage.clone())
+                .maybe_tool(!ai_resp.tool_calls.is_empty())
                 .maybe_error(stream_error)
                 .resp_headers(upstream_hdrs_pt)
                 .resp_body(aggregated_body_str)
@@ -232,9 +226,7 @@ pub(super) async fn handle_stream(
             };
             let text = String::from_utf8_lossy(&bytes);
             if let Ok(ai_deltas) = stream_parser.parse_chunk(&text) {
-                let old_deltas: Vec<StreamDelta> =
-                    ai_deltas.iter().map(ai_stream_delta_to_old).collect();
-                accumulator.apply_all(&old_deltas);
+                accumulator.apply_all(&ai_deltas);
                 let events = stream_formatter.format_deltas(&ai_deltas);
                 for ev in events {
                     if tx.send(Ok(ev.to_sse_string())).await.is_err() {
@@ -245,9 +237,7 @@ pub(super) async fn handle_stream(
         }
 
         if let Ok(ai_deltas) = stream_parser.finish() {
-            let old_deltas: Vec<StreamDelta> =
-                ai_deltas.iter().map(ai_stream_delta_to_old).collect();
-            accumulator.apply_all(&old_deltas);
+            accumulator.apply_all(&ai_deltas);
             let events = stream_formatter.format_deltas(&ai_deltas);
             for ev in events {
                 let _ = tx.send(Ok(ev.to_sse_string())).await;
@@ -260,48 +250,47 @@ pub(super) async fn handle_stream(
         }
 
         let usage = stream_formatter.usage();
-        let mut internal = accumulator.into_internal_response();
-        if internal.usage.input_tokens == 0 && internal.usage.output_tokens == 0 {
-            internal.usage = usage.clone();
+        let mut ai_resp = accumulator.into_ai_response();
+        if ai_resp.usage.input_tokens == 0 && ai_resp.usage.output_tokens == 0 {
+            ai_resp.usage = usage.clone();
         }
-        if internal.id.is_empty() {
-            internal.id = format!("chatcmpl-{}", uuid::Uuid::new_v4().simple());
+        if ai_resp.id.is_empty() {
+            ai_resp.id = format!("chatcmpl-{}", uuid::Uuid::new_v4().simple());
         }
-        if internal.model.is_empty() {
-            internal.model = act_model_ir.clone();
+        if ai_resp.model.is_empty() {
+            ai_resp.model = act_model_ir.clone();
         }
-        if internal.stop_reason.is_none() {
-            internal.stop_reason = Some("stop".to_string());
+        if ai_resp.stop_reason.is_none() {
+            ai_resp.stop_reason = Some("stop".to_string());
         }
 
         let aggregated_formatter = ingress.handler().make_response_formatter();
-        let aggregated_output =
-            aggregated_formatter.format_response(&AiResponse::from(internal.clone()));
+        let aggregated_output = aggregated_formatter.format_response(&ai_resp);
         let aggregated_body_str = serde_json::to_string(&aggregated_output).ok();
         log_ir
             .status(200)
-            .usage(internal.usage.clone())
-            .maybe_tool(!internal.tool_calls.is_empty())
+            .usage(ai_resp.usage.clone())
+            .maybe_tool(!ai_resp.tool_calls.is_empty())
             .resp_headers(upstream_hdrs_owned)
             .resp_body(aggregated_body_str)
             .emit();
 
         let mut singleflight_payload: Option<Vec<u8>> = None;
-        if allow_exact_store && internal.tool_calls.is_empty() {
+        if allow_exact_store && ai_resp.tool_calls.is_empty() {
             let cache_backend = (**gw_ir.cache_backend.load()).clone();
             if let (Some(cache_backend), Some(cache_key)) =
                 (cache_backend.as_ref(), cache_key_owned.as_deref())
             {
                 let formatter = ingress.handler().make_response_formatter();
-                let payload = formatter.format_response(&AiResponse::from(internal.clone()));
+                let payload = formatter.format_response(&ai_resp);
                 let entry = CacheEntry {
                     payload,
                     status_code: 200,
                     provider_name: provider_name_ir.clone(),
                     actual_model: Some(act_model_ir.clone()),
-                    usage: internal.usage.clone(),
+                    usage: ai_resp.usage.clone(),
                     created_at_epoch_ms: chrono::Utc::now().timestamp_millis(),
-                    internal_response: Some(internal.clone()),
+                    internal_response: Some(ai_resp.clone()),
                 };
                 if let Ok(bytes) = serde_json::to_vec(&entry) {
                     let _ = cache_backend
@@ -325,21 +314,21 @@ pub(super) async fn handle_stream(
                     }
                 }
             }
-        } else if internal.tool_calls.is_empty() {
+        } else if ai_resp.tool_calls.is_empty() {
             let vector_store = (**gw_ir.vector_store.load()).clone();
             if let (Some(vector_store), Some(ctx)) =
                 (vector_store.as_ref(), semantic_write_ctx_owned.as_ref())
             {
                 let formatter = ingress.handler().make_response_formatter();
-                let payload = formatter.format_response(&AiResponse::from(internal.clone()));
+                let payload = formatter.format_response(&ai_resp);
                 let entry = CacheEntry {
                     payload,
                     status_code: 200,
                     provider_name: provider_name_ir.clone(),
                     actual_model: Some(act_model_ir.clone()),
-                    usage: internal.usage.clone(),
+                    usage: ai_resp.usage.clone(),
                     created_at_epoch_ms: chrono::Utc::now().timestamp_millis(),
-                    internal_response: Some(internal.clone()),
+                    internal_response: Some(ai_resp.clone()),
                 };
                 if let Ok(bytes) = serde_json::to_vec(&entry) {
                     let vector = if let Some(existing) = ctx.query_vector.clone() {

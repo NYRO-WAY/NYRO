@@ -30,7 +30,7 @@ use crate::provider::vendor::Vendor;
 ///  post_encode → auth_headers → build_url`.
 pub async fn build_request<V>(
     vendor: &V,
-    req: &mut crate::protocol::types::InternalRequest,
+    req: &mut crate::protocol::ir::AiRequest,
     ctx: &crate::provider::vendor::ProviderCtx<'_>,
 ) -> Result<crate::provider::outbound::OutboundRequest, GatewayError>
 where
@@ -46,8 +46,13 @@ where
         .await
         .map_err(GatewayError::internal)?;
 
-    // 2. normalize tool results
-    crate::protocol::codec::tool_correlation::normalize_request_tool_results(req);
+    // 2. normalize tool results (convert round-trip via compat for legacy helper)
+    {
+        let mut old_req: crate::protocol::types::InternalRequest = req.clone().into();
+        crate::protocol::codec::tool_correlation::normalize_request_tool_results(&mut old_req);
+        // Merge normalized messages back (tool correlation only touches messages)
+        req.messages = crate::protocol::ir::AiRequest::from(old_req).messages;
+    }
 
     // 3. pre_encode hook
     vendor
@@ -58,9 +63,8 @@ where
     // 4. codec encode
     let egress_handler = ctx.protocol.handler();
     let encoder = egress_handler.make_encoder();
-    let ai_req: crate::protocol::ir::AiRequest = req.clone().into();
     let (mut body, mut extra_headers) = encoder
-        .encode_request(&ai_req)
+        .encode_request(req)
         .map_err(GatewayError::internal)?;
 
     // 5. post_encode hook
@@ -105,7 +109,7 @@ where
     headers.extend(extra_headers);
 
     // 7. build URL
-    let egress_path = encoder.egress_path(ctx.actual_model, req.stream);
+    let egress_path = encoder.egress_path(ctx.actual_model, req.stream.enabled);
     let url = vendor.build_url(&vendor_ctx, ctx.egress_base_url, &egress_path);
 
     Ok(crate::provider::outbound::OutboundRequest { url, headers, body })
@@ -117,7 +121,7 @@ pub async fn parse_response<V>(
     vendor: &V,
     resp: crate::provider::inbound::InboundResponse,
     ctx: &crate::provider::vendor::ProviderCtx<'_>,
-) -> Result<crate::protocol::types::InternalResponse, GatewayError>
+) -> Result<crate::protocol::ir::AiResponse, GatewayError>
 where
     V: crate::provider::vendor::Vendor,
 {
@@ -133,21 +137,25 @@ where
     // 2. codec parse
     let egress_handler = ctx.protocol.handler();
     let parser = egress_handler.make_response_parser();
-    let ai_resp = parser
+    let mut ai_resp = parser
         .parse_response(body)
         .map_err(GatewayError::internal)?;
-    let mut internal_resp: crate::protocol::types::InternalResponse = ai_resp.into();
 
-    // 3. reasoning normalization
-    crate::protocol::codec::reasoning::normalize_response_reasoning(&mut internal_resp);
+    // 3. reasoning normalization (via compat round-trip)
+    {
+        let mut old = crate::protocol::types::InternalResponse::from(ai_resp.clone());
+        crate::protocol::codec::reasoning::normalize_response_reasoning(&mut old);
+        ai_resp.reasoning_content = old.reasoning_content;
+        ai_resp.reasoning_signature = old.reasoning_signature;
+    }
 
     // 4. post_parse hook
     vendor
-        .post_parse(&vendor_ctx, &mut internal_resp)
+        .post_parse(&vendor_ctx, &mut ai_resp)
         .await
         .map_err(GatewayError::internal)?;
 
-    Ok(internal_resp)
+    Ok(ai_resp)
 }
 
 /// Standard `stream_parser` factory: wraps the codec's stream parser in a
@@ -235,9 +243,7 @@ mod tests {
     use crate::protocol::ids::{
         ANTHROPIC_MESSAGES_2023_06_01, OPENAI_CHAT_COMPLETIONS_V1, ProtocolId,
     };
-    use crate::protocol::types::{
-        InternalMessage, InternalRequest, InternalResponse, MessageContent, Role,
-    };
+    use crate::protocol::ir::{AiRequest, AiResponse};
     use crate::provider::inbound::InboundResponse;
     use crate::provider::outbound::OutboundRequest;
     use crate::provider::registry::VendorScope;
@@ -247,7 +253,6 @@ mod tests {
     use async_trait::async_trait;
     use reqwest::header::HeaderMap as ExtHeaderMap;
     use serde_json::Value;
-    use std::collections::HashMap;
     use std::path::PathBuf;
     use uuid::Uuid;
 
@@ -280,7 +285,7 @@ mod tests {
         }
         async fn build_request(
             &self,
-            _req: &mut InternalRequest,
+            _req: &mut AiRequest,
             _ctx: &ProviderCtx<'_>,
         ) -> Result<OutboundRequest, GatewayError> {
             unreachable!()
@@ -289,7 +294,7 @@ mod tests {
             &self,
             _resp: InboundResponse,
             _ctx: &ProviderCtx<'_>,
-        ) -> Result<InternalResponse, GatewayError> {
+        ) -> Result<AiResponse, GatewayError> {
             unreachable!()
         }
         fn stream_parser(&self, _ctx: &ProviderCtx<'_>) -> Box<dyn ProviderStreamParser + Send> {
@@ -330,7 +335,7 @@ mod tests {
         }
         async fn build_request(
             &self,
-            _req: &mut InternalRequest,
+            _req: &mut AiRequest,
             _ctx: &ProviderCtx<'_>,
         ) -> Result<OutboundRequest, GatewayError> {
             unreachable!()
@@ -339,7 +344,7 @@ mod tests {
             &self,
             _resp: InboundResponse,
             _ctx: &ProviderCtx<'_>,
-        ) -> Result<InternalResponse, GatewayError> {
+        ) -> Result<AiResponse, GatewayError> {
             unreachable!()
         }
         fn stream_parser(&self, _ctx: &ProviderCtx<'_>) -> Box<dyn ProviderStreamParser + Send> {
@@ -374,25 +379,18 @@ mod tests {
         }
     }
 
-    fn minimal_chat_request() -> InternalRequest {
-        InternalRequest {
-            messages: vec![InternalMessage {
-                role: Role::User,
-                content: MessageContent::Text("ping".into()),
-                tool_calls: None,
-                tool_call_id: None,
-                extra: Default::default(),
-            }],
-            model: "ignored-by-actual-model".into(),
-            stream: false,
-            temperature: None,
-            max_tokens: None,
-            top_p: None,
-            tools: None,
-            tool_choice: None,
-            source_protocol: OPENAI_CHAT_COMPLETIONS_V1,
-            extra: HashMap::new(),
-        }
+    fn minimal_chat_request() -> AiRequest {
+        use crate::protocol::ir::{Message, MessageContent, Role};
+        let messages = vec![Message {
+            role: Role::User,
+            content: MessageContent::Text("ping".into()),
+            tool_calls: None,
+            tool_call_id: None,
+            meta: None,
+        }];
+        let mut req = AiRequest::new("ignored-by-actual-model", messages);
+        req.meta.source_protocol = Some(OPENAI_CHAT_COMPLETIONS_V1);
+        req
     }
 
     async fn build_test_gateway() -> Gateway {

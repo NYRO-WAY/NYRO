@@ -51,8 +51,8 @@ use crate::db::models::Provider;
 use crate::error::{AuthFailure, GatewayError};
 use crate::protocol::ProviderProtocols;
 use crate::protocol::ids::{OPENAI_CHAT_COMPLETIONS_V1, OPENAI_EMBEDDINGS_V1, ProtocolId};
-use crate::protocol::ir::{AiRequest, RawEnvelope};
-use crate::protocol::types::{InternalRequest, InternalResponse, StreamDelta, TokenUsage};
+use crate::protocol::ir::{AiRequest, AiResponse, RawEnvelope};
+use crate::protocol::types::TokenUsage;
 use crate::provider::vendor::ProviderCtx;
 use crate::provider::{VendorCtx, VendorRegistry};
 use crate::proxy::client::ProxyClient;
@@ -82,7 +82,7 @@ pub async fn dispatch_pipeline(
     request: AiRequest,
     ingress: ProtocolId,
 ) -> Response {
-    // Derive logging strings from envelope; convert new IR → old IR for backward-compat.
+    // Derive logging strings from envelope.
     let method_owned = envelope.method.clone();
     let path_owned = envelope.path.clone();
     let request_body_str = envelope
@@ -97,10 +97,10 @@ pub async fn dispatch_pipeline(
         headers: request_headers_str.clone(),
         body: request_body_str.clone(),
     };
-    let mut internal: InternalRequest = request.into();
+    let mut request = request;
     let start = Instant::now();
-    let request_model = internal.model.clone();
-    let is_stream = internal.stream;
+    let request_model = request.model.clone();
+    let is_stream = request.stream.enabled;
     let ingress_str = ingress.to_string();
 
     // ── Route lookup ─────────────────────────────────────────────────────────
@@ -147,7 +147,7 @@ pub async fn dispatch_pipeline(
     let cache_backend = (**gw.cache_backend.load()).clone();
     let vector_store = (**gw.vector_store.load()).clone();
     let route_cache = resolve_route_cache(&route);
-    let request_has_image = request_has_image_input(&internal);
+    let request_has_image = request_has_image_input(&request);
     let exact_enabled_for_route = cache_config.exact.enabled
         && cache_backend.is_some()
         && route_cache.exact.is_some()
@@ -156,9 +156,9 @@ pub async fn dispatch_pipeline(
         && vector_store.is_some()
         && route_cache.semantic.is_some()
         && !request_has_image;
-    let semantic_write_temp_allowed = internal.temperature.unwrap_or(0.0) <= 0.0;
+    let semantic_write_temp_allowed = request.generation.temperature.unwrap_or(0.0) <= 0.0;
     let request_cache_key = if exact_enabled_for_route || semantic_enabled_for_route {
-        Some(build_cache_key(&internal, ingress))
+        Some(build_cache_key(&request, ingress))
     } else {
         None
     };
@@ -169,11 +169,11 @@ pub async fn dispatch_pipeline(
         route_semantic_threshold(&route_cache, cache_config.semantic.similarity_threshold);
     let semantic_entry_key = request_cache_key
         .clone()
-        .unwrap_or_else(|| build_cache_key(&internal, ingress));
-    let semantic_embedding = extract_semantic_embedding_input(&internal);
+        .unwrap_or_else(|| build_cache_key(&request, ingress));
+    let semantic_embedding = extract_semantic_embedding_input(&request);
     let semantic_partition = semantic_embedding
         .as_ref()
-        .map(|(system_prompt, _)| build_semantic_partition(&internal.model, system_prompt));
+        .map(|(system_prompt, _)| build_semantic_partition(&request.model, system_prompt));
 
     // ── Exact cache read ──────────────────────────────────────────────────────
 
@@ -353,11 +353,11 @@ pub async fn dispatch_pipeline(
         let hook_ctx = crate::integrations::HookContext {
             route_id: route.id.clone(),
             provider_name: String::new(),
-            model: internal.model.clone(),
+            model: request.model.clone(),
             api_key_id: auth_key.id.clone(),
         };
         for hook in hook_registry.request_hooks() {
-            if let Err(e) = hook.on_request(&hook_ctx, &mut internal).await {
+            if let Err(e) = hook.on_request(&hook_ctx, &mut request).await {
                 tracing::warn!(hook = hook.name(), error = %e, "request hook rejected request");
                 LogBuilder::from_dispatch(
                     &gw,
@@ -430,7 +430,7 @@ pub async fn dispatch_pipeline(
             target.model.clone()
         };
 
-        let mut internal_for_target = internal.clone();
+        let mut request_for_target = request.clone();
 
         let provider_runtime = match gw.admin().resolve_provider_runtime(&provider).await {
             Ok(runtime) => runtime,
@@ -514,7 +514,7 @@ pub async fn dispatch_pipeline(
                 }
             }
         } else {
-            match adapter.build_request(&mut internal_for_target, &ctx).await {
+            match adapter.build_request(&mut request_for_target, &ctx).await {
                 Ok(o) => o,
                 Err(e) => {
                     last_response = Some(e.render(None));
@@ -987,7 +987,7 @@ fn cached_entry_to_response(
 
 fn replay_cached_stream(
     ingress: ProtocolId,
-    internal: &InternalResponse,
+    ai_resp: &AiResponse,
     cache_key: Option<&str>,
     cache_status: &str,
     score: Option<f64>,
@@ -995,16 +995,12 @@ fn replay_cached_stream(
     expose_headers: bool,
 ) -> Response {
     let mut formatter = ingress.handler().make_stream_formatter();
-    let old_deltas = internal_response_to_deltas(internal);
-    let old_deltas = if stream_replay_tps > 0 {
-        split_text_deltas(old_deltas, 4)
+    let ai_deltas = ai_response_to_deltas(ai_resp);
+    let ai_deltas = if stream_replay_tps > 0 {
+        split_text_deltas(ai_deltas, 4)
     } else {
-        old_deltas
+        ai_deltas
     };
-    let ai_deltas: Vec<crate::protocol::ir::AiStreamDelta> = old_deltas
-        .iter()
-        .map(crate::protocol::ir::compat::old_stream_delta_to_new)
-        .collect();
     let mut payloads: Vec<String> = formatter
         .format_deltas(&ai_deltas)
         .into_iter()
@@ -1057,46 +1053,43 @@ fn replay_cached_stream(
     response
 }
 
-fn internal_response_to_deltas(internal: &InternalResponse) -> Vec<StreamDelta> {
-    let mut deltas = vec![StreamDelta::MessageStart {
-        id: if internal.id.is_empty() {
+fn ai_response_to_deltas(resp: &AiResponse) -> Vec<crate::protocol::ir::AiStreamDelta> {
+    use crate::protocol::ir::AiStreamDelta;
+    let mut deltas = vec![AiStreamDelta::MessageStart {
+        id: if resp.id.is_empty() {
             format!("chatcmpl-{}", uuid::Uuid::new_v4().simple())
         } else {
-            internal.id.clone()
+            resp.id.clone()
         },
-        model: internal.model.clone(),
+        model: resp.model.clone(),
     }];
-    if let Some(reasoning) = &internal.reasoning_content
+    if let Some(reasoning) = &resp.reasoning_content
         && !reasoning.is_empty()
     {
-        deltas.push(StreamDelta::ReasoningDelta(reasoning.clone()));
-        if let Some(sig) = internal
-            .reasoning_signature
-            .as_ref()
-            .filter(|s| !s.is_empty())
-        {
-            deltas.push(StreamDelta::ReasoningSignature(sig.clone()));
+        deltas.push(AiStreamDelta::ThinkingDelta(reasoning.clone()));
+        if let Some(sig) = resp.reasoning_signature.as_ref().filter(|s| !s.is_empty()) {
+            deltas.push(AiStreamDelta::ThinkingSignature(sig.clone()));
         }
     }
-    if !internal.content.is_empty() {
-        deltas.push(StreamDelta::TextDelta(internal.content.clone()));
+    if !resp.content.is_empty() {
+        deltas.push(AiStreamDelta::TextDelta(resp.content.clone()));
     }
-    for (index, tool_call) in internal.tool_calls.iter().enumerate() {
-        deltas.push(StreamDelta::ToolCallStart {
+    for (index, tool_call) in resp.tool_calls.iter().enumerate() {
+        deltas.push(AiStreamDelta::ToolCallStart {
             index,
             id: tool_call.id.clone(),
             name: tool_call.name.clone(),
         });
         if !tool_call.arguments.is_empty() {
-            deltas.push(StreamDelta::ToolCallDelta {
+            deltas.push(AiStreamDelta::ToolCallDelta {
                 index,
                 arguments: tool_call.arguments.clone(),
             });
         }
     }
-    deltas.push(StreamDelta::Usage(internal.usage.clone()));
-    deltas.push(StreamDelta::Done {
-        stop_reason: internal
+    deltas.push(AiStreamDelta::Usage(resp.usage.clone()));
+    deltas.push(AiStreamDelta::Done {
+        stop_reason: resp
             .stop_reason
             .clone()
             .unwrap_or_else(|| "stop".to_string()),
@@ -1104,28 +1097,32 @@ fn internal_response_to_deltas(internal: &InternalResponse) -> Vec<StreamDelta> 
     deltas
 }
 
-fn split_text_deltas(deltas: Vec<StreamDelta>, chunk_chars: usize) -> Vec<StreamDelta> {
+fn split_text_deltas(
+    deltas: Vec<crate::protocol::ir::AiStreamDelta>,
+    chunk_chars: usize,
+) -> Vec<crate::protocol::ir::AiStreamDelta> {
+    use crate::protocol::ir::AiStreamDelta;
     deltas
         .into_iter()
         .flat_map(|d| match d {
-            StreamDelta::TextDelta(text) => {
+            AiStreamDelta::TextDelta(text) => {
                 let chars: Vec<char> = text.chars().collect();
                 if chars.len() <= chunk_chars {
-                    return vec![StreamDelta::TextDelta(text)];
+                    return vec![AiStreamDelta::TextDelta(text)];
                 }
                 chars
                     .chunks(chunk_chars)
-                    .map(|c| StreamDelta::TextDelta(c.iter().collect()))
+                    .map(|c| AiStreamDelta::TextDelta(c.iter().collect()))
                     .collect()
             }
-            StreamDelta::ReasoningDelta(text) => {
+            AiStreamDelta::ThinkingDelta(text) => {
                 let chars: Vec<char> = text.chars().collect();
                 if chars.len() <= chunk_chars {
-                    return vec![StreamDelta::ReasoningDelta(text)];
+                    return vec![AiStreamDelta::ThinkingDelta(text)];
                 }
                 chars
                     .chunks(chunk_chars)
-                    .map(|c| StreamDelta::ReasoningDelta(c.iter().collect()))
+                    .map(|c| AiStreamDelta::ThinkingDelta(c.iter().collect()))
                     .collect()
             }
             other => vec![other],

@@ -10,7 +10,7 @@ use serde_json::Value;
 use crate::Gateway;
 use crate::error::GatewayError;
 use crate::protocol::ids::ProtocolId;
-use crate::protocol::types::{InternalRequest, InternalResponse};
+use crate::protocol::ir::{AiRequest, AiResponse};
 use crate::provider::common::openai::{
     openai_bearer_auth_headers, openai_build_url, openai_map_error,
 };
@@ -81,7 +81,7 @@ impl Vendor for OllamaVendor {
     async fn pre_request(
         &self,
         ctx: &VendorCtx<'_>,
-        req: &mut InternalRequest,
+        req: &mut AiRequest,
         gw: &Gateway,
     ) -> anyhow::Result<()> {
         if req.tools.is_none() && req.tool_choice.is_none() {
@@ -104,8 +104,8 @@ impl Vendor for OllamaVendor {
             );
             req.tools = None;
             req.tool_choice = None;
-            req.extra.remove("tools");
-            req.extra.remove("tool_choice");
+            req.meta.vendor.ingress.remove("tools");
+            req.meta.vendor.ingress.remove("tool_choice");
         }
         Ok(())
     }
@@ -119,7 +119,7 @@ impl Vendor for OllamaVendor {
     }
     async fn build_request(
         &self,
-        req: &mut InternalRequest,
+        req: &mut AiRequest,
         ctx: &ProviderCtx<'_>,
     ) -> Result<OutboundRequest, GatewayError> {
         pipeline::build_request(self, req, ctx).await
@@ -128,7 +128,7 @@ impl Vendor for OllamaVendor {
         &self,
         resp: InboundResponse,
         ctx: &ProviderCtx<'_>,
-    ) -> Result<InternalResponse, GatewayError> {
+    ) -> Result<AiResponse, GatewayError> {
         pipeline::parse_response(self, resp, ctx).await
     }
     fn stream_parser(&self, ctx: &ProviderCtx<'_>) -> Box<dyn ProviderStreamParser + Send> {

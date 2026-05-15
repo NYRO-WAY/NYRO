@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use crate::error::GatewayError;
 use crate::protocol::ids::ProtocolId;
-use crate::protocol::types::{InternalRequest, InternalResponse};
+use crate::protocol::ir::{AiRequest, AiResponse};
 use crate::provider::common::openai::{
     openai_bearer_auth_headers, openai_build_url, openai_map_error,
 };
@@ -112,7 +112,7 @@ impl Vendor for ZaiVendor {
     }
     async fn build_request(
         &self,
-        req: &mut InternalRequest,
+        req: &mut AiRequest,
         ctx: &ProviderCtx<'_>,
     ) -> Result<OutboundRequest, GatewayError> {
         pipeline::build_request(self, req, ctx).await
@@ -121,7 +121,7 @@ impl Vendor for ZaiVendor {
         &self,
         resp: InboundResponse,
         ctx: &ProviderCtx<'_>,
-    ) -> Result<InternalResponse, GatewayError> {
+    ) -> Result<AiResponse, GatewayError> {
         pipeline::parse_response(self, resp, ctx).await
     }
     fn stream_parser(&self, ctx: &ProviderCtx<'_>) -> Box<dyn ProviderStreamParser + Send> {

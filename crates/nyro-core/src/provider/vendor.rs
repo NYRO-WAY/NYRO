@@ -72,7 +72,7 @@ use crate::auth::types::StoredCredential;
 use crate::db::models::Provider;
 use crate::error::GatewayError;
 use crate::protocol::ids::ProtocolId;
-use crate::protocol::types::{InternalRequest, InternalResponse, StreamDelta};
+use crate::protocol::ir::{AiRequest, AiResponse, AiStreamDelta};
 use crate::provider::inbound::InboundResponse;
 use crate::provider::metadata::VendorMetadata;
 use crate::provider::outbound::OutboundRequest;
@@ -142,11 +142,7 @@ pub trait Vendor: Send + Sync + 'static {
         format!("{}{}", base_url.trim_end_matches('/'), path)
     }
 
-    async fn pre_encode(
-        &self,
-        _ctx: &VendorCtx<'_>,
-        _req: &mut InternalRequest,
-    ) -> anyhow::Result<()> {
+    async fn pre_encode(&self, _ctx: &VendorCtx<'_>, _req: &mut AiRequest) -> anyhow::Result<()> {
         Ok(())
     }
 
@@ -163,11 +159,7 @@ pub trait Vendor: Send + Sync + 'static {
         Ok(())
     }
 
-    async fn post_parse(
-        &self,
-        _ctx: &VendorCtx<'_>,
-        _resp: &mut InternalResponse,
-    ) -> anyhow::Result<()> {
+    async fn post_parse(&self, _ctx: &VendorCtx<'_>, _resp: &mut AiResponse) -> anyhow::Result<()> {
         Ok(())
     }
 
@@ -182,7 +174,7 @@ pub trait Vendor: Send + Sync + 'static {
     async fn on_stream_delta(
         &self,
         _ctx: &VendorCtx<'_>,
-        _delta: &mut StreamDelta,
+        _delta: &mut AiStreamDelta,
     ) -> anyhow::Result<()> {
         Ok(())
     }
@@ -190,7 +182,7 @@ pub trait Vendor: Send + Sync + 'static {
     async fn pre_request(
         &self,
         _ctx: &VendorCtx<'_>,
-        _req: &mut InternalRequest,
+        _req: &mut AiRequest,
         _gw: &Gateway,
     ) -> anyhow::Result<()> {
         Ok(())
@@ -207,7 +199,7 @@ pub trait Vendor: Send + Sync + 'static {
     /// Build the outbound request via the standard 7-step pipeline.
     async fn build_request(
         &self,
-        req: &mut InternalRequest,
+        req: &mut AiRequest,
         ctx: &ProviderCtx<'_>,
     ) -> Result<OutboundRequest, GatewayError>;
 
@@ -216,7 +208,7 @@ pub trait Vendor: Send + Sync + 'static {
         &self,
         resp: InboundResponse,
         ctx: &ProviderCtx<'_>,
-    ) -> Result<InternalResponse, GatewayError>;
+    ) -> Result<AiResponse, GatewayError>;
 
     /// Return a stream parser for SSE responses.
     fn stream_parser(&self, ctx: &ProviderCtx<'_>) -> Box<dyn ProviderStreamParser + Send>;

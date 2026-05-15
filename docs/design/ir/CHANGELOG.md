@@ -6,6 +6,58 @@
 
 ---
 
+## [PR-5] Dispatcher / Provider Adapter / Cache 全切到新 IR — 2026-05-15
+
+### 变更
+
+**`CacheEntry`** (`cache/entry.rs`)
+- `internal_response: Option<InternalResponse>` → `Option<AiResponse>`
+
+**`cache/key.rs`**
+- `build_cache_key` 参数 `&InternalRequest` → `&AiRequest`
+- `CODEC_SCHEMA_VERSION` v2 → v3（字段映射变更，清空旧缓存）
+
+**Integration Hooks** (`integrations/hooks.rs`)
+- `RequestHook::on_request`: `&mut InternalRequest` → `&mut AiRequest`
+- `ResponseHook::on_response`: `&mut InternalResponse` → `&mut AiResponse`
+
+**Vendor 层**
+- `Vendor::build_request`: `&mut InternalRequest` → `&mut AiRequest`
+- `Vendor::parse_response`: return `InternalResponse` → `AiResponse`
+- Hook 方法 (`pre_encode`, `post_parse`, `pre_request`, `on_stream_delta`) 全部切换新类型
+- `VendorExtension` 及其 blanket impl 同步更新
+- Ollama `pre_request`：`req.extra.remove(...)` 改为 `req.meta.vendor.ingress.remove(...)`
+
+**`pipeline.rs`**
+- `build_request` 参数 `&mut InternalRequest` → `&mut AiRequest`；移除 `ai_req = req.clone().into()` 中转
+- `parse_response` 返回 `AiResponse`；移除 `ai_resp.into()` 中转
+- `egress_path` 传参 `req.stream` → `req.stream.enabled`
+
+**11 个 vendor mod.rs（批量）**
+- `build_request` / `parse_response` 签名同步切换
+
+**`StreamResponseAccumulator`** (`dispatcher/accumulator.rs`)
+- 全面切换 `AiStreamDelta`；`into_internal_response()` 改为 `into_ai_response()` 返回 `AiResponse`
+
+**Dispatcher** (`dispatcher/mod.rs`)
+- 移除 `let mut internal: InternalRequest = request.into()`；全程直接使用 `request: AiRequest`
+- `replay_cached_stream` / `split_text_deltas` / 新增 `ai_response_to_deltas` 切换为 `AiStreamDelta`
+
+**`dispatcher/non_stream.rs` + `stream.rs`**
+- 移除所有 `AiResponse::from(...)` 和 `ai_stream_delta_to_old(...)` 包装
+- Accumulator 直接调用 `.apply_all(&ai_deltas)` / `.into_ai_response()`
+- Cache entry `internal_response` 直接存 `AiResponse`
+
+**`dispatcher/util.rs`**
+- `request_has_image_input` / `extract_semantic_embedding_input` 改为 `&AiRequest`
+
+### 不变
+- `compat.rs` 本体保留（供测试和外部使用）
+- 老 `InternalRequest`/`InternalResponse` 类型仍在 `types.rs`（PR-6 删除）
+- Parser/Formatter/StreamParser/StreamFormatter 已在 PR-3/PR-4 完成切换
+
+---
+
 ## [PR-4] Codec Parser + Formatter 全切换到 AiResponse / AiStreamDelta — 2026-05-15
 
 ### 变更

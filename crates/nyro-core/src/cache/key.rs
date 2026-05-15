@@ -1,7 +1,7 @@
 use sha2::{Digest, Sha256};
 
 use crate::protocol::ids::ProtocolId;
-use crate::protocol::types::{ContentBlock, InternalRequest, MessageContent};
+use crate::protocol::ir::{AiRequest, ContentBlock, MessageContent};
 
 /// Bump this constant whenever the codec field mapping changes in a way that
 /// could cause a cached response to be returned in the wrong format.
@@ -11,7 +11,8 @@ use crate::protocol::types::{ContentBlock, InternalRequest, MessageContent};
 /// be evicted by TTL / LRU), but they will no longer be served.
 /// Bump when: IR mapping changes, codec field mapping changes, or cache key format changes.
 /// v1 → v2: dispatch_pipeline now carries RawEnvelope + AiRequest; ingress included in key.
-pub const CODEC_SCHEMA_VERSION: u32 = 2;
+/// v3: PR-5 full switch to AiRequest; GenerationConfig fields used directly.
+pub const CODEC_SCHEMA_VERSION: u32 = 3;
 
 /// Build a deterministic cache key for an exact-match or semantic-cache
 /// lookup.
@@ -22,29 +23,29 @@ pub const CODEC_SCHEMA_VERSION: u32 = 2;
 ///   formatted for the ingress protocol; the same body from different ingress
 ///   protocols must produce different cache entries.
 /// - A SHA-256 hash of the semantically-relevant request fields.
-pub fn build_cache_key(request: &InternalRequest, ingress: ProtocolId) -> String {
+pub fn build_cache_key(request: &AiRequest, ingress: ProtocolId) -> String {
     let mut source = String::new();
     source.push_str("model:");
     source.push_str(request.model.trim());
     source.push('|');
     source.push_str("temperature:");
-    if let Some(temperature) = request.temperature {
+    if let Some(temperature) = request.generation.temperature {
         source.push_str(&temperature.to_string());
     }
     source.push('|');
     source.push_str("max_tokens:");
-    if let Some(max_tokens) = request.max_tokens {
+    if let Some(max_tokens) = request.generation.max_tokens {
         source.push_str(&max_tokens.to_string());
     }
     source.push('|');
     source.push_str("top_p:");
-    if let Some(top_p) = request.top_p {
+    if let Some(top_p) = request.generation.top_p {
         source.push_str(&top_p.to_string());
     }
     source.push('|');
     source.push_str("tool_choice:");
     if let Some(tool_choice) = &request.tool_choice {
-        source.push_str(&tool_choice.to_string());
+        source.push_str(&serde_json::to_string(tool_choice).unwrap_or_default());
     }
     source.push('|');
     source.push_str("tools:");
@@ -60,8 +61,10 @@ pub fn build_cache_key(request: &InternalRequest, ingress: ProtocolId) -> String
             MessageContent::Blocks(blocks) => {
                 for block in blocks {
                     match block {
-                        ContentBlock::Text { text } => source.push_str(text),
-                        ContentBlock::ToolUse { id, name, input } => {
+                        ContentBlock::Text { text, .. } => source.push_str(text),
+                        ContentBlock::ToolUse {
+                            id, name, input, ..
+                        } => {
                             source.push_str(id);
                             source.push_str(name);
                             source.push_str(&input.to_string());
@@ -69,19 +72,24 @@ pub fn build_cache_key(request: &InternalRequest, ingress: ProtocolId) -> String
                         ContentBlock::ToolResult {
                             tool_use_id,
                             content,
+                            ..
                         } => {
                             source.push_str(tool_use_id);
                             source.push_str(&content.to_string());
                         }
                         ContentBlock::Image { .. } => source.push_str("[image]"),
-                        ContentBlock::Reasoning { text, signature } => {
+                        ContentBlock::Thinking {
+                            thinking,
+                            signature,
+                        } => {
                             source.push_str("[thinking]");
-                            source.push_str(text);
+                            source.push_str(thinking);
                             if let Some(sig) = signature {
                                 source.push_str("[sig]");
                                 source.push_str(sig);
                             }
                         }
+                        _ => {}
                     }
                 }
             }
