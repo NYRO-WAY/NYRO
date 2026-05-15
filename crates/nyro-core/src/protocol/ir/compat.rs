@@ -216,15 +216,24 @@ fn block_to_old(b: ContentBlock) -> Option<OldContentBlock> {
             }),
             _ => None,
         },
-        ContentBlock::Thinking { thinking, signature } => {
-            Some(OldContentBlock::Reasoning { text: thinking, signature })
-        }
-        ContentBlock::ToolUse { id, name, input, .. } => {
-            Some(OldContentBlock::ToolUse { id, name, input })
-        }
-        ContentBlock::ToolResult { tool_use_id, content, .. } => {
-            Some(OldContentBlock::ToolResult { tool_use_id, content })
-        }
+        ContentBlock::Thinking {
+            thinking,
+            signature,
+        } => Some(OldContentBlock::Reasoning {
+            text: thinking,
+            signature,
+        }),
+        ContentBlock::ToolUse {
+            id, name, input, ..
+        } => Some(OldContentBlock::ToolUse { id, name, input }),
+        ContentBlock::ToolResult {
+            tool_use_id,
+            content,
+            ..
+        } => Some(OldContentBlock::ToolResult {
+            tool_use_id,
+            content,
+        }),
         // New variants not representable in old IR are dropped.
         _ => None,
     }

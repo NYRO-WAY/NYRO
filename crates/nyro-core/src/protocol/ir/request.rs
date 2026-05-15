@@ -31,10 +31,7 @@ pub enum Role {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum MediaSource {
     /// Inline base64-encoded data.
-    Base64 {
-        media_type: String,
-        data: String,
-    },
+    Base64 { media_type: String, data: String },
     /// A URL pointing to the media.
     Url(String),
     /// A provider-side file reference.
@@ -225,7 +222,10 @@ impl ContentBlock {
     }
 
     pub fn is_tool_result(&self) -> bool {
-        matches!(self, Self::ToolResult { .. } | Self::ServerToolResult { .. })
+        matches!(
+            self,
+            Self::ToolResult { .. } | Self::ServerToolResult { .. }
+        )
     }
 }
 
