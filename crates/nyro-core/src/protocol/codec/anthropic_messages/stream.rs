@@ -11,7 +11,7 @@ use crate::protocol::*;
 
 pub struct AnthropicResponseParser;
 
-impl ResponseParser for AnthropicResponseParser {
+impl ResponseDecoder for AnthropicResponseParser {
     fn parse_response(&self, resp: Value) -> Result<AiResponse> {
         let id = resp
             .get("id")
@@ -111,7 +111,7 @@ impl ResponseParser for AnthropicResponseParser {
 
 pub struct AnthropicResponseFormatter;
 
-impl ResponseFormatter for AnthropicResponseFormatter {
+impl ResponseEncoder for AnthropicResponseFormatter {
     fn format_response(&self, resp: &AiResponse) -> Value {
         let mut content = Vec::new();
 
@@ -198,7 +198,7 @@ impl AnthropicStreamParser {
     }
 }
 
-impl StreamParser for AnthropicStreamParser {
+impl StreamResponseDecoder for AnthropicStreamParser {
     fn parse_chunk(&mut self, raw: &str) -> Result<Vec<AiStreamDelta>> {
         self.buffer.push_str(raw);
         let mut deltas = Vec::new();
@@ -442,7 +442,7 @@ impl AnthropicStreamFormatter {
     }
 }
 
-impl StreamFormatter for AnthropicStreamFormatter {
+impl StreamResponseEncoder for AnthropicStreamFormatter {
     fn format_deltas(&mut self, deltas: &[AiStreamDelta]) -> Vec<SseEvent> {
         let mut events = Vec::new();
 
@@ -728,7 +728,9 @@ fn extend_usage_json(obj: &mut Value, u: &Usage) {
 mod tests {
     use super::*;
     use crate::protocol::ir::{AiResponse, AiStreamDelta};
-    use crate::protocol::{ResponseFormatter, ResponseParser, StreamFormatter, StreamParser};
+    use crate::protocol::{
+        ResponseDecoder, ResponseEncoder, StreamResponseDecoder, StreamResponseEncoder,
+    };
 
     fn make_sse_block(event: &str, data: &str) -> String {
         format!("event: {event}\ndata: {data}\n\n")

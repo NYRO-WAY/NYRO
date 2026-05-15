@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use anyhow::Result;
 use serde_json::Value;
 
-use crate::protocol::IngressDecoder;
+use crate::protocol::RequestDecoder;
 use crate::protocol::ids::OPENAI_RESPONSES_V1;
 use crate::protocol::ir::{
     AiRequest, GenerationConfig, Message, MessageContent, OpenAIResponsesExt, ProtocolExt,
@@ -38,7 +38,7 @@ const KNOWN_FIELDS: &[&str] = &[
     "user",
 ];
 
-impl IngressDecoder for ResponsesDecoder {
+impl RequestDecoder for ResponsesDecoder {
     fn decode_request(&self, body: Value) -> Result<AiRequest> {
         let obj = body
             .as_object()

@@ -28,7 +28,7 @@ pub async fn handler(
         })
         .collect();
     let envelope = RawEnvelope::new(Some(body.clone()), flat_headers, "POST", "/v1/embeddings");
-    let decoder = OPENAI_EMBEDDINGS_V1.handler().make_decoder();
+    let decoder = OPENAI_EMBEDDINGS_V1.handler().make_request_decoder();
     let request = match decoder.decode_request(body) {
         Ok(r) => r,
         Err(e) => return error_response(400, &format!("invalid request: {e}")),

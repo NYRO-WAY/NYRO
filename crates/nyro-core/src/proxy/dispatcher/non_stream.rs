@@ -164,7 +164,7 @@ pub(super) async fn handle_non_stream(
 
     let is_tool = !ai_resp.tool_calls.is_empty();
     let usage = ai_resp.usage.clone();
-    let formatter = ingress.handler().make_response_formatter();
+    let formatter = ingress.handler().make_response_encoder();
     let output = formatter.format_response(&ai_resp);
 
     let response_body_full = serde_json::to_string(&output).ok();
@@ -276,7 +276,7 @@ pub(super) async fn handle_non_stream_via_upstream_stream(
             .into_response();
     }
 
-    let mut stream_parser = egress.handler().make_stream_parser();
+    let mut stream_parser = egress.handler().make_stream_response_decoder();
     let mut byte_stream = resp.bytes_stream();
     let mut accumulator = StreamResponseAccumulator::default();
 
@@ -313,7 +313,7 @@ pub(super) async fn handle_non_stream_via_upstream_stream(
 
     let is_tool = !ai_resp.tool_calls.is_empty();
     let usage = ai_resp.usage.clone();
-    let formatter = ingress.handler().make_response_formatter();
+    let formatter = ingress.handler().make_response_encoder();
     let output = formatter.format_response(&ai_resp);
 
     let response_preview = serde_json::to_string(&output)

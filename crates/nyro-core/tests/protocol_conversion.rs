@@ -24,7 +24,8 @@ use nyro_core::protocol::ir::{
     StreamConfig, ToolCall, ToolSpec,
 };
 use nyro_core::protocol::{
-    EgressEncoder, IngressDecoder, ResponseFormatter, ResponseParser, StreamFormatter, StreamParser,
+    RequestDecoder, RequestEncoder, ResponseDecoder, ResponseEncoder, StreamResponseDecoder,
+    StreamResponseEncoder,
 };
 
 #[test]

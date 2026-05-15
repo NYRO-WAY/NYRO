@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::protocol::ir::AiStreamDelta;
 use crate::protocol::ir::usage::Usage;
-use crate::protocol::{SseEvent, StreamFormatter};
+use crate::protocol::{SseEvent, StreamResponseEncoder};
 
 struct PendingFunctionCall {
     output_index: usize,
@@ -281,7 +281,7 @@ impl ResponsesStreamFormatter {
     }
 }
 
-impl StreamFormatter for ResponsesStreamFormatter {
+impl StreamResponseEncoder for ResponsesStreamFormatter {
     fn format_deltas(&mut self, deltas: &[AiStreamDelta]) -> Vec<SseEvent> {
         let mut events = Vec::new();
 

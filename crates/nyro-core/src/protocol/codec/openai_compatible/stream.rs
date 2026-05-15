@@ -11,7 +11,7 @@ use crate::protocol::*;
 
 pub struct OpenAIResponseParser;
 
-impl ResponseParser for OpenAIResponseParser {
+impl ResponseDecoder for OpenAIResponseParser {
     fn parse_response(&self, resp: Value) -> Result<AiResponse> {
         let id = resp
             .get("id")
@@ -80,7 +80,7 @@ impl ResponseParser for OpenAIResponseParser {
 
 pub struct OpenAIResponseFormatter;
 
-impl ResponseFormatter for OpenAIResponseFormatter {
+impl ResponseEncoder for OpenAIResponseFormatter {
     fn format_response(&self, resp: &AiResponse) -> Value {
         let finish_reason = if !resp.tool_calls.is_empty() {
             Some("tool_calls")
@@ -163,7 +163,7 @@ impl OpenAIStreamParser {
     }
 }
 
-impl StreamParser for OpenAIStreamParser {
+impl StreamResponseDecoder for OpenAIStreamParser {
     fn parse_chunk(&mut self, raw: &str) -> Result<Vec<AiStreamDelta>> {
         self.buffer.push_str(raw);
         let mut deltas = Vec::new();
@@ -375,7 +375,7 @@ impl OpenAIStreamFormatter {
     }
 }
 
-impl StreamFormatter for OpenAIStreamFormatter {
+impl StreamResponseEncoder for OpenAIStreamFormatter {
     fn format_deltas(&mut self, deltas: &[AiStreamDelta]) -> Vec<SseEvent> {
         let mut events = Vec::new();
         for delta in deltas {
@@ -546,7 +546,7 @@ pub(crate) fn extract_reasoning_from_message(message: &Value) -> Option<String> 
 mod tests {
     use super::*;
     use crate::protocol::ir::{AiResponse, AiStreamDelta};
-    use crate::protocol::{ResponseParser, StreamParser};
+    use crate::protocol::{ResponseDecoder, StreamResponseDecoder};
 
     fn data_sse(json: &str) -> String {
         format!("data: {json}\n\n")

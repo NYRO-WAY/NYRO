@@ -2,13 +2,13 @@ use anyhow::Result;
 use reqwest::header::HeaderMap;
 use serde_json::Value;
 
-use crate::protocol::EgressEncoder;
+use crate::protocol::RequestEncoder;
 use crate::protocol::ir::AiRequest;
 use crate::protocol::ir::request::{ContentBlock, MediaSource, Message, MessageContent, Role};
 
 pub struct GoogleEncoder;
 
-impl EgressEncoder for GoogleEncoder {
+impl RequestEncoder for GoogleEncoder {
     fn encode_request(&self, req: &AiRequest) -> Result<(Value, HeaderMap)> {
         let ingress = &req.meta.vendor.ingress;
 

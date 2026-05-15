@@ -136,7 +136,7 @@ pub(super) async fn handle_stream(
 
             // Parse accumulated buffer for usage stats and log entry (best-effort).
             let log_text = String::from_utf8_lossy(&log_buf);
-            let mut log_parser = egress.handler().make_stream_parser();
+            let mut log_parser = egress.handler().make_stream_response_decoder();
             let mut accumulator = StreamResponseAccumulator::default();
             if let Ok(ai_deltas) = log_parser.parse_chunk(&log_text) {
                 accumulator.apply_all(&ai_deltas);
@@ -153,7 +153,7 @@ pub(super) async fn handle_stream(
                 ai_resp.model = log_pt.actual_model.clone();
             }
 
-            let aggregated_formatter = ingress.handler().make_response_formatter();
+            let aggregated_formatter = ingress.handler().make_response_encoder();
             let aggregated_output = aggregated_formatter.format_response(&ai_resp);
             let aggregated_body_str = serde_json::to_string(&aggregated_output).ok();
 
@@ -187,8 +187,8 @@ pub(super) async fn handle_stream(
     }
 
     // ── IR round-trip path ────────────────────────────────────────────────────
-    let mut stream_parser = egress.handler().make_stream_parser();
-    let mut stream_formatter = ingress.handler().make_stream_formatter();
+    let mut stream_parser = egress.handler().make_stream_response_decoder();
+    let mut stream_formatter = ingress.handler().make_stream_response_encoder();
     let mut byte_stream = resp.bytes_stream();
     let (tx, rx) = tokio::sync::mpsc::channel::<Result<String, Infallible>>(64);
 
@@ -264,7 +264,7 @@ pub(super) async fn handle_stream(
             ai_resp.stop_reason = Some("stop".to_string());
         }
 
-        let aggregated_formatter = ingress.handler().make_response_formatter();
+        let aggregated_formatter = ingress.handler().make_response_encoder();
         let aggregated_output = aggregated_formatter.format_response(&ai_resp);
         let aggregated_body_str = serde_json::to_string(&aggregated_output).ok();
         log_ir
@@ -281,7 +281,7 @@ pub(super) async fn handle_stream(
             if let (Some(cache_backend), Some(cache_key)) =
                 (cache_backend.as_ref(), cache_key_owned.as_deref())
             {
-                let formatter = ingress.handler().make_response_formatter();
+                let formatter = ingress.handler().make_response_encoder();
                 let payload = formatter.format_response(&ai_resp);
                 let entry = CacheEntry {
                     payload,
@@ -319,7 +319,7 @@ pub(super) async fn handle_stream(
             if let (Some(vector_store), Some(ctx)) =
                 (vector_store.as_ref(), semantic_write_ctx_owned.as_ref())
             {
-                let formatter = ingress.handler().make_response_formatter();
+                let formatter = ingress.handler().make_response_encoder();
                 let payload = formatter.format_response(&ai_resp);
                 let entry = CacheEntry {
                     payload,

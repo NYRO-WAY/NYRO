@@ -7,7 +7,7 @@
 use anyhow::Result;
 use serde_json::Value;
 
-use crate::protocol::IngressDecoder;
+use crate::protocol::RequestDecoder;
 use crate::protocol::ids::GOOGLE_GENERATE_CONTENT_V1BETA;
 use crate::protocol::ir::{
     AiRequest, ContentBlock, GenerationConfig, GoogleExt, MediaSource, Message, MessageContent,
@@ -240,7 +240,7 @@ impl GoogleDecoder {
     }
 }
 
-impl IngressDecoder for GoogleDecoder {
+impl RequestDecoder for GoogleDecoder {
     fn decode_request(&self, body: Value) -> Result<AiRequest> {
         self.decode_with_model(body, "gemini-2.0-flash", false)
     }

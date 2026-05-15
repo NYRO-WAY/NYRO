@@ -6,6 +6,48 @@
 
 ---
 
+## [PR-C] 6 个 codec trait 统一重命名 — 2026-05-16
+
+### 重命名 / 变更
+
+**`protocol/mod.rs` — 6 个 trait 重命名**
+
+| 旧名 | 新名 |
+|------|------|
+| `IngressDecoder` | `RequestDecoder` |
+| `EgressEncoder` | `RequestEncoder` |
+| `ResponseParser` | `ResponseDecoder` |
+| `ResponseFormatter` | `ResponseEncoder` |
+| `StreamParser` | `StreamResponseDecoder` |
+| `StreamFormatter` | `StreamResponseEncoder` |
+
+**`protocol/traits.rs` — `EndpointHandler` 工厂方法重命名**
+
+| 旧名 | 新名 |
+|------|------|
+| `make_decoder` | `make_request_decoder` |
+| `make_encoder` | `make_request_encoder` |
+| `make_response_parser` | `make_response_decoder` |
+| `make_response_formatter` | `make_response_encoder` |
+| `make_stream_parser` | `make_stream_response_decoder` |
+| `make_stream_formatter` | `make_stream_response_encoder` |
+
+### 删除
+
+- `protocol/traits.rs`：移除 `pub use EndpointHandler as ProtocolHandler;` 别名
+
+### 清理
+
+- `openai_compatible/embeddings.rs`：doc comment 中 `ProtocolHandler` → `EndpointHandler`
+- 全部 4 个 codec `EndpointHandler impl`、~50 处调用点、所有 use 语句同步替换
+
+### 完成态
+
+- 数据流向一目了然：`RequestDecoder → AiRequest → RequestEncoder → wire → Provider → wire → ResponseDecoder → AiResponse`，流式路径 `StreamResponseDecoder → Vec<AiStreamDelta> → StreamResponseEncoder`
+- 无任何旧名残留，编译器负责全量校验
+
+---
+
 ## [PR-B] Stream Parser 直产 AiStreamDelta + 删除遗留文件 — 2026-05-16
 
 ### 重命名 / 变更

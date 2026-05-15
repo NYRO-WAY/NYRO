@@ -43,13 +43,13 @@ use crate::protocol::ids::{OPENAI_CHAT_COMPLETIONS_V1, ProtocolEndpoint};
 
 // ── Client → Gateway ──
 
-pub trait IngressDecoder {
+pub trait RequestDecoder {
     fn decode_request(&self, body: serde_json::Value) -> anyhow::Result<ir::AiRequest>;
 }
 
 // ── Gateway → Provider ──
 
-pub trait EgressEncoder {
+pub trait RequestEncoder {
     fn encode_request(&self, req: &ir::AiRequest)
     -> anyhow::Result<(serde_json::Value, HeaderMap)>;
 
@@ -58,26 +58,26 @@ pub trait EgressEncoder {
 
 // ── Provider response → internal ──
 
-pub trait ResponseParser: Send {
+pub trait ResponseDecoder: Send {
     fn parse_response(&self, resp: serde_json::Value) -> anyhow::Result<ir::AiResponse>;
 }
 
 // ── Internal → client response ──
 
-pub trait ResponseFormatter: Send {
+pub trait ResponseEncoder: Send {
     fn format_response(&self, resp: &ir::AiResponse) -> serde_json::Value;
 }
 
 // ── Streaming: provider → internal deltas ──
 
-pub trait StreamParser: Send {
+pub trait StreamResponseDecoder: Send {
     fn parse_chunk(&mut self, raw: &str) -> anyhow::Result<Vec<ir::AiStreamDelta>>;
     fn finish(&mut self) -> anyhow::Result<Vec<ir::AiStreamDelta>>;
 }
 
 // ── Streaming: internal deltas → client SSE ──
 
-pub trait StreamFormatter: Send {
+pub trait StreamResponseEncoder: Send {
     fn format_deltas(&mut self, deltas: &[ir::AiStreamDelta]) -> Vec<SseEvent>;
     fn format_done(&mut self) -> Vec<SseEvent>;
     fn usage(&self) -> ir::Usage;
