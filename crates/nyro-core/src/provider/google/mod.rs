@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::error::GatewayError;
 use crate::protocol::ids::ProtocolId;
-use crate::protocol::types::{InternalRequest, InternalResponse};
+use crate::protocol::ir::{AiRequest, AiResponse};
 use crate::provider::common::pipeline;
 use crate::provider::inbound::InboundResponse;
 use crate::provider::metadata::{
@@ -86,7 +86,7 @@ impl Vendor for GoogleVendor {
     }
     async fn build_request(
         &self,
-        req: &mut InternalRequest,
+        req: &mut AiRequest,
         ctx: &ProviderCtx<'_>,
     ) -> Result<OutboundRequest, GatewayError> {
         pipeline::build_request(self, req, ctx).await
@@ -95,7 +95,7 @@ impl Vendor for GoogleVendor {
         &self,
         resp: InboundResponse,
         ctx: &ProviderCtx<'_>,
-    ) -> Result<InternalResponse, GatewayError> {
+    ) -> Result<AiResponse, GatewayError> {
         pipeline::parse_response(self, resp, ctx).await
     }
     fn stream_parser(&self, ctx: &ProviderCtx<'_>) -> Box<dyn ProviderStreamParser + Send> {

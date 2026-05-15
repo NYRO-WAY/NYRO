@@ -38,7 +38,7 @@ pub enum ResponseItem {
 // ── AiResponse ────────────────────────────────────────────────────────────────
 
 /// Unified egress IR produced by all codec response parsers and the accumulator.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AiResponse {
     /// The unique response ID assigned by the provider.
     pub id: String,

@@ -12,7 +12,7 @@ use crate::cache::entry::CacheEntry;
 use crate::db::models::{
     Route, RouteCacheConfig, RouteExactCacheConfig, RouteSemanticCacheConfig, RouteTarget,
 };
-use crate::protocol::types::{ContentBlock, InternalRequest, MessageContent, Role};
+use crate::protocol::ir::{AiRequest, ContentBlock, MessageContent, Role};
 
 // ── Semantic write context ─────────────────────────────────────────────────────
 
@@ -122,7 +122,7 @@ pub(super) fn is_semantic_entry_expired(entry: &CacheEntry, ttl: Duration) -> bo
 
 // ── Request introspection ─────────────────────────────────────────────────────
 
-pub(super) fn request_has_image_input(request: &InternalRequest) -> bool {
+pub(super) fn request_has_image_input(request: &AiRequest) -> bool {
     for message in &request.messages {
         if let MessageContent::Blocks(blocks) = &message.content
             && blocks
@@ -135,14 +135,12 @@ pub(super) fn request_has_image_input(request: &InternalRequest) -> bool {
     false
 }
 
-pub(super) fn extract_semantic_embedding_input(
-    request: &InternalRequest,
-) -> Option<(String, String)> {
+pub(super) fn extract_semantic_embedding_input(request: &AiRequest) -> Option<(String, String)> {
     let system_prompt = request
         .messages
         .iter()
         .filter(|m| matches!(m.role, Role::System))
-        .map(|m| m.content.as_text())
+        .map(|m| m.content.to_text())
         .filter(|t| !t.trim().is_empty())
         .collect::<Vec<_>>()
         .join("\n");
@@ -152,7 +150,7 @@ pub(super) fn extract_semantic_embedding_input(
         .iter()
         .rev()
         .find(|m| matches!(m.role, Role::User))
-        .map(|m| m.content.as_text())
+        .map(|m| m.content.to_text())
         .filter(|t| !t.trim().is_empty())?;
 
     let combined = if system_prompt.is_empty() {

@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::protocol::types::{InternalResponse, TokenUsage};
+use crate::protocol::ir::AiResponse;
+use crate::protocol::types::TokenUsage;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CacheEntry {
@@ -13,5 +14,5 @@ pub struct CacheEntry {
     pub usage: TokenUsage,
     pub created_at_epoch_ms: i64,
     #[serde(default)]
-    pub internal_response: Option<InternalResponse>,
+    pub internal_response: Option<AiResponse>,
 }

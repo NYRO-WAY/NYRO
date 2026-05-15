@@ -21,7 +21,7 @@ use crate::Gateway;
 use crate::auth::types::StoredCredential;
 use crate::db::models::Provider;
 use crate::protocol::ids::ProtocolId;
-use crate::protocol::types::{InternalRequest, InternalResponse, StreamDelta};
+use crate::protocol::ir::{AiRequest, AiResponse, AiStreamDelta};
 use crate::provider::registry::VendorScope;
 
 /// Runtime context handed to every `VendorExtension` hook.
@@ -55,11 +55,7 @@ pub trait VendorExtension: Send + Sync + 'static {
         format!("{}{}", base_url.trim_end_matches('/'), path)
     }
 
-    async fn pre_encode(
-        &self,
-        _ctx: &VendorCtx<'_>,
-        _req: &mut InternalRequest,
-    ) -> anyhow::Result<()> {
+    async fn pre_encode(&self, _ctx: &VendorCtx<'_>, _req: &mut AiRequest) -> anyhow::Result<()> {
         Ok(())
     }
 
@@ -76,11 +72,7 @@ pub trait VendorExtension: Send + Sync + 'static {
         Ok(())
     }
 
-    async fn post_parse(
-        &self,
-        _ctx: &VendorCtx<'_>,
-        _resp: &mut InternalResponse,
-    ) -> anyhow::Result<()> {
+    async fn post_parse(&self, _ctx: &VendorCtx<'_>, _resp: &mut AiResponse) -> anyhow::Result<()> {
         Ok(())
     }
 
@@ -95,7 +87,7 @@ pub trait VendorExtension: Send + Sync + 'static {
     async fn on_stream_delta(
         &self,
         _ctx: &VendorCtx<'_>,
-        _delta: &mut StreamDelta,
+        _delta: &mut AiStreamDelta,
     ) -> anyhow::Result<()> {
         Ok(())
     }
@@ -105,7 +97,7 @@ pub trait VendorExtension: Send + Sync + 'static {
     async fn pre_request(
         &self,
         _ctx: &VendorCtx<'_>,
-        _req: &mut InternalRequest,
+        _req: &mut AiRequest,
         _gw: &Gateway,
     ) -> anyhow::Result<()> {
         Ok(())
@@ -131,11 +123,7 @@ impl<T: crate::provider::vendor::Vendor> VendorExtension for T {
     fn build_url(&self, ctx: &VendorCtx<'_>, base_url: &str, path: &str) -> String {
         crate::provider::vendor::Vendor::build_url(self, ctx, base_url, path)
     }
-    async fn pre_encode(
-        &self,
-        ctx: &VendorCtx<'_>,
-        req: &mut InternalRequest,
-    ) -> anyhow::Result<()> {
+    async fn pre_encode(&self, ctx: &VendorCtx<'_>, req: &mut AiRequest) -> anyhow::Result<()> {
         crate::provider::vendor::Vendor::pre_encode(self, ctx, req).await
     }
     async fn post_encode(
@@ -153,11 +141,7 @@ impl<T: crate::provider::vendor::Vendor> VendorExtension for T {
     ) -> anyhow::Result<()> {
         crate::provider::vendor::Vendor::pre_parse(self, ctx, resp).await
     }
-    async fn post_parse(
-        &self,
-        ctx: &VendorCtx<'_>,
-        resp: &mut InternalResponse,
-    ) -> anyhow::Result<()> {
+    async fn post_parse(&self, ctx: &VendorCtx<'_>, resp: &mut AiResponse) -> anyhow::Result<()> {
         crate::provider::vendor::Vendor::post_parse(self, ctx, resp).await
     }
     async fn on_stream_raw_chunk(
@@ -170,14 +154,14 @@ impl<T: crate::provider::vendor::Vendor> VendorExtension for T {
     async fn on_stream_delta(
         &self,
         ctx: &VendorCtx<'_>,
-        delta: &mut StreamDelta,
+        delta: &mut AiStreamDelta,
     ) -> anyhow::Result<()> {
         crate::provider::vendor::Vendor::on_stream_delta(self, ctx, delta).await
     }
     async fn pre_request(
         &self,
         ctx: &VendorCtx<'_>,
-        req: &mut InternalRequest,
+        req: &mut AiRequest,
         gw: &Gateway,
     ) -> anyhow::Result<()> {
         crate::provider::vendor::Vendor::pre_request(self, ctx, req, gw).await

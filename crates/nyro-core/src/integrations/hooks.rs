@@ -5,7 +5,7 @@ use std::sync::{Arc, OnceLock};
 use async_trait::async_trait;
 
 use crate::error::GatewayError;
-use crate::protocol::types::{InternalRequest, InternalResponse};
+use crate::protocol::ir::{AiRequest, AiResponse};
 
 // ── HookContext ───────────────────────────────────────────────────────────────
 
@@ -37,11 +37,7 @@ pub trait RequestHook: Send + Sync + 'static {
     /// Short stable name used in log messages (e.g. `"content-moderation"`).
     fn name(&self) -> &'static str;
 
-    async fn on_request(
-        &self,
-        ctx: &HookContext,
-        req: &mut InternalRequest,
-    ) -> Result<(), GatewayError>;
+    async fn on_request(&self, ctx: &HookContext, req: &mut AiRequest) -> Result<(), GatewayError>;
 }
 
 /// `inventory` registration record for a [`RequestHook`].
@@ -54,7 +50,7 @@ inventory::collect!(RequestHookRegistration);
 // ── ResponseHook ──────────────────────────────────────────────────────────────
 
 /// Called after a successful upstream response has been parsed into
-/// [`InternalResponse`], before it is formatted and returned to the client.
+/// [`AiResponse`], before it is formatted and returned to the client.
 ///
 /// Errors returned by `on_response` are **logged and ignored** — the response
 /// is still delivered to the client. This is intentional: response hooks must
@@ -66,7 +62,7 @@ inventory::collect!(RequestHookRegistration);
 pub trait ResponseHook: Send + Sync + 'static {
     fn name(&self) -> &'static str;
 
-    async fn on_response(&self, ctx: &HookContext, resp: &mut InternalResponse, latency_ms: u64);
+    async fn on_response(&self, ctx: &HookContext, resp: &mut AiResponse, latency_ms: u64);
 }
 
 /// `inventory` registration record for a [`ResponseHook`].

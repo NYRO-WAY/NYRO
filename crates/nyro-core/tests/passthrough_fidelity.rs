@@ -29,7 +29,7 @@ use nyro_core::protocol::ids::{
     ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GENERATE_CONTENT_V1BETA, OPENAI_CHAT_COMPLETIONS_V1,
     OPENAI_RESPONSES_V1, ProtocolId,
 };
-use nyro_core::protocol::types::{InternalRequest, InternalResponse};
+use nyro_core::protocol::ir::{AiRequest, AiResponse};
 use nyro_core::provider::inbound::InboundResponse;
 use nyro_core::provider::outbound::OutboundRequest;
 use nyro_core::provider::registry::VendorScope;
@@ -136,7 +136,7 @@ impl Vendor for BearerVendor {
     }
     async fn build_request(
         &self,
-        _req: &mut InternalRequest,
+        _req: &mut AiRequest,
         _ctx: &ProviderCtx<'_>,
     ) -> Result<OutboundRequest, GatewayError> {
         unreachable!()
@@ -145,7 +145,7 @@ impl Vendor for BearerVendor {
         &self,
         _resp: InboundResponse,
         _ctx: &ProviderCtx<'_>,
-    ) -> Result<InternalResponse, GatewayError> {
+    ) -> Result<AiResponse, GatewayError> {
         unreachable!()
     }
     fn stream_parser(&self, _ctx: &ProviderCtx<'_>) -> Box<dyn ProviderStreamParser + Send> {
@@ -467,7 +467,7 @@ fn vendor_declared_mutations_defaults_are_conservative() {
         }
         async fn build_request(
             &self,
-            _: &mut InternalRequest,
+            _: &mut AiRequest,
             _: &ProviderCtx<'_>,
         ) -> Result<OutboundRequest, GatewayError> {
             unreachable!()
@@ -476,7 +476,7 @@ fn vendor_declared_mutations_defaults_are_conservative() {
             &self,
             _: InboundResponse,
             _: &ProviderCtx<'_>,
-        ) -> Result<InternalResponse, GatewayError> {
+        ) -> Result<AiResponse, GatewayError> {
             unreachable!()
         }
         fn stream_parser(&self, _: &ProviderCtx<'_>) -> Box<dyn ProviderStreamParser + Send> {

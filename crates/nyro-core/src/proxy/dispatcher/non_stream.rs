@@ -13,9 +13,6 @@ use serde_json::Value;
 
 use crate::cache::entry::CacheEntry;
 use crate::integrations::{HookContext, HookRegistry};
-use crate::protocol::ir::AiResponse;
-use crate::protocol::ir::compat::ai_stream_delta_to_old;
-use crate::protocol::types::StreamDelta;
 use crate::provider::inbound::InboundResponse;
 use crate::provider::vendor::ProviderCtx;
 use crate::proxy::client::ProxyClient;
@@ -130,7 +127,7 @@ pub(super) async fn handle_non_stream(
 
     // Parse response via ProviderAdapter.
     let inbound = InboundResponse { status, body: resp };
-    let mut internal_resp = match adapter.parse_response(inbound, ctx).await {
+    let mut ai_resp = match adapter.parse_response(inbound, ctx).await {
         Ok(r) => r,
         Err(e) => {
             log.status(500)
@@ -146,8 +143,8 @@ pub(super) async fn handle_non_stream(
     };
 
     // Ensure actual_model is set in the response.
-    if internal_resp.model.is_empty() {
-        internal_resp.model = actual_model.to_string();
+    if ai_resp.model.is_empty() {
+        ai_resp.model = actual_model.to_string();
     }
 
     // ── Response hooks ──────────────────────────────────────────────────────
@@ -157,19 +154,18 @@ pub(super) async fn handle_non_stream(
         let hook_ctx = HookContext {
             route_id: call_ctx.route_id.to_string(),
             provider_name: call_ctx.provider.name.clone(),
-            model: internal_resp.model.clone(),
+            model: ai_resp.model.clone(),
             api_key_id: call_ctx.api_key_id.map(str::to_string),
         };
         for hook in hook_registry.response_hooks() {
-            hook.on_response(&hook_ctx, &mut internal_resp, latency_ms)
-                .await;
+            hook.on_response(&hook_ctx, &mut ai_resp, latency_ms).await;
         }
     }
 
-    let is_tool = !internal_resp.tool_calls.is_empty();
-    let usage = internal_resp.usage.clone();
+    let is_tool = !ai_resp.tool_calls.is_empty();
+    let usage = ai_resp.usage.clone();
     let formatter = ingress.handler().make_response_formatter();
-    let output = formatter.format_response(&AiResponse::from(internal_resp.clone()));
+    let output = formatter.format_response(&ai_resp);
 
     let response_body_full = serde_json::to_string(&output).ok();
     let response_preview = response_body_full
@@ -198,7 +194,7 @@ pub(super) async fn handle_non_stream(
             actual_model: Some(actual_model.to_string()),
             usage,
             created_at_epoch_ms: chrono::Utc::now().timestamp_millis(),
-            internal_response: Some(internal_resp),
+            internal_response: Some(ai_resp),
         };
         if let Ok(bytes) = serde_json::to_vec(&entry) {
             if allow_exact_store {
@@ -296,32 +292,29 @@ pub(super) async fn handle_non_stream_via_upstream_stream(
         };
         let text = String::from_utf8_lossy(&bytes);
         if let Ok(ai_deltas) = stream_parser.parse_chunk(&text) {
-            let old: Vec<StreamDelta> = ai_deltas.iter().map(ai_stream_delta_to_old).collect();
-            accumulator.apply_all(&old);
+            accumulator.apply_all(&ai_deltas);
         }
     }
 
     if let Ok(ai_deltas) = stream_parser.finish() {
-        let old: Vec<StreamDelta> = ai_deltas.iter().map(ai_stream_delta_to_old).collect();
-        accumulator.apply_all(&old);
+        accumulator.apply_all(&ai_deltas);
     }
 
-    let mut internal_resp = accumulator.into_internal_response();
-    if internal_resp.id.is_empty() {
-        internal_resp.id = format!("chatcmpl-{}", uuid::Uuid::new_v4().simple());
+    let mut ai_resp = accumulator.into_ai_response();
+    if ai_resp.id.is_empty() {
+        ai_resp.id = format!("chatcmpl-{}", uuid::Uuid::new_v4().simple());
     }
-    if internal_resp.model.is_empty() {
-        internal_resp.model = actual_model.to_string();
+    if ai_resp.model.is_empty() {
+        ai_resp.model = actual_model.to_string();
     }
-    if internal_resp.stop_reason.is_none() {
-        internal_resp.stop_reason = Some("stop".to_string());
+    if ai_resp.stop_reason.is_none() {
+        ai_resp.stop_reason = Some("stop".to_string());
     }
-    crate::protocol::codec::reasoning::normalize_response_reasoning(&mut internal_resp);
 
-    let is_tool = !internal_resp.tool_calls.is_empty();
-    let usage = internal_resp.usage.clone();
+    let is_tool = !ai_resp.tool_calls.is_empty();
+    let usage = ai_resp.usage.clone();
     let formatter = ingress.handler().make_response_formatter();
-    let output = formatter.format_response(&AiResponse::from(internal_resp.clone()));
+    let output = formatter.format_response(&ai_resp);
 
     let response_preview = serde_json::to_string(&output)
         .ok()
@@ -349,7 +342,7 @@ pub(super) async fn handle_non_stream_via_upstream_stream(
             actual_model: Some(actual_model.to_string()),
             usage,
             created_at_epoch_ms: chrono::Utc::now().timestamp_millis(),
-            internal_response: Some(internal_resp),
+            internal_response: Some(ai_resp),
         };
         if let Ok(bytes) = serde_json::to_vec(&entry) {
             if allow_exact_store {
