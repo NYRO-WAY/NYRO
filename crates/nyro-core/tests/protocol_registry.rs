@@ -11,8 +11,9 @@ use nyro_core::protocol::ids::{
     ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GENERATE_CONTENT_V1BETA, OPENAI_CHAT_COMPLETIONS_V1,
     OPENAI_EMBEDDINGS_V1, OPENAI_RESPONSES_V1, Protocol, ProtocolId,
 };
+use nyro_core::protocol::ir::Role;
 use nyro_core::protocol::registry::ProtocolRegistry;
-use nyro_core::protocol::types::Role;
+use nyro_core::protocol::types::InternalRequest;
 use serde_json::json;
 
 #[test]
@@ -151,7 +152,11 @@ fn decoder_preserves_role_sequence_and_source_protocol() {
             .decode_request(body)
             .unwrap_or_else(|e| panic!("decoder failed for {id}: {e}"));
 
-        assert_eq!(req.source_protocol, id, "source_protocol mismatch for {id}");
+        assert_eq!(
+            req.meta.source_protocol.unwrap(),
+            id,
+            "source_protocol mismatch for {id}"
+        );
         assert!(!req.messages.is_empty(), "messages empty for {id}");
         let _: Vec<Role> = req.messages.iter().map(|m| m.role).collect();
     }
@@ -169,9 +174,10 @@ fn encoder_round_trips_body_for_every_handler() {
         let body = sample_body(id);
         let h = reg.get(&id).unwrap();
         let internal = h.make_decoder().decode_request(body).unwrap();
+        let internal_old: InternalRequest = internal.clone().into();
         let (out_body, headers) = h
             .make_encoder()
-            .encode_request(&internal)
+            .encode_request(&internal_old)
             .unwrap_or_else(|e| panic!("encoder failed for {id}: {e}"));
         assert!(
             out_body.is_object(),
@@ -181,7 +187,7 @@ fn encoder_round_trips_body_for_every_handler() {
 
         let _path = h
             .make_encoder()
-            .egress_path(&internal.model, internal.stream);
+            .egress_path(&internal.model, internal.stream.enabled);
     }
 }
 
@@ -255,13 +261,14 @@ fn embeddings_decoder_round_trips_body() {
         .decode_request(body.clone())
         .unwrap();
     assert_eq!(internal.model, "text-embedding-3-small");
-    assert!(!internal.stream);
+    assert!(!internal.stream.enabled);
 
+    let internal_old: InternalRequest = internal.clone().into();
     let (encoded, _headers) = reg
         .get(&OPENAI_EMBEDDINGS_V1)
         .unwrap()
         .make_encoder()
-        .encode_request(&internal)
+        .encode_request(&internal_old)
         .unwrap();
     assert_eq!(encoded, body, "encoder must round-trip the original body");
 }

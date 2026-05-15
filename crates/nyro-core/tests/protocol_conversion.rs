@@ -17,7 +17,9 @@ use nyro_core::protocol::ids::{
     ANTHROPIC_MESSAGES_2023_06_01, GOOGLE_GENERATE_CONTENT_V1BETA, OPENAI_CHAT_COMPLETIONS_V1,
     OPENAI_RESPONSES_V1,
 };
-use nyro_core::protocol::ir::AiRequest;
+use nyro_core::protocol::ir::{
+    AiRequest, ContentBlock as IrContentBlock, MessageContent as IrMessageContent, Role as IrRole,
+};
 use nyro_core::protocol::types::{
     ContentBlock, InternalMessage, InternalRequest, InternalResponse, MessageContent, ResponseItem,
     Role, StreamDelta, TokenUsage, ToolCall, ToolDef,
@@ -444,7 +446,7 @@ fn anthropic_tool_result_decodes_to_tool_role() {
         .decode_request(body)
         .expect("decode anthropic request");
     assert_eq!(req.messages.len(), 2);
-    assert_eq!(req.messages[1].role, Role::Tool);
+    assert_eq!(req.messages[1].role, IrRole::Tool);
     assert_eq!(req.messages[1].tool_call_id.as_deref(), Some("call_abc"));
 }
 
@@ -474,8 +476,8 @@ fn anthropic_multi_tool_result_decodes_to_multiple_tool_messages() {
         .decode_request(body)
         .expect("decode anthropic request");
     assert_eq!(req.messages.len(), 3);
-    assert_eq!(req.messages[1].role, Role::Tool);
-    assert_eq!(req.messages[2].role, Role::Tool);
+    assert_eq!(req.messages[1].role, IrRole::Tool);
+    assert_eq!(req.messages[2].role, IrRole::Tool);
     assert_eq!(req.messages[1].tool_call_id.as_deref(), Some("call_a"));
     assert_eq!(req.messages[2].tool_call_id.as_deref(), Some("call_b"));
 }
@@ -504,17 +506,18 @@ fn anthropic_thinking_block_round_trips_with_signature() {
     let req = AnthropicDecoder
         .decode_request(body)
         .expect("decode anthropic request");
-    let MessageContent::Blocks(blocks) = &req.messages[0].content else {
+    let IrMessageContent::Blocks(blocks) = &req.messages[0].content else {
         panic!("thinking must remain a structured block");
     };
     assert!(matches!(
         &blocks[0],
-        ContentBlock::Reasoning { text, signature }
-            if text == "review prior tool output" && signature.as_deref() == Some("sig_123")
+        IrContentBlock::Thinking { thinking, signature }
+            if thinking == "review prior tool output" && signature.as_deref() == Some("sig_123")
     ));
 
+    let req_old: InternalRequest = req.into();
     let (encoded, _) = AnthropicEncoder
-        .encode_request(&req)
+        .encode_request(&req_old)
         .expect("encode anthropic request");
     let block = encoded
         .get("messages")
@@ -1061,9 +1064,9 @@ fn responses_decoder_ignores_empty_message_content_item() {
         .decode_request(body)
         .expect("decode request should succeed");
     assert_eq!(req.messages.len(), 1);
-    assert_eq!(req.messages[0].role, Role::User);
+    assert_eq!(req.messages[0].role, IrRole::User);
     assert_eq!(
-        req.messages[0].content.as_text(),
+        req.messages[0].content.to_text(),
         "帮我查看当前目录下有哪些文件"
     );
 }
@@ -1916,7 +1919,7 @@ fn codex_parallel_calls_with_intermediate_text_anthropic_egress() {
         ]
     });
     let internal = ResponsesDecoder.decode_request(body).expect("decode");
-    let mut req: InternalRequest = internal;
+    let mut req: InternalRequest = internal.into();
     normalize_request_tool_results(&mut req);
 
     let (encoded, _) = AnthropicEncoder
