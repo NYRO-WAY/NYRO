@@ -100,6 +100,12 @@ pub async fn migrate(pool: &SqlitePool, vector_dimensions: usize) -> anyhow::Res
     normalize_provider_protocols(pool).await?;
     backfill_route_fields(pool).await?;
     backfill_route_targets(pool).await?;
+    migrate_logs_v2_spec_aligned(pool).await?;
+    ensure_request_log_column(pool, "is_stream", "INTEGER DEFAULT 0").await?;
+    ensure_request_log_column(pool, "api_key_name", "TEXT").await?;
+    ensure_request_log_column(pool, "provider_name", "TEXT").await?;
+    ensure_request_log_column(pool, "route_id", "TEXT").await?;
+    ensure_request_log_column(pool, "route_name", "TEXT").await?;
     Ok(())
 }
 
@@ -277,6 +283,124 @@ async fn ensure_route_column(
         let sql = format!("ALTER TABLE routes ADD COLUMN {column_name} {definition}");
         sqlx::query(&sql).execute(pool).await?;
     }
+
+    Ok(())
+}
+
+/// Idempotent migration: upgrade request_logs from the legacy 21-column schema
+/// to the spec-aligned 26-column schema.
+///
+/// Operations (all idempotent via column existence checks):
+///   1. RENAME COLUMN (11 renames) — old → new names per spec.
+///   2. ADD COLUMN (9 new columns).
+///   3. Migrate created_at: TEXT datetime → INTEGER Unix ms.
+///   4. Rebuild indexes with new names.
+async fn migrate_logs_v2_spec_aligned(pool: &SqlitePool) -> anyhow::Result<()> {
+    // Helper: rename a column in request_logs if the old name still exists.
+    async fn rename_col(pool: &SqlitePool, old: &str, new: &str) -> anyhow::Result<()> {
+        if column_exists(pool, "request_logs", old).await?
+            && !column_exists(pool, "request_logs", new).await?
+        {
+            sqlx::query(&format!(
+                "ALTER TABLE request_logs RENAME COLUMN {old} TO {new}"
+            ))
+            .execute(pool)
+            .await?;
+        }
+        Ok(())
+    }
+
+    // ── Step 1: RENAME COLUMNS ─────────────────────────────────────────────
+    // Handle intermediate state: an earlier version of this migration renamed
+    // `created_at → timestamp`.  Roll it back to the canonical `created_at`.
+    rename_col(pool, "timestamp", "created_at").await?;
+    rename_col(pool, "ingress_protocol", "client_protocol").await?;
+    rename_col(pool, "egress_protocol", "upstream_protocol").await?;
+    rename_col(pool, "provider_name", "provider_id").await?;
+    rename_col(pool, "request_model", "client_model").await?;
+    rename_col(pool, "actual_model", "upstream_model").await?;
+    rename_col(pool, "status_code", "client_status_code").await?;
+    rename_col(pool, "duration_ms", "latency_total_ms").await?;
+    rename_col(pool, "request_headers", "client_request_headers").await?;
+    rename_col(pool, "request_body", "client_request_body").await?;
+    rename_col(pool, "response_headers", "upstream_response_headers").await?;
+    rename_col(pool, "response_body", "client_response_body").await?;
+
+    // ── Step 2: Migrate created_at values ─────────────────────────────────
+    if column_exists(pool, "request_logs", "created_at").await? {
+        // 2a. NULL → 0 (rows inserted by older code paths that omitted created_at).
+        sqlx::query("UPDATE request_logs SET created_at = 0 WHERE created_at IS NULL")
+            .execute(pool)
+            .await?;
+
+        // 2b. ISO8601 TEXT (e.g. "2024-01-15 10:00:00") → INTEGER Unix milliseconds.
+        //     Detect by checking whether any row holds a text value that starts with
+        //     a 4-digit year (LIKE '____-%'), which unambiguously identifies ISO8601.
+        let has_iso_ts: bool = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM request_logs \
+             WHERE typeof(created_at) = 'text' AND created_at LIKE '____-%' LIMIT 1",
+        )
+        .fetch_one(pool)
+        .await
+        .map(|n| n > 0)
+        .unwrap_or(false);
+
+        if has_iso_ts {
+            sqlx::query(
+                "UPDATE request_logs \
+                 SET created_at = CAST(strftime('%s', created_at) AS INTEGER) * 1000 \
+                 WHERE typeof(created_at) = 'text' AND created_at LIKE '____-%'",
+            )
+            .execute(pool)
+            .await?;
+        }
+    }
+
+    // ── Step 3: ADD new columns ────────────────────────────────────────────
+    ensure_request_log_column(pool, "upstream_url", "TEXT").await?;
+    ensure_request_log_column(pool, "client_response_headers", "TEXT").await?;
+    ensure_request_log_column(pool, "upstream_request_headers", "TEXT").await?;
+    ensure_request_log_column(pool, "upstream_request_body", "TEXT").await?;
+    ensure_request_log_column(pool, "upstream_response_body", "TEXT").await?;
+    ensure_request_log_column(pool, "upstream_status_code", "INTEGER").await?;
+    ensure_request_log_column(pool, "latency_upstream_ms", "INTEGER").await?;
+    ensure_request_log_column(pool, "stream_chunks_count", "INTEGER DEFAULT 0").await?;
+    ensure_request_log_column(pool, "stream_first_chunk_ms", "INTEGER").await?;
+
+    // ── Step 4: Rebuild indexes ────────────────────────────────────────────
+    // Drop stale index left by the intermediate `timestamp`-column migration.
+    sqlx::query("DROP INDEX IF EXISTS idx_logs_timestamp")
+        .execute(pool)
+        .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_logs_created_at ON request_logs(created_at)")
+        .execute(pool)
+        .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_logs_provider_id ON request_logs(provider_id)")
+        .execute(pool)
+        .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_logs_client_status ON request_logs(client_status_code)",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_logs_upstream_model ON request_logs(upstream_model)",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query("CREATE INDEX IF NOT EXISTS idx_logs_api_key ON request_logs(api_key_id)")
+        .execute(pool)
+        .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_logs_client_protocol ON request_logs(client_protocol)",
+    )
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_logs_upstream_protocol ON request_logs(upstream_protocol)",
+    )
+    .execute(pool)
+    .await?;
 
     Ok(())
 }
@@ -646,34 +770,39 @@ CREATE TABLE IF NOT EXISTS route_targets (
 CREATE INDEX IF NOT EXISTS idx_route_targets_route_id ON route_targets(route_id);
 
 CREATE TABLE IF NOT EXISTS request_logs (
-    id                TEXT PRIMARY KEY,
-    created_at        TEXT DEFAULT (datetime('now')),
-    api_key_id        TEXT,
-    ingress_protocol  TEXT,
-    egress_protocol   TEXT,
-    request_model     TEXT,
-    actual_model      TEXT,
-    provider_name     TEXT,
-    status_code       INTEGER,
-    duration_ms       REAL,
-    input_tokens      INTEGER DEFAULT 0,
-    output_tokens     INTEGER DEFAULT 0,
-    is_stream         INTEGER DEFAULT 0,
-    is_tool_call      INTEGER DEFAULT 0,
-    error_message     TEXT,
-    response_preview  TEXT,
-    method            TEXT,
-    path              TEXT,
-    request_headers   TEXT,
-    request_body      TEXT,
-    response_headers  TEXT,
-    response_body     TEXT
+    id                        TEXT PRIMARY KEY,
+    created_at                INTEGER NOT NULL DEFAULT 0,
+    api_key_id                TEXT,
+    api_key_name              TEXT,
+    client_protocol           TEXT,
+    upstream_protocol         TEXT,
+    provider_id               TEXT,
+    provider_name             TEXT,
+    route_id                  TEXT,
+    route_name                TEXT,
+    upstream_url              TEXT,
+    client_model              TEXT,
+    upstream_model            TEXT,
+    method                    TEXT,
+    path                      TEXT,
+    client_request_headers    TEXT,
+    client_request_body       TEXT,
+    client_response_headers   TEXT,
+    client_response_body      TEXT,
+    upstream_request_headers  TEXT,
+    upstream_request_body     TEXT,
+    upstream_response_headers TEXT,
+    upstream_response_body    TEXT,
+    upstream_status_code      INTEGER,
+    client_status_code        INTEGER,
+    latency_total_ms          INTEGER,
+    latency_upstream_ms       INTEGER,
+    input_tokens              INTEGER DEFAULT 0,
+    output_tokens             INTEGER DEFAULT 0,
+    is_stream                 INTEGER DEFAULT 0,
+    stream_chunks_count       INTEGER DEFAULT 0,
+    stream_first_chunk_ms     INTEGER
 );
-
-CREATE INDEX IF NOT EXISTS idx_logs_created_at ON request_logs(created_at);
-CREATE INDEX IF NOT EXISTS idx_logs_provider ON request_logs(provider_name);
-CREATE INDEX IF NOT EXISTS idx_logs_status ON request_logs(status_code);
-CREATE INDEX IF NOT EXISTS idx_logs_model ON request_logs(actual_model);
 
 CREATE TABLE IF NOT EXISTS settings (
     key        TEXT PRIMARY KEY,

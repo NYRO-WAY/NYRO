@@ -57,7 +57,7 @@ use crate::provider::vendor::ProviderCtx;
 use crate::provider::{VendorCtx, VendorRegistry};
 use crate::proxy::client::ProxyClient;
 use crate::proxy::context::RequestContext;
-use crate::proxy::observability::{LogExtras, emit_log, headers_to_json};
+use crate::proxy::observability::{LogExtras, headers_to_json, send_log};
 use crate::proxy::planner::{ProtocolMode, negotiate};
 use crate::router::TargetSelector;
 
@@ -113,9 +113,9 @@ pub async fn dispatch_pipeline(
         Some(r) => r,
         None => {
             let msg = format!("no route for model: {request_model}");
-            LogBuilder::from_dispatch(&gw, &ingress_str, &request_model, None, start, is_stream)
+            LogBuilder::from_dispatch(&gw, &ingress_str, &request_model, None, start)
+                .stream_flag(is_stream)
                 .status(404)
-                .error(msg.clone())
                 .with_req_extras(&req_extras)
                 .resp_body(Some(
                     serde_json::json!({ "error": { "message": msg.clone() } }).to_string(),
@@ -132,9 +132,9 @@ pub async fn dispatch_pipeline(
         Ok(v) => v,
         Err(resp) => {
             let status = resp.status().as_u16() as i32;
-            LogBuilder::from_dispatch(&gw, &ingress_str, &request_model, None, start, is_stream)
+            LogBuilder::from_dispatch(&gw, &ingress_str, &request_model, None, start)
+                .stream_flag(is_stream)
                 .status_i32(status)
-                .error(format!("authorization failed: {status}"))
                 .with_req_extras(&req_extras)
                 .emit();
             return resp;
@@ -199,15 +199,15 @@ pub async fn dispatch_pipeline(
             &request_model,
             auth_key.id.as_deref(),
             start,
-            is_stream,
         )
-        .actual_model_str(
+        .stream_flag(is_stream)
+        .upstream_model_str(
             cached_entry
                 .actual_model
                 .as_deref()
                 .unwrap_or(&request_model),
         )
-        .provider_str(&cached_entry.provider_name)
+        .provider_id_str(&cached_entry.provider_name)
         .status_i32(cached_entry.status_code as i32)
         .usage(cached_usage)
         .with_req_extras(&req_extras)
@@ -245,15 +245,15 @@ pub async fn dispatch_pipeline(
                         &request_model,
                         auth_key.id.as_deref(),
                         start,
-                        is_stream,
                     )
-                    .actual_model_str(
+                    .stream_flag(is_stream)
+                    .upstream_model_str(
                         cached_entry
                             .actual_model
                             .as_deref()
                             .unwrap_or(&request_model),
                     )
-                    .provider_str(&cached_entry.provider_name)
+                    .provider_id_str(&cached_entry.provider_name)
                     .status_i32(cached_entry.status_code as i32)
                     .usage(cached_usage)
                     .with_req_extras(&req_extras)
@@ -311,15 +311,15 @@ pub async fn dispatch_pipeline(
                 &request_model,
                 auth_key.id.as_deref(),
                 start,
-                is_stream,
             )
-            .actual_model_str(
+            .stream_flag(is_stream)
+            .upstream_model_str(
                 cached_entry
                     .actual_model
                     .as_deref()
                     .unwrap_or(&request_model),
             )
-            .provider_str(&cached_entry.provider_name)
+            .provider_id_str(&cached_entry.provider_name)
             .status_i32(cached_entry.status_code as i32)
             .usage(cached_usage)
             .with_req_extras(&req_extras)
@@ -365,10 +365,9 @@ pub async fn dispatch_pipeline(
                     &request_model,
                     auth_key.id.as_deref(),
                     start,
-                    is_stream,
                 )
+                .stream_flag(is_stream)
                 .status(500)
-                .error(format!("request hook `{}` rejected: {e}", hook.name()))
                 .with_req_extras(&req_extras)
                 .emit();
                 return error_response(500, &e.to_string());
@@ -386,10 +385,9 @@ pub async fn dispatch_pipeline(
             &request_model,
             auth_key.id.as_deref(),
             start,
-            is_stream,
         )
+        .stream_flag(is_stream)
         .status(503)
-        .error("no route targets configured")
         .with_req_extras(&req_extras)
         .emit();
         return error_response(503, "no route targets configured");
@@ -402,10 +400,9 @@ pub async fn dispatch_pipeline(
             &request_model,
             auth_key.id.as_deref(),
             start,
-            is_stream,
         )
+        .stream_flag(is_stream)
         .status(503)
-        .error("no route targets configured")
         .with_req_extras(&req_extras)
         .emit();
         return error_response(503, "no route targets configured");
@@ -557,6 +554,7 @@ pub async fn dispatch_pipeline(
             gw: gw.clone(),
             provider: &provider,
             route_id: &route.id,
+            route_name: &route.name,
             egress,
             ingress,
             ingress_str: &ingress_str,
@@ -564,6 +562,8 @@ pub async fn dispatch_pipeline(
             request_model: &request_model,
             actual_model: &actual_model,
             api_key_id: auth_key.id.as_deref(),
+            api_key_name: auth_key.name.as_deref(),
+            is_stream,
             start,
         };
         let cache_ctx = CacheWriteCtx {
@@ -642,10 +642,9 @@ pub async fn dispatch_pipeline(
             &request_model,
             auth_key.id.as_deref(),
             start,
-            is_stream,
         )
+        .stream_flag(is_stream)
         .status(502)
-        .error("all route targets failed")
         .with_req_extras(&req_extras)
         .emit();
         error_response(502, "all route targets failed")
@@ -684,9 +683,8 @@ pub async fn dispatch(
             let msg = format!("invalid request: {e}");
             // dispatch() has no start Instant; use a zero-duration sentinel.
             let decode_start = Instant::now();
-            LogBuilder::from_dispatch(&gw, &ingress_str, "", None, decode_start, false)
+            LogBuilder::from_dispatch(&gw, &ingress_str, "", None, decode_start)
                 .status(400)
-                .error(msg.clone())
                 .with_req_extras(&RequestExtras {
                     method: method.to_string(),
                     path: path.to_string(),
@@ -713,6 +711,7 @@ struct CallCtx<'a> {
     gw: Gateway,
     provider: &'a Provider,
     route_id: &'a str,
+    route_name: &'a str,
     egress: ProtocolId,
     ingress: ProtocolId,
     ingress_str: &'a str,
@@ -720,6 +719,8 @@ struct CallCtx<'a> {
     request_model: &'a str,
     actual_model: &'a str,
     api_key_id: Option<&'a str>,
+    api_key_name: Option<&'a str>,
+    is_stream: bool,
     start: Instant,
 }
 
@@ -746,7 +747,8 @@ struct RequestExtras {
 
 // ── Log builder ───────────────────────────────────────────────────────────────
 
-/// Fluent builder for `emit_log`. Eliminates the 15-argument flat call site.
+/// Fluent builder for `LogEntry`. Eliminates the long flat parameter list at
+/// call sites.
 ///
 /// Create via `LogBuilder::from_ctx` (inside handler functions, where a
 /// `CallCtx` is available) or `LogBuilder::from_dispatch` (in
@@ -755,19 +757,20 @@ struct RequestExtras {
 #[derive(Clone)]
 struct LogBuilder {
     gw: Gateway,
-    ingress: String,
-    egress: String,
-    request_model: String,
-    actual_model: String,
+    client_protocol: String,
+    upstream_protocol: String,
+    client_model: String,
+    upstream_model: String,
     api_key_id: Option<String>,
+    api_key_name: Option<String>,
+    provider_id: String,
     provider_name: String,
-    start: Instant,
-    status_code: i32,
-    usage: Usage,
+    route_id: Option<String>,
+    route_name: Option<String>,
     is_stream: bool,
-    is_tool_call: bool,
-    error_message: Option<String>,
-    response_preview: Option<String>,
+    start: Instant,
+    client_status_code: i32,
+    usage: Usage,
     extras: LogExtras,
 }
 
@@ -776,70 +779,76 @@ impl LogBuilder {
     fn from_ctx(call_ctx: &CallCtx<'_>) -> Self {
         Self {
             gw: call_ctx.gw.clone(),
-            ingress: call_ctx.ingress_str.to_string(),
-            egress: call_ctx.egress_str.to_string(),
-            request_model: call_ctx.request_model.to_string(),
-            actual_model: call_ctx.actual_model.to_string(),
+            client_protocol: call_ctx.ingress_str.to_string(),
+            upstream_protocol: call_ctx.egress_str.to_string(),
+            client_model: call_ctx.request_model.to_string(),
+            upstream_model: call_ctx.actual_model.to_string(),
             api_key_id: call_ctx.api_key_id.map(ToString::to_string),
+            api_key_name: call_ctx.api_key_name.map(ToString::to_string),
+            provider_id: call_ctx.provider.id.clone(),
             provider_name: call_ctx.provider.name.clone(),
+            route_id: Some(call_ctx.route_id.to_string()),
+            route_name: Some(call_ctx.route_name.to_string()),
+            is_stream: call_ctx.is_stream,
             start: call_ctx.start,
-            status_code: 200,
+            client_status_code: 200,
             usage: Usage::default(),
-            is_stream: false,
-            is_tool_call: false,
-            error_message: None,
-            response_preview: None,
             extras: LogExtras::default(),
         }
     }
 
     /// Build from dispatch-pipeline context before a provider is selected.
-    /// `egress` defaults to `ingress`; `actual_model` and `provider_name`
-    /// default to empty strings; override with `actual_model_str` / `provider_str`.
+    /// `upstream_protocol` defaults to `client_protocol`; `upstream_model` and
+    /// `provider_id` default to empty strings.
     fn from_dispatch(
         gw: &Gateway,
         ingress: &str,
         request_model: &str,
         api_key_id: Option<&str>,
         start: Instant,
-        is_stream: bool,
     ) -> Self {
         Self {
             gw: gw.clone(),
-            ingress: ingress.to_string(),
-            egress: ingress.to_string(),
-            request_model: request_model.to_string(),
-            actual_model: String::new(),
+            client_protocol: ingress.to_string(),
+            upstream_protocol: ingress.to_string(),
+            client_model: request_model.to_string(),
+            upstream_model: String::new(),
             api_key_id: api_key_id.map(ToString::to_string),
+            api_key_name: None,
+            provider_id: String::new(),
             provider_name: String::new(),
+            route_id: None,
+            route_name: None,
+            is_stream: false,
             start,
-            status_code: 200,
+            client_status_code: 200,
             usage: Usage::default(),
-            is_stream,
-            is_tool_call: false,
-            error_message: None,
-            response_preview: None,
             extras: LogExtras::default(),
         }
     }
 
+    fn stream_flag(mut self, v: bool) -> Self {
+        self.is_stream = v;
+        self
+    }
+
     fn status(mut self, code: u16) -> Self {
-        self.status_code = code as i32;
+        self.client_status_code = code as i32;
         self
     }
 
     fn status_i32(mut self, code: i32) -> Self {
-        self.status_code = code;
+        self.client_status_code = code;
         self
     }
 
-    fn actual_model_str(mut self, m: &str) -> Self {
-        self.actual_model = m.to_string();
+    fn upstream_model_str(mut self, m: &str) -> Self {
+        self.upstream_model = m.to_string();
         self
     }
 
-    fn provider_str(mut self, name: &str) -> Self {
-        self.provider_name = name.to_string();
+    fn provider_id_str(mut self, id: &str) -> Self {
+        self.provider_id = id.to_string();
         self
     }
 
@@ -848,70 +857,119 @@ impl LogBuilder {
         self
     }
 
-    fn stream(mut self) -> Self {
-        self.is_stream = true;
+    fn error(self, _msg: impl Into<String>) -> Self {
+        // Error info is embedded in response body; kept for call-site compat.
         self
     }
 
-    fn maybe_tool(mut self, yes: bool) -> Self {
-        self.is_tool_call = yes;
+    fn maybe_error(self, _msg: Option<String>) -> Self {
         self
     }
 
-    fn error(mut self, msg: impl Into<String>) -> Self {
-        self.error_message = Some(msg.into());
-        self
-    }
-
-    fn maybe_error(mut self, msg: Option<String>) -> Self {
-        self.error_message = msg;
-        self
-    }
-
-    fn preview(mut self, p: Option<String>) -> Self {
-        self.response_preview = p;
-        self
-    }
-
-    /// Pre-fill the request-side `LogExtras` fields (method, path, headers,
-    /// body) from a `RequestExtras`.  Response-side fields remain unset until
-    /// `resp_headers` / `resp_body` are called.
+    /// Pre-fill the client request-side `LogExtras` fields (method, path,
+    /// headers, body) from a `RequestExtras`.
     fn with_req_extras(mut self, req: &RequestExtras) -> Self {
         self.extras.method = Some(req.method.clone());
         self.extras.path = Some(req.path.clone());
-        self.extras.request_headers = req.headers.clone();
-        self.extras.request_body = req.body.clone();
+        self.extras.client_request_headers = req.headers.clone();
+        self.extras.client_request_body = req.body.clone();
         self
     }
 
-    fn resp_headers(mut self, h: Option<String>) -> Self {
-        self.extras.response_headers = h;
+    /// Set the upstream request wire (headers + body encoded for upstream).
+    fn with_upstream_request(mut self, headers: Option<String>, body: Option<String>) -> Self {
+        self.extras.upstream_request_headers = headers;
+        self.extras.upstream_request_body = body;
         self
     }
 
+    /// Set the upstream response wire.
+    fn with_upstream_response(
+        mut self,
+        status: i32,
+        headers: Option<String>,
+        body: Option<String>,
+        latency_ms: Option<i64>,
+    ) -> Self {
+        self.extras.upstream_status_code = Some(status);
+        self.extras.upstream_response_headers = headers;
+        self.extras.upstream_response_body = body;
+        self.extras.latency_upstream_ms = latency_ms;
+        self
+    }
+
+    fn upstream_resp_headers(mut self, h: Option<String>) -> Self {
+        self.extras.upstream_response_headers = h;
+        self
+    }
+
+    fn upstream_resp_body(mut self, b: Option<String>) -> Self {
+        self.extras.upstream_response_body = b;
+        self
+    }
+
+    fn upstream_status(mut self, code: i32) -> Self {
+        self.extras.upstream_status_code = Some(code);
+        self
+    }
+
+    /// Set the client response wire.
+    fn with_client_response(mut self, headers: Option<String>, body: Option<String>) -> Self {
+        self.extras.client_response_headers = headers;
+        self.extras.client_response_body = body;
+        self
+    }
+
+    fn stream_metrics(mut self, chunks: i32, first_chunk_ms: Option<i64>) -> Self {
+        self.extras.stream_chunks_count = chunks;
+        self.extras.stream_first_chunk_ms = first_chunk_ms;
+        self
+    }
+
+    // ── Legacy shim ────────────────────────────────────────────────────────
+
+    /// Maps `response_body` → `client_response_body`.
     fn resp_body(mut self, b: Option<String>) -> Self {
-        self.extras.response_body = b;
+        self.extras.client_response_body = b;
         self
     }
 
     fn emit(self) {
-        emit_log(
-            &self.gw,
-            &self.ingress,
-            &self.egress,
-            &self.request_model,
-            &self.actual_model,
-            self.api_key_id.as_deref(),
-            &self.provider_name,
-            self.status_code,
-            self.start.elapsed().as_millis() as f64,
-            self.usage,
-            self.is_stream,
-            self.is_tool_call,
-            self.error_message,
-            self.response_preview,
-            self.extras,
-        );
+        use crate::logging::LogEntry;
+        let latency_total_ms = self.start.elapsed().as_millis() as i64;
+        let entry = LogEntry {
+            api_key_id: self.api_key_id,
+            api_key_name: self.api_key_name,
+            created_at: chrono::Utc::now().timestamp_millis(),
+            client_protocol: self.client_protocol,
+            upstream_protocol: self.upstream_protocol,
+            provider_id: self.provider_id,
+            provider_name: self.provider_name,
+            route_id: self.route_id,
+            route_name: self.route_name,
+            upstream_url: self.extras.upstream_url,
+            client_model: self.client_model,
+            upstream_model: self.upstream_model,
+            method: self.extras.method,
+            path: self.extras.path,
+            client_request_headers: self.extras.client_request_headers,
+            client_request_body: self.extras.client_request_body,
+            client_response_headers: self.extras.client_response_headers,
+            client_response_body: self.extras.client_response_body,
+            upstream_request_headers: self.extras.upstream_request_headers,
+            upstream_request_body: self.extras.upstream_request_body,
+            upstream_response_headers: self.extras.upstream_response_headers,
+            upstream_response_body: self.extras.upstream_response_body,
+            upstream_status_code: self.extras.upstream_status_code,
+            client_status_code: self.client_status_code,
+            latency_total_ms,
+            latency_upstream_ms: self.extras.latency_upstream_ms,
+            usage: self.usage,
+            is_stream: self.is_stream,
+            stream_chunks_count: self.extras.stream_chunks_count,
+            stream_first_chunk_ms: self.extras.stream_first_chunk_ms,
+        };
+        send_log(&self.gw, entry);
     }
 }
 

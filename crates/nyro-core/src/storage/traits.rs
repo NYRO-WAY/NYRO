@@ -25,6 +25,7 @@ pub enum UsageWindow {
 #[derive(Debug, Clone)]
 pub struct ApiKeyAccessRecord {
     pub id: String,
+    pub name: String,
     pub is_enabled: bool,
     pub expires_at: Option<String>,
     pub rpm: Option<i32>,

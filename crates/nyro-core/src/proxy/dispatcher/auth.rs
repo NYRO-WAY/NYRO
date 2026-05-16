@@ -15,6 +15,7 @@ use super::error_response;
 
 pub(super) struct AuthenticatedKey {
     pub(super) id: Option<String>,
+    pub(super) name: Option<String>,
 }
 
 #[async_trait]
@@ -89,7 +90,10 @@ pub(super) async fn authorize_route_access<S: ProxyAccessStore + ?Sized>(
     headers: &HeaderMap,
 ) -> Result<AuthenticatedKey, Response> {
     if !route.access_control {
-        return Ok(AuthenticatedKey { id: None });
+        return Ok(AuthenticatedKey {
+            id: None,
+            name: None,
+        });
     }
 
     let Some(raw_key) = extract_api_key(headers) else {
@@ -165,6 +169,7 @@ pub(super) async fn authorize_route_access<S: ProxyAccessStore + ?Sized>(
 
     Ok(AuthenticatedKey {
         id: Some(key_row.id),
+        name: Some(key_row.name),
     })
 }
 

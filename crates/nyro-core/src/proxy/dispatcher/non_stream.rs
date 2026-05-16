@@ -53,11 +53,14 @@ pub(super) async fn handle_non_stream(
     // Shared log builder pre-filled with identity + request-side extras.
     let log = LogBuilder::from_ctx(call_ctx).with_req_extras(req_extras);
 
-    let call_result = match client.call_non_stream(url, headers, body.clone()).await {
+    let upstream_start = std::time::Instant::now();
+    let call_result = match client
+        .call_non_stream(url, headers.clone(), body.clone())
+        .await
+    {
         Ok(r) => r,
         Err(e) => {
             log.status(502)
-                .error(e.to_string())
                 .resp_body(Some(
                     serde_json::json!({ "error": { "message": format!("upstream error: {e}") } })
                         .to_string(),
@@ -66,16 +69,24 @@ pub(super) async fn handle_non_stream(
             return error_response(502, &format!("upstream error: {e}"));
         }
     };
+    let upstream_latency_ms = upstream_start.elapsed().as_millis() as i64;
 
     let (resp, status, upstream_headers) = call_result;
     let upstream_hdrs_str = headers_to_json(&upstream_headers);
+    let upstream_req_hdrs_str = crate::proxy::observability::reqwest_headers_to_json(&headers);
+    let upstream_req_body_str = serde_json::to_string(&body).ok();
 
     if status >= 400 {
         let body_str = serde_json::to_string(&resp).ok();
-        let preview = body_str.as_ref().map(|s| s.chars().take(500).collect());
         log.status(status)
-            .preview(preview)
-            .resp_headers(upstream_hdrs_str.clone())
+            .upstream_status(status as i32)
+            .with_upstream_request(upstream_req_hdrs_str, upstream_req_body_str)
+            .with_upstream_response(
+                status as i32,
+                upstream_hdrs_str.clone(),
+                body_str.clone(),
+                Some(upstream_latency_ms),
+            )
             .resp_body(body_str)
             .emit();
         return (
@@ -89,12 +100,16 @@ pub(super) async fn handle_non_stream(
     if egress.handler().capabilities().embeddings {
         let usage = crate::protocol::codec::openai_compatible::embeddings::parse_usage(&resp);
         let resp_str = serde_json::to_string(&resp).ok();
-        let preview = resp_str.as_ref().map(|s| s.chars().take(500).collect());
         log.status(status)
             .usage(usage)
-            .preview(preview)
-            .resp_headers(upstream_hdrs_str.clone())
-            .resp_body(resp_str)
+            .with_upstream_request(upstream_req_hdrs_str, upstream_req_body_str)
+            .with_upstream_response(
+                status as i32,
+                upstream_hdrs_str.clone(),
+                resp_str.clone(),
+                Some(upstream_latency_ms),
+            )
+            .with_client_response(None, resp_str)
             .emit();
         return (
             StatusCode::from_u16(status).unwrap_or(StatusCode::OK),
@@ -112,11 +127,15 @@ pub(super) async fn handle_non_stream(
             "bypassing IR round-trip"
         );
         let resp_str = serde_json::to_string(&resp).ok();
-        let preview = resp_str.as_ref().map(|s| s.chars().take(500).collect());
         log.status(status)
-            .preview(preview)
-            .resp_headers(upstream_hdrs_str.clone())
-            .resp_body(resp_str)
+            .with_upstream_request(upstream_req_hdrs_str, upstream_req_body_str)
+            .with_upstream_response(
+                status as i32,
+                upstream_hdrs_str.clone(),
+                resp_str.clone(),
+                Some(upstream_latency_ms),
+            )
+            .with_client_response(None, resp_str)
             .emit();
         return (
             StatusCode::from_u16(status).unwrap_or(StatusCode::OK),
@@ -126,17 +145,22 @@ pub(super) async fn handle_non_stream(
     }
 
     // Parse response via ProviderAdapter.
+    let upstream_resp_str = serde_json::to_string(&resp).ok();
     let inbound = InboundResponse { status, body: resp };
     let mut ai_resp = match adapter.parse_response(inbound, ctx).await {
         Ok(r) => r,
         Err(e) => {
             log.status(500)
-                .error(format!("parse error: {e}"))
-                .resp_headers(upstream_hdrs_str.clone())
-                .resp_body(Some(
-                    serde_json::json!({ "error": { "message": format!("parse error: {e}") } })
-                        .to_string(),
-                ))
+                .with_upstream_request(upstream_req_hdrs_str, upstream_req_body_str)
+                .with_upstream_response(
+                    status as i32,
+                    upstream_hdrs_str.clone(),
+                    Some(
+                        serde_json::json!({ "error": { "message": format!("parse error: {e}") } })
+                            .to_string(),
+                    ),
+                    Some(upstream_latency_ms),
+                )
                 .emit();
             return error_response(500, &format!("parse error: {e}"));
         }
@@ -168,15 +192,16 @@ pub(super) async fn handle_non_stream(
     let output = formatter.format_response(&ai_resp);
 
     let response_body_full = serde_json::to_string(&output).ok();
-    let response_preview = response_body_full
-        .as_ref()
-        .map(|s| s.chars().take(500).collect());
     log.status(status)
         .usage(usage.clone())
-        .maybe_tool(is_tool)
-        .preview(response_preview)
-        .resp_headers(upstream_hdrs_str)
-        .resp_body(response_body_full)
+        .with_upstream_request(upstream_req_hdrs_str, upstream_req_body_str)
+        .with_upstream_response(
+            status as i32,
+            upstream_hdrs_str,
+            upstream_resp_str,
+            Some(upstream_latency_ms),
+        )
+        .with_client_response(None, response_body_full)
         .emit();
 
     let mut response = (
@@ -248,26 +273,36 @@ pub(super) async fn handle_non_stream_via_upstream_stream(
     let expose_headers = cache_ctx.expose_headers;
     let log = LogBuilder::from_ctx(call_ctx);
 
-    let call_result = match client.call_stream(url, headers, body.clone()).await {
+    let upstream_start = std::time::Instant::now();
+    let call_result = match client.call_stream(url, headers.clone(), body.clone()).await {
         Ok(r) => r,
         Err(e) => {
-            log.status(502).error(e.to_string()).emit();
+            log.status(502).emit();
             return error_response(502, &format!("upstream error: {e}"));
         }
     };
+    let upstream_latency_ms = upstream_start.elapsed().as_millis() as i64;
 
     let (resp, status) = call_result;
     let upstream_hdrs_str = headers_to_json(resp.headers());
+    let upstream_req_hdrs_str = crate::proxy::observability::reqwest_headers_to_json(&headers);
+    let upstream_req_body_str = serde_json::to_string(&body).ok();
 
     if status >= 400 {
         let err_body: Value = resp
             .json()
             .await
             .unwrap_or_else(|_| serde_json::json!({"error": {"message": "upstream error"}}));
+        let err_body_str = serde_json::to_string(&err_body).ok();
         log.status(status)
-            .error(err_body.to_string())
-            .resp_headers(upstream_hdrs_str)
-            .resp_body(serde_json::to_string(&err_body).ok())
+            .with_upstream_request(upstream_req_hdrs_str, upstream_req_body_str)
+            .with_upstream_response(
+                status as i32,
+                upstream_hdrs_str,
+                err_body_str.clone(),
+                Some(upstream_latency_ms),
+            )
+            .resp_body(err_body_str)
             .emit();
         return (
             StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY),
@@ -316,15 +351,12 @@ pub(super) async fn handle_non_stream_via_upstream_stream(
     let formatter = ingress.handler().make_response_encoder();
     let output = formatter.format_response(&ai_resp);
 
-    let response_preview = serde_json::to_string(&output)
-        .ok()
-        .map(|s| s.chars().take(500).collect());
+    let client_resp_body_str = serde_json::to_string(&output).ok();
     log.status(status)
         .usage(usage.clone())
-        .maybe_tool(is_tool)
-        .preview(response_preview)
-        .resp_headers(upstream_hdrs_str)
-        .resp_body(serde_json::to_string(&output).ok())
+        .with_upstream_request(upstream_req_hdrs_str, upstream_req_body_str)
+        .upstream_resp_headers(upstream_hdrs_str)
+        .with_client_response(None, client_resp_body_str)
         .emit();
 
     let mut response = (

@@ -49,16 +49,14 @@ pub(super) async fn handle_stream(
     let exact_cache_ttl = cache_ctx.exact_cache_ttl;
     let semantic_write_ctx = cache_ctx.semantic.clone();
     let expose_headers = cache_ctx.expose_headers;
-    // Shared log builder: identity + request-side extras pre-filled, stream=true.
-    let log = LogBuilder::from_ctx(call_ctx)
-        .stream()
-        .with_req_extras(req_extras);
+    // Shared log builder: identity + request-side extras pre-filled.
+    let log = LogBuilder::from_ctx(call_ctx).with_req_extras(req_extras);
 
-    let call_result = match client.call_stream(url, headers, body.clone()).await {
+    let upstream_start = std::time::Instant::now();
+    let call_result = match client.call_stream(url, headers.clone(), body.clone()).await {
         Ok(r) => r,
         Err(e) => {
             log.status(502)
-                .error(e.to_string())
                 .resp_body(Some(
                     serde_json::json!({ "error": { "message": format!("upstream error: {e}") } })
                         .to_string(),
@@ -67,6 +65,8 @@ pub(super) async fn handle_stream(
             return error_response(502, &format!("upstream error: {e}"));
         }
     };
+    let upstream_req_hdrs_str = crate::proxy::observability::reqwest_headers_to_json(&headers);
+    let upstream_req_body_str = serde_json::to_string(&body).ok();
 
     let (resp, status) = call_result;
     let upstream_hdrs_str = headers_to_json(resp.headers());
@@ -78,8 +78,10 @@ pub(super) async fn handle_stream(
             .unwrap_or_else(|_| serde_json::json!({"error": {"message": "upstream error"}}));
         let err_body_str = serde_json::to_string(&err_body).ok();
         log.status(status)
-            .error(err_body.to_string())
-            .resp_headers(upstream_hdrs_str.clone())
+            .upstream_status(status as i32)
+            .with_upstream_request(upstream_req_hdrs_str, upstream_req_body_str)
+            .upstream_resp_headers(upstream_hdrs_str.clone())
+            .upstream_resp_body(err_body_str.clone())
             .resp_body(err_body_str)
             .emit();
         return (
@@ -105,15 +107,24 @@ pub(super) async fn handle_stream(
         let leader_key_pt = singleflight_key.map(ToString::to_string);
         let leader_tx_pt = singleflight_tx.clone();
         let upstream_hdrs_pt = upstream_hdrs_str.clone();
+        let upstream_req_hdrs_pt = upstream_req_hdrs_str.clone();
+        let upstream_req_body_pt = upstream_req_body_str.clone();
+        let upstream_start_pt = upstream_start;
 
         tokio::spawn(async move {
             let mut log_buf: Vec<u8> = Vec::new();
             let mut byte_stream = resp.bytes_stream();
             let mut stream_error: Option<String> = None;
+            let mut chunks_count: i32 = 0;
+            let mut first_chunk_ms: Option<i64> = None;
 
             while let Some(result) = byte_stream.next().await {
                 match result {
                     Ok(b) => {
+                        if first_chunk_ms.is_none() {
+                            first_chunk_ms = Some(upstream_start_pt.elapsed().as_millis() as i64);
+                        }
+                        chunks_count += 1;
                         log_buf.extend_from_slice(&b);
                         if pt_tx.send(Ok(b)).await.is_err() {
                             break; // client disconnected
@@ -134,11 +145,13 @@ pub(super) async fn handle_stream(
                 }
             }
 
-            // Parse accumulated buffer for usage stats and log entry (best-effort).
-            let log_text = String::from_utf8_lossy(&log_buf);
+            let upstream_latency_ms = upstream_start_pt.elapsed().as_millis() as i64;
+            let raw_sse = String::from_utf8_lossy(&log_buf).into_owned();
+
+            // Parse accumulated buffer for usage stats (best-effort).
             let mut log_parser = egress.handler().make_stream_response_decoder();
             let mut accumulator = StreamResponseAccumulator::default();
-            if let Ok(ai_deltas) = log_parser.parse_chunk(&log_text) {
+            if let Ok(ai_deltas) = log_parser.parse_chunk(&raw_sse) {
                 accumulator.apply_all(&ai_deltas);
             }
             if let Ok(ai_deltas) = log_parser.finish() {
@@ -150,20 +163,23 @@ pub(super) async fn handle_stream(
                 ai_resp.id = format!("msg_{}", uuid::Uuid::new_v4().simple());
             }
             if ai_resp.model.is_empty() {
-                ai_resp.model = log_pt.actual_model.clone();
+                ai_resp.model = log_pt.upstream_model.clone();
             }
-
-            let aggregated_formatter = ingress.handler().make_response_encoder();
-            let aggregated_output = aggregated_formatter.format_response(&ai_resp);
-            let aggregated_body_str = serde_json::to_string(&aggregated_output).ok();
 
             log_pt
                 .status(200)
+                .upstream_status(200)
                 .usage(ai_resp.usage.clone())
-                .maybe_tool(!ai_resp.tool_calls.is_empty())
                 .maybe_error(stream_error)
-                .resp_headers(upstream_hdrs_pt)
-                .resp_body(aggregated_body_str)
+                .with_upstream_request(upstream_req_hdrs_pt, upstream_req_body_pt)
+                .with_upstream_response(
+                    200,
+                    upstream_hdrs_pt,
+                    Some(raw_sse.clone()),
+                    Some(upstream_latency_ms),
+                )
+                .with_client_response(None, Some(raw_sse))
+                .stream_metrics(chunks_count, first_chunk_ms)
                 .emit();
 
             // log_pt is consumed by emit(); use the pre-cloned gw_pt.
@@ -196,8 +212,8 @@ pub(super) async fn handle_stream(
     // emit() consumes the builder, before passing it to the spawn.
     let log_ir = log;
     let gw_ir = log_ir.gw.clone(); // needed for cache writes after emit()
-    let provider_name_ir = log_ir.provider_name.clone();
-    let act_model_ir = log_ir.actual_model.clone();
+    let provider_name_ir = log_ir.provider_id.clone();
+    let act_model_ir = log_ir.upstream_model.clone();
     let cache_key_owned = cache_key.map(ToString::to_string);
     let leader_key_owned = singleflight_key.map(ToString::to_string);
     let leader_tx_owned = singleflight_tx.clone();
@@ -207,6 +223,11 @@ pub(super) async fn handle_stream(
 
     tokio::spawn(async move {
         let mut accumulator = StreamResponseAccumulator::default();
+        let mut upstream_raw_buf: Vec<u8> = Vec::new();
+        let mut client_sse_parts: Vec<String> = Vec::new();
+        let mut chunks_count: i32 = 0;
+        let mut first_chunk_ms: Option<i64> = None;
+
         while let Some(chunk) = byte_stream.next().await {
             let bytes = match chunk {
                 Ok(b) => b,
@@ -224,12 +245,19 @@ pub(super) async fn handle_stream(
                     break;
                 }
             };
+            if first_chunk_ms.is_none() {
+                first_chunk_ms = Some(upstream_start.elapsed().as_millis() as i64);
+            }
+            chunks_count += 1;
+            upstream_raw_buf.extend_from_slice(&bytes);
             let text = String::from_utf8_lossy(&bytes);
             if let Ok(ai_deltas) = stream_parser.parse_chunk(&text) {
                 accumulator.apply_all(&ai_deltas);
                 let events = stream_formatter.format_deltas(&ai_deltas);
                 for ev in events {
-                    if tx.send(Ok(ev.to_sse_string())).await.is_err() {
+                    let sse = ev.to_sse_string();
+                    client_sse_parts.push(sse.clone());
+                    if tx.send(Ok(sse)).await.is_err() {
                         return;
                     }
                 }
@@ -240,14 +268,22 @@ pub(super) async fn handle_stream(
             accumulator.apply_all(&ai_deltas);
             let events = stream_formatter.format_deltas(&ai_deltas);
             for ev in events {
-                let _ = tx.send(Ok(ev.to_sse_string())).await;
+                let sse = ev.to_sse_string();
+                client_sse_parts.push(sse.clone());
+                let _ = tx.send(Ok(sse)).await;
             }
         }
 
         let done_events = stream_formatter.format_done();
         for ev in done_events {
-            let _ = tx.send(Ok(ev.to_sse_string())).await;
+            let sse = ev.to_sse_string();
+            client_sse_parts.push(sse.clone());
+            let _ = tx.send(Ok(sse)).await;
         }
+
+        let upstream_latency_ms = upstream_start.elapsed().as_millis() as i64;
+        let upstream_raw_str = String::from_utf8_lossy(&upstream_raw_buf).into_owned();
+        let client_sse_str = client_sse_parts.join("");
 
         let usage = stream_formatter.usage();
         let mut ai_resp = accumulator.into_ai_response();
@@ -264,15 +300,19 @@ pub(super) async fn handle_stream(
             ai_resp.stop_reason = Some("stop".to_string());
         }
 
-        let aggregated_formatter = ingress.handler().make_response_encoder();
-        let aggregated_output = aggregated_formatter.format_response(&ai_resp);
-        let aggregated_body_str = serde_json::to_string(&aggregated_output).ok();
         log_ir
             .status(200)
+            .upstream_status(200)
             .usage(ai_resp.usage.clone())
-            .maybe_tool(!ai_resp.tool_calls.is_empty())
-            .resp_headers(upstream_hdrs_owned)
-            .resp_body(aggregated_body_str)
+            .with_upstream_request(upstream_req_hdrs_str, upstream_req_body_str)
+            .with_upstream_response(
+                200,
+                upstream_hdrs_owned,
+                Some(upstream_raw_str),
+                Some(upstream_latency_ms),
+            )
+            .with_client_response(None, Some(client_sse_str))
+            .stream_metrics(chunks_count, first_chunk_ms)
             .emit();
 
         let mut singleflight_payload: Option<Vec<u8>> = None;
@@ -293,9 +333,10 @@ pub(super) async fn handle_stream(
                     internal_response: Some(ai_resp.clone()),
                 };
                 if let Ok(bytes) = serde_json::to_vec(&entry) {
-                    let _ = cache_backend
+                    cache_backend
                         .set(cache_key, &bytes, exact_cache_ttl_owned)
-                        .await;
+                        .await
+                        .ok();
                     singleflight_payload = Some(bytes.clone());
                     let vector_store = (**gw_ir.vector_store.load()).clone();
                     if let (Some(vector_store), Some(ctx)) =
@@ -307,9 +348,10 @@ pub(super) async fn handle_stream(
                             compute_embedding(&gw_ir, &ctx.embedding_text).await.ok()
                         };
                         if let Some(vector) = vector {
-                            let _ = vector_store
+                            vector_store
                                 .upsert(&ctx.partition, ctx.key.clone(), vector, bytes)
-                                .await;
+                                .await
+                                .ok();
                         }
                     }
                 }
@@ -337,9 +379,10 @@ pub(super) async fn handle_stream(
                         compute_embedding(&gw_ir, &ctx.embedding_text).await.ok()
                     };
                     if let Some(vector) = vector {
-                        let _ = vector_store
+                        vector_store
                             .upsert(&ctx.partition, ctx.key.clone(), vector, bytes)
-                            .await;
+                            .await
+                            .ok();
                     }
                 }
             }

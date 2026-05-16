@@ -227,31 +227,53 @@ pub struct ApiKeyWithBindings {
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct RequestLog {
     pub id: String,
-    pub created_at: String,
+    /// Unix 毫秒时间戳
+    pub created_at: i64,
     pub api_key_id: Option<String>,
-    pub ingress_protocol: Option<String>,
-    pub egress_protocol: Option<String>,
-    pub request_model: Option<String>,
-    pub actual_model: Option<String>,
+    pub api_key_name: Option<String>,
+
+    pub client_protocol: Option<String>,
+    pub upstream_protocol: Option<String>,
+    pub provider_id: Option<String>,
     pub provider_name: Option<String>,
-    pub status_code: Option<i32>,
-    pub duration_ms: Option<f64>,
-    pub input_tokens: i32,
-    pub output_tokens: i32,
-    pub is_stream: bool,
-    pub is_tool_call: bool,
-    pub error_message: Option<String>,
-    pub response_preview: Option<String>,
+    pub route_id: Option<String>,
+    pub route_name: Option<String>,
+    pub upstream_url: Option<String>,
+    pub client_model: Option<String>,
+    pub upstream_model: Option<String>,
+
     pub method: Option<String>,
     pub path: Option<String>,
+
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub request_headers: Option<String>,
+    pub client_request_headers: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub request_body: Option<String>,
+    pub client_request_body: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub response_headers: Option<String>,
+    pub client_response_headers: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub response_body: Option<String>,
+    pub client_response_body: Option<String>,
+
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upstream_request_headers: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upstream_request_body: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upstream_response_headers: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upstream_response_body: Option<String>,
+
+    pub upstream_status_code: Option<i32>,
+    pub client_status_code: Option<i32>,
+
+    pub latency_total_ms: Option<i64>,
+    pub latency_upstream_ms: Option<i64>,
+    pub input_tokens: i32,
+    pub output_tokens: i32,
+
+    pub is_stream: bool,
+    pub stream_chunks_count: i32,
+    pub stream_first_chunk_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

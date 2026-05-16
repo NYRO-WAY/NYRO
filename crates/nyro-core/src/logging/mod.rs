@@ -10,25 +10,65 @@ pub const LOG_RETENTION_DAYS_KEY: &str = "log_retention_days";
 
 #[derive(Debug, Clone)]
 pub struct LogEntry {
+    // === 标识 ===
     pub api_key_id: Option<String>,
-    pub ingress_protocol: String,
-    pub egress_protocol: String,
-    pub request_model: String,
-    pub actual_model: String,
+    pub api_key_name: Option<String>,
+    /// Unix 毫秒时间戳
+    pub created_at: i64,
+
+    // === 路由 ===
+    pub client_protocol: String,
+    pub upstream_protocol: String,
+    pub provider_id: String,
     pub provider_name: String,
-    pub status_code: i32,
-    pub duration_ms: f64,
-    pub usage: Usage,
-    pub is_stream: bool,
-    pub is_tool_call: bool,
-    pub error_message: Option<String>,
-    pub response_preview: Option<String>,
+    pub route_id: Option<String>,
+    pub route_name: Option<String>,
+    pub upstream_url: Option<String>,
+    pub client_model: String,
+    pub upstream_model: String,
+
+    // === HTTP 元 ===
     pub method: Option<String>,
     pub path: Option<String>,
-    pub request_headers: Option<String>,
-    pub request_body: Option<String>,
-    pub response_headers: Option<String>,
-    pub response_body: Option<String>,
+
+    // === 客户端 wire ===
+    pub client_request_headers: Option<String>,
+    pub client_request_body: Option<String>,
+    pub client_response_headers: Option<String>,
+    pub client_response_body: Option<String>,
+
+    // === 上游 wire ===
+    pub upstream_request_headers: Option<String>,
+    pub upstream_request_body: Option<String>,
+    pub upstream_response_headers: Option<String>,
+    pub upstream_response_body: Option<String>,
+
+    // === 状态 ===
+    pub upstream_status_code: Option<i32>,
+    pub client_status_code: i32,
+
+    // === 性能 ===
+    pub latency_total_ms: i64,
+    pub latency_upstream_ms: Option<i64>,
+    pub usage: Usage,
+
+    // === 流式 ===
+    /// 客户端请求中声明的 stream 标志（stream: true），比 stream_chunks_count > 0 更严谨
+    pub is_stream: bool,
+    /// 收到的上游 SSE chunk 数；> 0 表示流式请求，非流式为 0
+    pub stream_chunks_count: i32,
+    /// TTFB（ms）；非流式为 None
+    pub stream_first_chunk_ms: Option<i64>,
+}
+
+impl LogEntry {
+    pub fn input_tokens(&self) -> i32 {
+        self.usage.prompt_tokens as i32
+    }
+
+    pub fn output_tokens(&self) -> i32 {
+        self.usage.completion_tokens as i32
+    }
 }
 
 pub async fn run_collector(mut rx: mpsc::Receiver<LogEntry>, storage: DynStorage) {
@@ -95,10 +135,14 @@ async fn flush(storage: DynStorage, buffer: &mut Vec<LogEntry>) {
     let record_payloads = read_record_payloads(&storage).await;
     if !record_payloads {
         for entry in entries.iter_mut() {
-            entry.request_headers = None;
-            entry.request_body = None;
-            entry.response_headers = None;
-            entry.response_body = None;
+            entry.client_request_headers = None;
+            entry.client_request_body = None;
+            entry.client_response_headers = None;
+            entry.client_response_body = None;
+            entry.upstream_request_headers = None;
+            entry.upstream_request_body = None;
+            entry.upstream_response_headers = None;
+            entry.upstream_response_body = None;
         }
     }
     let _ = storage.logs().append_batch(entries).await;

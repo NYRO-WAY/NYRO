@@ -881,6 +881,7 @@ impl AuthAccessStore for PostgresAuthAccessStore {
             _,
             (
                 String,
+                String,
                 bool,
                 Option<String>,
                 Option<i32>,
@@ -889,15 +890,16 @@ impl AuthAccessStore for PostgresAuthAccessStore {
                 Option<i32>,
             ),
         >(
-            "SELECT id, COALESCE(is_enabled, TRUE) AS is_enabled, to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS expires_at, rpm, rpd, tpm, tpd FROM api_keys WHERE key = $1",
+            "SELECT id, COALESCE(name, '') AS name, COALESCE(is_enabled, TRUE) AS is_enabled, to_char(expires_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS expires_at, rpm, rpd, tpm, tpd FROM api_keys WHERE key = $1",
         )
         .bind(raw_key)
         .fetch_optional(&self.pool)
         .await?;
 
         Ok(row.map(
-            |(id, is_enabled, expires_at, rpm, rpd, tpm, tpd)| ApiKeyAccessRecord {
+            |(id, name, is_enabled, expires_at, rpm, rpd, tpm, tpd)| ApiKeyAccessRecord {
                 id,
+                name,
                 is_enabled,
                 expires_at,
                 rpm,
@@ -930,7 +932,7 @@ impl AuthAccessStore for PostgresAuthAccessStore {
     ) -> anyhow::Result<i64> {
         let interval = interval_expr(window);
         let sql = format!(
-            "SELECT COUNT(*) FROM request_logs WHERE api_key_id = $1 AND created_at >= CURRENT_TIMESTAMP - INTERVAL '{interval}'"
+            "SELECT COUNT(*) FROM request_logs WHERE api_key_id = $1 AND created_at >= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP - INTERVAL '{interval}') * 1000"
         );
         Ok(sqlx::query_scalar::<_, i64>(&sql)
             .bind(api_key_id)
@@ -945,7 +947,7 @@ impl AuthAccessStore for PostgresAuthAccessStore {
     ) -> anyhow::Result<i64> {
         let interval = interval_expr(window);
         let sql = format!(
-            "SELECT COALESCE(SUM(input_tokens + output_tokens), 0) FROM request_logs WHERE api_key_id = $1 AND created_at >= CURRENT_TIMESTAMP - INTERVAL '{interval}'"
+            "SELECT COALESCE(SUM(input_tokens + output_tokens), 0) FROM request_logs WHERE api_key_id = $1 AND created_at >= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP - INTERVAL '{interval}') * 1000"
         );
         Ok(sqlx::query_scalar::<_, i64>(&sql)
             .bind(api_key_id)
@@ -966,33 +968,52 @@ impl LogStore for PostgresLogStore {
             let id = uuid::Uuid::new_v4().to_string();
             sqlx::query(
                 r#"INSERT INTO request_logs
-                    (id, api_key_id, ingress_protocol, egress_protocol, request_model, actual_model,
-                     provider_name, status_code, duration_ms, input_tokens, output_tokens,
-                     is_stream, is_tool_call, error_message, response_preview,
-                     method, path, request_headers, request_body, response_headers, response_body)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)"#,
+                    (id, created_at, api_key_id, api_key_name,
+                     client_protocol, upstream_protocol, provider_id, provider_name, route_id, route_name, upstream_url,
+                     client_model, upstream_model,
+                     method, path,
+                     client_request_headers, client_request_body,
+                     client_response_headers, client_response_body,
+                     upstream_request_headers, upstream_request_body,
+                     upstream_response_headers, upstream_response_body,
+                     upstream_status_code, client_status_code,
+                     latency_total_ms, latency_upstream_ms,
+                     input_tokens, output_tokens,
+                     is_stream, stream_chunks_count, stream_first_chunk_ms)
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32)"#,
             )
             .bind(&id)
+            .bind(entry.created_at)
             .bind(&entry.api_key_id)
-            .bind(&entry.ingress_protocol)
-            .bind(&entry.egress_protocol)
-            .bind(&entry.request_model)
-            .bind(&entry.actual_model)
+            .bind(&entry.api_key_name)
+            .bind(&entry.client_protocol)
+            .bind(&entry.upstream_protocol)
+            .bind(&entry.provider_id)
             .bind(&entry.provider_name)
-            .bind(entry.status_code)
-            .bind(entry.duration_ms)
-            .bind(entry.usage.prompt_tokens as i32)
-            .bind(entry.usage.completion_tokens as i32)
-            .bind(entry.is_stream)
-            .bind(entry.is_tool_call)
-            .bind(&entry.error_message)
-            .bind(&entry.response_preview)
+            .bind(&entry.route_id)
+            .bind(&entry.route_name)
+            .bind(&entry.upstream_url)
+            .bind(&entry.client_model)
+            .bind(&entry.upstream_model)
             .bind(&entry.method)
             .bind(&entry.path)
-            .bind(&entry.request_headers)
-            .bind(&entry.request_body)
-            .bind(&entry.response_headers)
-            .bind(&entry.response_body)
+            .bind(&entry.client_request_headers)
+            .bind(&entry.client_request_body)
+            .bind(&entry.client_response_headers)
+            .bind(&entry.client_response_body)
+            .bind(&entry.upstream_request_headers)
+            .bind(&entry.upstream_request_body)
+            .bind(&entry.upstream_response_headers)
+            .bind(&entry.upstream_response_body)
+            .bind(entry.upstream_status_code)
+            .bind(entry.client_status_code)
+            .bind(entry.latency_total_ms)
+            .bind(entry.latency_upstream_ms)
+            .bind(entry.input_tokens())
+            .bind(entry.output_tokens())
+            .bind(entry.is_stream)
+            .bind(entry.stream_chunks_count)
+            .bind(entry.stream_first_chunk_ms)
             .execute(&self.pool)
             .await?;
         }
@@ -1003,32 +1024,43 @@ impl LogStore for PostgresLogStore {
         let mut count_sql = String::from("SELECT COUNT(*) AS total FROM request_logs WHERE 1=1");
         // List query skips heavy body/header columns (NULL placeholders preserve struct layout).
         let mut data_sql = String::from(
-            "SELECT id, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at, api_key_id, ingress_protocol, egress_protocol, request_model, actual_model, provider_name, status_code, duration_ms, input_tokens, output_tokens, is_stream, is_tool_call, error_message, response_preview, method, path, NULL::text AS request_headers, NULL::text AS request_body, NULL::text AS response_headers, NULL::text AS response_body FROM request_logs WHERE 1=1",
+            "SELECT id, COALESCE(created_at::BIGINT, 0) AS created_at, api_key_id, api_key_name, \
+             client_protocol, upstream_protocol, provider_id, provider_name, route_id, route_name, upstream_url, \
+             client_model, upstream_model, method, path, \
+             NULL::text AS client_request_headers, NULL::text AS client_request_body, \
+             NULL::text AS client_response_headers, NULL::text AS client_response_body, \
+             NULL::text AS upstream_request_headers, NULL::text AS upstream_request_body, \
+             NULL::text AS upstream_response_headers, NULL::text AS upstream_response_body, \
+             upstream_status_code, client_status_code, \
+             latency_total_ms, latency_upstream_ms, \
+             input_tokens, output_tokens, \
+             COALESCE(is_stream, FALSE) AS is_stream, stream_chunks_count, stream_first_chunk_ms \
+             FROM request_logs WHERE 1=1",
         );
         let mut idx = 1;
         let mut bind_values: Vec<String> = Vec::new();
 
         if let Some(provider) = query.provider.filter(|v| !v.is_empty()) {
-            count_sql.push_str(&format!(" AND provider_name = ${idx}"));
-            data_sql.push_str(&format!(" AND provider_name = ${idx}"));
+            count_sql.push_str(&format!(" AND provider_id = ${idx}"));
+            data_sql.push_str(&format!(" AND provider_id = ${idx}"));
             bind_values.push(provider);
             idx += 1;
         }
         if let Some(model) = query.model.filter(|v| !v.is_empty()) {
-            count_sql.push_str(&format!(" AND actual_model = ${idx}"));
-            data_sql.push_str(&format!(" AND actual_model = ${idx}"));
+            count_sql.push_str(&format!(" AND upstream_model = ${idx}"));
+            data_sql.push_str(&format!(" AND upstream_model = ${idx}"));
             bind_values.push(model);
             idx += 1;
         }
         if let Some(status_min) = query.status_min {
-            count_sql.push_str(&format!(" AND status_code >= ${idx}"));
-            data_sql.push_str(&format!(" AND status_code >= ${idx}"));
+            count_sql.push_str(&format!(" AND client_status_code >= ${idx}"));
+            data_sql.push_str(&format!(" AND client_status_code >= ${idx}"));
             bind_values.push(status_min.to_string());
             idx += 1;
         }
         if let Some(status_max) = query.status_max {
-            count_sql.push_str(&format!(" AND status_code <= ${idx}"));
-            data_sql.push_str(&format!(" AND status_code <= ${idx}"));
+            count_sql.push_str(&format!(" AND client_status_code <= ${idx}"));
+            data_sql.push_str(&format!(" AND client_status_code <= ${idx}"));
             bind_values.push(status_max.to_string());
             idx += 1;
         }
@@ -1056,7 +1088,18 @@ impl LogStore for PostgresLogStore {
 
     async fn find_by_id(&self, id: &str) -> anyhow::Result<Option<RequestLog>> {
         let row = sqlx::query_as::<_, RequestLog>(
-            "SELECT id, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at, api_key_id, ingress_protocol, egress_protocol, request_model, actual_model, provider_name, status_code, duration_ms, input_tokens, output_tokens, is_stream, is_tool_call, error_message, response_preview, method, path, request_headers, request_body, response_headers, response_body FROM request_logs WHERE id = $1",
+            "SELECT id, COALESCE(created_at::BIGINT, 0) AS created_at, api_key_id, api_key_name, \
+             client_protocol, upstream_protocol, provider_id, provider_name, route_id, route_name, upstream_url, \
+             client_model, upstream_model, method, path, \
+             client_request_headers, client_request_body, \
+             client_response_headers, client_response_body, \
+             upstream_request_headers, upstream_request_body, \
+             upstream_response_headers, upstream_response_body, \
+             upstream_status_code, client_status_code, \
+             latency_total_ms, latency_upstream_ms, \
+             input_tokens, output_tokens, \
+             COALESCE(is_stream, FALSE) AS is_stream, stream_chunks_count, stream_first_chunk_ms \
+             FROM request_logs WHERE id = $1",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -1067,7 +1110,7 @@ impl LogStore for PostgresLogStore {
     async fn cleanup_before(&self, cutoff_expression: &str) -> anyhow::Result<u64> {
         let interval = cutoff_expression.trim().trim_start_matches('-').trim();
         let sql = format!(
-            "DELETE FROM request_logs WHERE created_at < CURRENT_TIMESTAMP - INTERVAL '{interval}'"
+            "DELETE FROM request_logs WHERE created_at < EXTRACT(EPOCH FROM CURRENT_TIMESTAMP - INTERVAL '{interval}') * 1000"
         );
         let result = sqlx::query(&sql).execute(&self.pool).await?;
         Ok(result.rows_affected())
@@ -1076,10 +1119,10 @@ impl LogStore for PostgresLogStore {
     async fn stats_overview(&self, hours: Option<i64>) -> anyhow::Result<StatsOverview> {
         let sql = if let Some(hours) = hours {
             format!(
-                "SELECT COUNT(*) AS total_requests, COALESCE(SUM(input_tokens), 0) AS total_input_tokens, COALESCE(SUM(output_tokens), 0) AS total_output_tokens, COALESCE(AVG(duration_ms), 0) AS avg_duration_ms, COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0) AS error_count FROM request_logs WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '{hours} hours'"
+                "SELECT COUNT(*) AS total_requests, COALESCE(SUM(input_tokens), 0) AS total_input_tokens, COALESCE(SUM(output_tokens), 0) AS total_output_tokens, COALESCE(AVG(latency_total_ms), 0) AS avg_duration_ms, COALESCE(SUM(CASE WHEN client_status_code >= 400 THEN 1 ELSE 0 END), 0) AS error_count FROM request_logs WHERE created_at >= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP - INTERVAL '{hours} hours') * 1000"
             )
         } else {
-            "SELECT COUNT(*) AS total_requests, COALESCE(SUM(input_tokens), 0) AS total_input_tokens, COALESCE(SUM(output_tokens), 0) AS total_output_tokens, COALESCE(AVG(duration_ms), 0) AS avg_duration_ms, COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0) AS error_count FROM request_logs".to_string()
+            "SELECT COUNT(*) AS total_requests, COALESCE(SUM(input_tokens), 0) AS total_input_tokens, COALESCE(SUM(output_tokens), 0) AS total_output_tokens, COALESCE(AVG(latency_total_ms), 0) AS avg_duration_ms, COALESCE(SUM(CASE WHEN client_status_code >= 400 THEN 1 ELSE 0 END), 0) AS error_count FROM request_logs".to_string()
         };
         Ok(sqlx::query_as::<_, StatsOverview>(&sql)
             .fetch_one(&self.pool)
@@ -1088,7 +1131,7 @@ impl LogStore for PostgresLogStore {
 
     async fn stats_hourly(&self, hours: i64) -> anyhow::Result<Vec<StatsHourly>> {
         let sql = format!(
-            "SELECT to_char(date_trunc('hour', created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD HH24:00:00') AS hour, COUNT(*) AS request_count, COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0) AS error_count, COALESCE(SUM(input_tokens), 0) AS total_input_tokens, COALESCE(SUM(output_tokens), 0) AS total_output_tokens, COALESCE(AVG(duration_ms), 0) AS avg_duration_ms FROM request_logs WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '{hours} hours' GROUP BY 1 ORDER BY 1 ASC"
+            "SELECT to_char(date_trunc('hour', to_timestamp(created_at/1000) AT TIME ZONE 'UTC'), 'YYYY-MM-DD HH24:00:00') AS hour, COUNT(*) AS request_count, COALESCE(SUM(CASE WHEN client_status_code >= 400 THEN 1 ELSE 0 END), 0) AS error_count, COALESCE(SUM(input_tokens), 0) AS total_input_tokens, COALESCE(SUM(output_tokens), 0) AS total_output_tokens, COALESCE(AVG(latency_total_ms), 0) AS avg_duration_ms FROM request_logs WHERE created_at >= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP - INTERVAL '{hours} hours') * 1000 GROUP BY 1 ORDER BY 1 ASC"
         );
         Ok(sqlx::query_as::<_, StatsHourly>(&sql)
             .fetch_all(&self.pool)
@@ -1098,10 +1141,10 @@ impl LogStore for PostgresLogStore {
     async fn stats_by_model(&self, hours: Option<i64>) -> anyhow::Result<Vec<ModelStats>> {
         let sql = if let Some(hours) = hours {
             format!(
-                "SELECT actual_model AS model, COUNT(*) AS request_count, COALESCE(SUM(input_tokens), 0) AS total_input_tokens, COALESCE(SUM(output_tokens), 0) AS total_output_tokens, COALESCE(AVG(duration_ms), 0) AS avg_duration_ms FROM request_logs WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '{hours} hours' GROUP BY actual_model ORDER BY request_count DESC"
+                "SELECT upstream_model AS model, COUNT(*) AS request_count, COALESCE(SUM(input_tokens), 0) AS total_input_tokens, COALESCE(SUM(output_tokens), 0) AS total_output_tokens, COALESCE(AVG(latency_total_ms), 0) AS avg_duration_ms FROM request_logs WHERE created_at >= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP - INTERVAL '{hours} hours') * 1000 GROUP BY upstream_model ORDER BY request_count DESC"
             )
         } else {
-            "SELECT actual_model AS model, COUNT(*) AS request_count, COALESCE(SUM(input_tokens), 0) AS total_input_tokens, COALESCE(SUM(output_tokens), 0) AS total_output_tokens, COALESCE(AVG(duration_ms), 0) AS avg_duration_ms FROM request_logs GROUP BY actual_model ORDER BY request_count DESC".to_string()
+            "SELECT upstream_model AS model, COUNT(*) AS request_count, COALESCE(SUM(input_tokens), 0) AS total_input_tokens, COALESCE(SUM(output_tokens), 0) AS total_output_tokens, COALESCE(AVG(latency_total_ms), 0) AS avg_duration_ms FROM request_logs GROUP BY upstream_model ORDER BY request_count DESC".to_string()
         };
         Ok(sqlx::query_as::<_, ModelStats>(&sql)
             .fetch_all(&self.pool)
@@ -1111,10 +1154,10 @@ impl LogStore for PostgresLogStore {
     async fn stats_by_provider(&self, hours: Option<i64>) -> anyhow::Result<Vec<ProviderStats>> {
         let sql = if let Some(hours) = hours {
             format!(
-                "SELECT provider_name AS provider, COUNT(*) AS request_count, COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0) AS error_count, COALESCE(AVG(duration_ms), 0) AS avg_duration_ms FROM request_logs WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '{hours} hours' GROUP BY provider_name ORDER BY request_count DESC"
+                "SELECT COALESCE(provider_name, provider_id, '') AS provider, COUNT(*) AS request_count, COALESCE(SUM(CASE WHEN client_status_code >= 400 THEN 1 ELSE 0 END), 0) AS error_count, COALESCE(AVG(latency_total_ms), 0) AS avg_duration_ms FROM request_logs WHERE created_at >= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP - INTERVAL '{hours} hours') * 1000 GROUP BY COALESCE(provider_name, provider_id, '') ORDER BY request_count DESC"
             )
         } else {
-            "SELECT provider_name AS provider, COUNT(*) AS request_count, COALESCE(SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END), 0) AS error_count, COALESCE(AVG(duration_ms), 0) AS avg_duration_ms FROM request_logs GROUP BY provider_name ORDER BY request_count DESC".to_string()
+            "SELECT COALESCE(provider_name, provider_id, '') AS provider, COUNT(*) AS request_count, COALESCE(SUM(CASE WHEN client_status_code >= 400 THEN 1 ELSE 0 END), 0) AS error_count, COALESCE(AVG(latency_total_ms), 0) AS avg_duration_ms FROM request_logs GROUP BY COALESCE(provider_name, provider_id, '') ORDER BY request_count DESC".to_string()
         };
         Ok(sqlx::query_as::<_, ProviderStats>(&sql)
             .fetch_all(&self.pool)
@@ -1655,41 +1698,45 @@ CREATE TABLE IF NOT EXISTS route_targets (
 CREATE INDEX IF NOT EXISTS idx_route_targets_route_id ON route_targets(route_id);
 
 CREATE TABLE IF NOT EXISTS request_logs (
-    id TEXT PRIMARY KEY,
-    created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
-    api_key_id TEXT,
-    ingress_protocol TEXT,
-    egress_protocol TEXT,
-    request_model TEXT,
-    actual_model TEXT,
-    provider_name TEXT,
-    status_code INTEGER,
-    duration_ms DOUBLE PRECISION,
-    input_tokens INTEGER DEFAULT 0,
-    output_tokens INTEGER DEFAULT 0,
-    is_stream BOOLEAN DEFAULT FALSE,
-    is_tool_call BOOLEAN DEFAULT FALSE,
-    error_message TEXT,
-    response_preview TEXT,
-    method TEXT,
-    path TEXT,
-    request_headers TEXT,
-    request_body TEXT,
-    response_headers TEXT,
-    response_body TEXT
+    id                        TEXT PRIMARY KEY,
+    created_at                BIGINT NOT NULL DEFAULT 0,
+    api_key_id                TEXT,
+    api_key_name              TEXT,
+    client_protocol           TEXT,
+    upstream_protocol         TEXT,
+    provider_id               TEXT,
+    provider_name             TEXT,
+    route_id                  TEXT,
+    route_name                TEXT,
+    upstream_url              TEXT,
+    client_model              TEXT,
+    upstream_model            TEXT,
+    method                    TEXT,
+    path                      TEXT,
+    client_request_headers    TEXT,
+    client_request_body       TEXT,
+    client_response_headers   TEXT,
+    client_response_body      TEXT,
+    upstream_request_headers  TEXT,
+    upstream_request_body     TEXT,
+    upstream_response_headers TEXT,
+    upstream_response_body    TEXT,
+    upstream_status_code      INTEGER,
+    client_status_code        INTEGER,
+    latency_total_ms          BIGINT,
+    latency_upstream_ms       BIGINT,
+    input_tokens              INTEGER DEFAULT 0,
+    output_tokens             INTEGER DEFAULT 0,
+    is_stream                 BOOLEAN DEFAULT FALSE,
+    stream_chunks_count       INTEGER DEFAULT 0,
+    stream_first_chunk_ms     BIGINT
 );
 
-ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS method TEXT;
-ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS path TEXT;
-ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS request_headers TEXT;
-ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS request_body TEXT;
-ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS response_headers TEXT;
-ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS response_body TEXT;
-
 CREATE INDEX IF NOT EXISTS idx_logs_created_at ON request_logs(created_at);
-CREATE INDEX IF NOT EXISTS idx_logs_provider ON request_logs(provider_name);
-CREATE INDEX IF NOT EXISTS idx_logs_status ON request_logs(status_code);
-CREATE INDEX IF NOT EXISTS idx_logs_model ON request_logs(actual_model);
+CREATE INDEX IF NOT EXISTS idx_logs_provider_id ON request_logs(provider_id);
+CREATE INDEX IF NOT EXISTS idx_logs_client_status ON request_logs(client_status_code);
+CREATE INDEX IF NOT EXISTS idx_logs_upstream_model ON request_logs(upstream_model);
+CREATE INDEX IF NOT EXISTS idx_logs_api_key ON request_logs(api_key_id);
 
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
