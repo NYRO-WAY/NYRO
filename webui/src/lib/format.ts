@@ -6,11 +6,13 @@ export function formatDuration(ms: number | null | undefined): string {
   return `${(ms / 3_600_000).toFixed(1)} h`;
 }
 
-export function formatLogTime(createdAt: string | null | undefined): string {
-  if (!createdAt) return "–";
-  const normalized = createdAt.includes("T") ? createdAt : createdAt.replace(" ", "T") + "Z";
-  const date = new Date(normalized);
-  if (Number.isNaN(date.getTime())) return createdAt;
+export function formatLogTime(ts: number | string | null | undefined): string {
+  if (ts == null) return "–";
+  const date = typeof ts === "number" ? new Date(ts) : (() => {
+    const normalized = ts.includes("T") ? ts : ts.replace(" ", "T") + "Z";
+    return new Date(normalized);
+  })();
+  if (Number.isNaN(date.getTime())) return String(ts);
   const mm = String(date.getMonth() + 1).padStart(2, "0");
   const dd = String(date.getDate()).padStart(2, "0");
   const hh = String(date.getHours()).padStart(2, "0");

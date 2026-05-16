@@ -127,7 +127,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
                         : label === "Routes"
                           ? "路由"
                           : label === "API Keys"
-                            ? "API Key"
+                            ? "密钥"
                           : label === "Connect"
                             ? "接入"
                           : label === "Logs"

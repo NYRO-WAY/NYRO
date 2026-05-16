@@ -3,7 +3,7 @@
 //! Covers:
 //!   1. headers_to_json — sensitive key redaction (axum HeaderMap)
 //!   2. reqwest_headers_to_json — sensitive key redaction (reqwest HeaderMap)
-//!   3. LogEntry — timestamp is Unix milliseconds
+//!   3. LogEntry — created_at is Unix milliseconds
 //!   4. LogEntry — stream indicator via stream_chunks_count > 0
 //!   5. LogEntry — non-stream has stream_chunks_count == 0
 //!   6. DB schema — new columns exist in the CREATE TABLE SQL (unit-level)
@@ -109,13 +109,17 @@ fn log_entry_timestamp_is_unix_millis() {
         "timestamp must be a reasonable Unix-ms value"
     );
 
-    // Build a LogEntry and confirm timestamp field accepts i64 ms.
+    // Build a LogEntry and confirm created_at field accepts i64 ms.
     let _entry = LogEntry {
         api_key_id: None,
-        timestamp: ts,
+        api_key_name: None,
+        created_at: ts,
         client_protocol: "openai/chat/v1".into(),
         upstream_protocol: "openai/chat/v1".into(),
         provider_id: "test-provider".into(),
+        provider_name: "Test Provider".into(),
+        route_id: None,
+        route_name: None,
         upstream_url: None,
         client_model: "gpt-4".into(),
         upstream_model: "gpt-4".into(),
@@ -134,6 +138,7 @@ fn log_entry_timestamp_is_unix_millis() {
         latency_total_ms: 42,
         latency_upstream_ms: Some(30),
         usage: Usage::default(),
+        is_stream: false,
         stream_chunks_count: 0,
         stream_first_chunk_ms: None,
     };
@@ -148,10 +153,14 @@ fn stream_indicator_via_chunks_count() {
 
     let base = LogEntry {
         api_key_id: None,
-        timestamp: 0,
+        api_key_name: None,
+        created_at: 0,
         client_protocol: String::new(),
         upstream_protocol: String::new(),
         provider_id: String::new(),
+        provider_name: String::new(),
+        route_id: None,
+        route_name: None,
         upstream_url: None,
         client_model: String::new(),
         upstream_model: String::new(),
@@ -170,6 +179,7 @@ fn stream_indicator_via_chunks_count() {
         latency_total_ms: 0,
         latency_upstream_ms: None,
         usage: Usage::default(),
+        is_stream: false,
         stream_chunks_count: 0,
         stream_first_chunk_ms: None,
     };
@@ -201,11 +211,15 @@ fn db_schema_sql_contains_new_columns() {
     // We do a lighter check: verify the constant column names expected per spec.
     let expected_columns = [
         "id",
-        "timestamp",
+        "created_at",
         "api_key_id",
+        "api_key_name",
+        "provider_id",
+        "provider_name",
+        "route_id",
+        "route_name",
         "client_protocol",
         "upstream_protocol",
-        "provider_id",
         "upstream_url",
         "client_model",
         "upstream_model",
@@ -225,13 +239,14 @@ fn db_schema_sql_contains_new_columns() {
         "latency_upstream_ms",
         "input_tokens",
         "output_tokens",
+        "is_stream",
         "stream_chunks_count",
         "stream_first_chunk_ms",
     ];
     assert_eq!(
         expected_columns.len(),
-        27,
-        "spec requires 27 columns (id + 26 data columns)"
+        32,
+        "schema requires 32 columns (id + 31 data columns)"
     );
 
     // Verify RequestLog struct has the same field names via a compile-time
@@ -239,11 +254,15 @@ fn db_schema_sql_contains_new_columns() {
     use nyro_core::db::models::RequestLog;
     fn _check_fields(r: &RequestLog) {
         let _: &str = &r.id;
-        let _: i64 = r.timestamp;
+        let _: i64 = r.created_at;
         let _: &Option<String> = &r.api_key_id;
+        let _: &Option<String> = &r.api_key_name;
+        let _: &Option<String> = &r.provider_id;
+        let _: &Option<String> = &r.provider_name;
+        let _: &Option<String> = &r.route_id;
+        let _: &Option<String> = &r.route_name;
         let _: &Option<String> = &r.client_protocol;
         let _: &Option<String> = &r.upstream_protocol;
-        let _: &Option<String> = &r.provider_id;
         let _: &Option<String> = &r.upstream_url;
         let _: &Option<String> = &r.client_model;
         let _: &Option<String> = &r.upstream_model;
@@ -263,6 +282,7 @@ fn db_schema_sql_contains_new_columns() {
         let _: &Option<i64> = &r.latency_upstream_ms;
         let _: i32 = r.input_tokens;
         let _: i32 = r.output_tokens;
+        let _: bool = r.is_stream;
         let _: i32 = r.stream_chunks_count;
         let _: &Option<i64> = &r.stream_first_chunk_ms;
     }

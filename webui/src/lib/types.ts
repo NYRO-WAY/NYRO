@@ -65,26 +65,45 @@ export interface ApiKey {
 
 export interface RequestLog {
   id: string;
-  created_at: string;
-  ingress_protocol?: string;
-  egress_protocol?: string;
-  request_model?: string;
-  actual_model?: string;
+  /** Unix 毫秒时间戳 */
+  created_at: number;
+  api_key_id?: string;
+  api_key_name?: string;
+
+  client_protocol?: string;
+  upstream_protocol?: string;
+  provider_id?: string;
   provider_name?: string;
-  status_code?: number;
-  duration_ms?: number;
-  input_tokens: number;
-  output_tokens: number;
-  is_stream: boolean;
-  is_tool_call: boolean;
-  error_message?: string;
-  response_preview?: string;
+  route_id?: string;
+  route_name?: string;
+  upstream_url?: string;
+  client_model?: string;
+  upstream_model?: string;
+
   method?: string;
   path?: string;
-  request_headers?: string;
-  request_body?: string;
-  response_headers?: string;
-  response_body?: string;
+
+  client_request_headers?: string;
+  client_request_body?: string;
+  client_response_headers?: string;
+  client_response_body?: string;
+
+  upstream_request_headers?: string;
+  upstream_request_body?: string;
+  upstream_response_headers?: string;
+  upstream_response_body?: string;
+
+  upstream_status_code?: number;
+  client_status_code?: number;
+
+  latency_total_ms?: number;
+  latency_upstream_ms?: number;
+  input_tokens: number;
+  output_tokens: number;
+
+  is_stream: boolean;
+  stream_chunks_count: number;
+  stream_first_chunk_ms?: number;
 }
 
 export function getRouteType(log: Pick<RequestLog, "path">): "chat" | "embedding" {

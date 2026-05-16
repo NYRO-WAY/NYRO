@@ -163,7 +163,8 @@ export default function LogsPage() {
               <tbody>
                 {items.map((log) => {
                   const routeType = getRouteType(log);
-                  const statusOk = (log.status_code ?? 0) < 400;
+                  const statusOk = (log.client_status_code ?? 0) < 400;
+                  const isStream = log.is_stream ?? (log.stream_chunks_count ?? 0) > 0;
                   return (
                     <tr
                       key={log.id}
@@ -180,25 +181,25 @@ export default function LogsPage() {
                             statusOk ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600",
                           )}
                         >
-                          {log.status_code ?? "–"}
+                          {log.client_status_code ?? "–"}
                         </span>
                       </td>
                       <td className="px-3 py-2">
                         <div className="flex flex-col leading-tight">
                           <span className="text-xs font-medium text-slate-800">
-                            {log.request_model ?? "–"}
+                            {log.client_model ?? "–"}
                           </span>
                           <span className="text-[11px] text-slate-500">
-                            {log.provider_name ?? "–"}
-                            {log.actual_model ? `: ${log.actual_model}` : ""}
+                            {log.provider_name ?? log.provider_id ?? "–"}
+                            {log.upstream_model ? `: ${log.upstream_model}` : ""}
                           </span>
                         </div>
                       </td>
                       <td className="px-3 py-2">
                         <div className="flex items-center gap-1.5 text-xs text-slate-500">
                           <ProtocolLane
-                            ingress={log.ingress_protocol}
-                            egress={log.egress_protocol}
+                            ingress={log.client_protocol}
+                            egress={log.upstream_protocol}
                           />
                           {routeType === "embedding" ? (
                             <Badge variant="outline" className="text-[10px]">EMB</Badge>
@@ -206,7 +207,7 @@ export default function LogsPage() {
                         </div>
                       </td>
                       <td className="px-3 py-2 text-xs text-slate-600 whitespace-nowrap">
-                        {formatDuration(log.duration_ms)}
+                        {formatDuration(log.latency_total_ms)}
                       </td>
                       <td className="px-3 py-2">
                         <div className="flex flex-col items-start leading-tight text-[11px] tabular-nums">
@@ -227,7 +228,7 @@ export default function LogsPage() {
                         </div>
                       </td>
                       <td className="px-3 py-2">
-                        {log.is_stream ? (
+                        {isStream ? (
                           <Badge
                             variant="outline"
                             className="border-green-200 bg-green-50 text-[10px] text-green-700"
