@@ -11,7 +11,7 @@ use crate::protocol::*;
 
 pub struct GoogleResponseParser;
 
-impl ResponseParser for GoogleResponseParser {
+impl ResponseDecoder for GoogleResponseParser {
     fn parse_response(&self, resp: Value) -> Result<AiResponse> {
         let candidate = resp
             .get("candidates")
@@ -80,7 +80,7 @@ impl ResponseParser for GoogleResponseParser {
 
 pub struct GoogleResponseFormatter;
 
-impl ResponseFormatter for GoogleResponseFormatter {
+impl ResponseEncoder for GoogleResponseFormatter {
     fn format_response(&self, resp: &AiResponse) -> Value {
         let mut parts = Vec::new();
 
@@ -139,7 +139,7 @@ impl GoogleStreamParser {
     }
 }
 
-impl StreamParser for GoogleStreamParser {
+impl StreamResponseDecoder for GoogleStreamParser {
     fn parse_chunk(&mut self, raw: &str) -> Result<Vec<AiStreamDelta>> {
         self.buffer.push_str(raw);
         let mut deltas = Vec::new();
@@ -269,7 +269,7 @@ impl GoogleStreamFormatter {
     }
 }
 
-impl StreamFormatter for GoogleStreamFormatter {
+impl StreamResponseEncoder for GoogleStreamFormatter {
     fn format_deltas(&mut self, deltas: &[AiStreamDelta]) -> Vec<SseEvent> {
         let mut events = Vec::new();
 

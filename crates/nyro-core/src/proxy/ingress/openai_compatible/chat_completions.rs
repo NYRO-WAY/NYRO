@@ -33,7 +33,7 @@ pub async fn handler(
         "POST",
         "/v1/chat/completions",
     );
-    let decoder = OPENAI_CHAT_COMPLETIONS_V1.handler().make_decoder();
+    let decoder = OPENAI_CHAT_COMPLETIONS_V1.handler().make_request_decoder();
     let request = match decoder.decode_request(body) {
         Ok(r) => r,
         Err(e) => return error_response(400, &format!("invalid request: {e}")),

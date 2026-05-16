@@ -8,7 +8,7 @@
 use anyhow::Result;
 use serde_json::Value;
 
-use crate::protocol::IngressDecoder;
+use crate::protocol::RequestDecoder;
 use crate::protocol::ids::ANTHROPIC_MESSAGES_2023_06_01;
 use crate::protocol::ir::DocumentSource as IrDocumentSource;
 use crate::protocol::ir::{
@@ -25,7 +25,7 @@ use super::types::{
 
 pub struct AnthropicDecoder;
 
-impl IngressDecoder for AnthropicDecoder {
+impl RequestDecoder for AnthropicDecoder {
     fn decode_request(&self, body: Value) -> Result<AiRequest> {
         let req: AnthropicRequest = serde_json::from_value(body)?;
 

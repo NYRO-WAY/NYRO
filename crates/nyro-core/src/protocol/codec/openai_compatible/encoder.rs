@@ -4,7 +4,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-use crate::protocol::EgressEncoder;
+use crate::protocol::RequestEncoder;
 use crate::protocol::ir::request::{
     ContentBlock, MediaSource, Message, MessageContent, Role, ToolChoice, ToolSpec,
 };
@@ -12,7 +12,7 @@ use crate::protocol::ir::{AiRequest, ToolCall};
 
 pub struct OpenAIEncoder;
 
-impl EgressEncoder for OpenAIEncoder {
+impl RequestEncoder for OpenAIEncoder {
     fn encode_request(&self, req: &AiRequest) -> Result<(Value, HeaderMap)> {
         let tools = req.tools.as_deref().unwrap_or(&[]);
         let tools_opt: Option<&[ToolSpec]> = if tools.is_empty() { None } else { Some(tools) };

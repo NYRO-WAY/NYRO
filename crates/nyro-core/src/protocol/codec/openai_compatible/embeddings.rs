@@ -2,7 +2,7 @@
 //!
 //! Embeddings is a passthrough endpoint — the gateway forwards the
 //! request body verbatim and only inspects `usage.prompt_tokens` from
-//! the response. We still register a `ProtocolHandler` so that:
+//! the response. We still register a `EndpointHandler` so that:
 //!
 //! 1. `ProtocolRegistry::find_by_ingress_route` resolves
 //!    `POST /v1/embeddings` (and `/embeddings`) to a known
@@ -74,22 +74,22 @@ impl EndpointHandler for OpenAIEmbeddingsV1 {
     fn capabilities(&self) -> &'static EndpointCapabilities {
         &CAPS
     }
-    fn make_decoder(&self) -> Box<dyn IngressDecoder + Send> {
+    fn make_request_decoder(&self) -> Box<dyn RequestDecoder + Send> {
         Box::new(EmbeddingsDecoder)
     }
-    fn make_encoder(&self) -> Box<dyn EgressEncoder + Send> {
+    fn make_request_encoder(&self) -> Box<dyn RequestEncoder + Send> {
         Box::new(EmbeddingsEncoder)
     }
-    fn make_response_parser(&self) -> Box<dyn ResponseParser> {
+    fn make_response_decoder(&self) -> Box<dyn ResponseDecoder> {
         Box::new(EmbeddingsResponseParser)
     }
-    fn make_response_formatter(&self) -> Box<dyn ResponseFormatter> {
+    fn make_response_encoder(&self) -> Box<dyn ResponseEncoder> {
         Box::new(EmbeddingsResponseFormatter)
     }
-    fn make_stream_parser(&self) -> Box<dyn StreamParser> {
+    fn make_stream_response_decoder(&self) -> Box<dyn StreamResponseDecoder> {
         Box::new(EmbeddingsStreamParser)
     }
-    fn make_stream_formatter(&self) -> Box<dyn StreamFormatter> {
+    fn make_stream_response_encoder(&self) -> Box<dyn StreamResponseEncoder> {
         Box::new(EmbeddingsStreamFormatter)
     }
 }
@@ -102,7 +102,7 @@ inventory::submit! {
 
 struct EmbeddingsDecoder;
 
-impl IngressDecoder for EmbeddingsDecoder {
+impl RequestDecoder for EmbeddingsDecoder {
     fn decode_request(&self, body: Value) -> anyhow::Result<AiRequest> {
         let obj = body
             .as_object()
@@ -163,7 +163,7 @@ impl IngressDecoder for EmbeddingsDecoder {
 
 struct EmbeddingsEncoder;
 
-impl EgressEncoder for EmbeddingsEncoder {
+impl RequestEncoder for EmbeddingsEncoder {
     fn encode_request(&self, req: &AiRequest) -> anyhow::Result<(Value, HeaderMap)> {
         let ingress = &req.meta.vendor.ingress;
         let mut obj = serde_json::Map::new();
@@ -198,7 +198,7 @@ impl EgressEncoder for EmbeddingsEncoder {
 
 struct EmbeddingsResponseParser;
 
-impl ResponseParser for EmbeddingsResponseParser {
+impl ResponseDecoder for EmbeddingsResponseParser {
     fn parse_response(&self, _resp: Value) -> anyhow::Result<crate::protocol::ir::AiResponse> {
         unreachable!(
             "embeddings_proxy bypasses the codec pipeline; \
@@ -209,7 +209,7 @@ impl ResponseParser for EmbeddingsResponseParser {
 
 struct EmbeddingsResponseFormatter;
 
-impl ResponseFormatter for EmbeddingsResponseFormatter {
+impl ResponseEncoder for EmbeddingsResponseFormatter {
     fn format_response(&self, _resp: &crate::protocol::ir::AiResponse) -> Value {
         unreachable!(
             "embeddings_proxy bypasses the codec pipeline; \
@@ -220,7 +220,7 @@ impl ResponseFormatter for EmbeddingsResponseFormatter {
 
 struct EmbeddingsStreamParser;
 
-impl StreamParser for EmbeddingsStreamParser {
+impl StreamResponseDecoder for EmbeddingsStreamParser {
     fn parse_chunk(
         &mut self,
         _raw: &str,
@@ -234,7 +234,7 @@ impl StreamParser for EmbeddingsStreamParser {
 
 struct EmbeddingsStreamFormatter;
 
-impl StreamFormatter for EmbeddingsStreamFormatter {
+impl StreamResponseEncoder for EmbeddingsStreamFormatter {
     fn format_deltas(&mut self, _deltas: &[crate::protocol::ir::AiStreamDelta]) -> Vec<SseEvent> {
         unreachable!("embeddings has streaming=false; check capabilities before calling")
     }

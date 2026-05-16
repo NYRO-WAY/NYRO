@@ -1,16 +1,17 @@
 //! Aggregated `EndpointHandler` trait.
 //!
 //! A handler bundles a `ProtocolEndpoint`, static `EndpointCapabilities`, and factory
-//! methods for the six codec components (decoder / encoder / response parser /
-//! response formatter / streaming parser / streaming formatter).
+//! methods for the six codec components (request decoder / request encoder /
+//! response decoder / response encoder / stream response decoder / stream response encoder).
 //!
 //! Codec traits remain defined in `super` (i.e. `protocol/mod.rs`) for backward
-//! compatibility with existing `use crate::protocol::IngressDecoder` call sites;
+//! compatibility with existing `use crate::protocol::RequestDecoder` call sites;
 //! this module re-exports them so new code can `use crate::protocol::traits::*`
 //! to pull in everything needed to implement a handler.
 
 pub use super::{
-    EgressEncoder, IngressDecoder, ResponseFormatter, ResponseParser, StreamFormatter, StreamParser,
+    RequestDecoder, RequestEncoder, ResponseDecoder, ResponseEncoder, StreamResponseDecoder,
+    StreamResponseEncoder,
 };
 
 use crate::protocol::ids::{EndpointCapabilities, Protocol, ProtocolEndpoint};
@@ -33,13 +34,10 @@ pub trait EndpointHandler: Send + Sync + 'static {
         self.id().protocol
     }
 
-    fn make_decoder(&self) -> Box<dyn IngressDecoder + Send>;
-    fn make_encoder(&self) -> Box<dyn EgressEncoder + Send>;
-    fn make_response_parser(&self) -> Box<dyn ResponseParser>;
-    fn make_response_formatter(&self) -> Box<dyn ResponseFormatter>;
-    fn make_stream_parser(&self) -> Box<dyn StreamParser>;
-    fn make_stream_formatter(&self) -> Box<dyn StreamFormatter>;
+    fn make_request_decoder(&self) -> Box<dyn RequestDecoder + Send>;
+    fn make_request_encoder(&self) -> Box<dyn RequestEncoder + Send>;
+    fn make_response_decoder(&self) -> Box<dyn ResponseDecoder>;
+    fn make_response_encoder(&self) -> Box<dyn ResponseEncoder>;
+    fn make_stream_response_decoder(&self) -> Box<dyn StreamResponseDecoder>;
+    fn make_stream_response_encoder(&self) -> Box<dyn StreamResponseEncoder>;
 }
-
-/// Backward-compat alias — prefer `EndpointHandler`.
-pub use EndpointHandler as ProtocolHandler;

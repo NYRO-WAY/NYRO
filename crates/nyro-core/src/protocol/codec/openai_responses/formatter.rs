@@ -1,13 +1,13 @@
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::protocol::ResponseFormatter;
+use crate::protocol::ResponseEncoder;
 use crate::protocol::ir::AiResponse;
 use crate::protocol::ir::response::ResponseItem;
 
 pub struct ResponsesResponseFormatter;
 
-impl ResponseFormatter for ResponsesResponseFormatter {
+impl ResponseEncoder for ResponsesResponseFormatter {
     fn format_response(&self, resp: &AiResponse) -> Value {
         let resp_id = if resp.id.is_empty() {
             format!("resp_{}", Uuid::new_v4().simple())

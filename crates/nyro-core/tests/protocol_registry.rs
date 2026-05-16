@@ -147,7 +147,7 @@ fn decoder_preserves_role_sequence_and_source_protocol() {
         let req = reg
             .get(&id)
             .unwrap()
-            .make_decoder()
+            .make_request_decoder()
             .decode_request(body)
             .unwrap_or_else(|e| panic!("decoder failed for {id}: {e}"));
 
@@ -172,9 +172,9 @@ fn encoder_round_trips_body_for_every_handler() {
     ] {
         let body = sample_body(id);
         let h = reg.get(&id).unwrap();
-        let internal = h.make_decoder().decode_request(body).unwrap();
+        let internal = h.make_request_decoder().decode_request(body).unwrap();
         let (out_body, headers) = h
-            .make_encoder()
+            .make_request_encoder()
             .encode_request(&internal)
             .unwrap_or_else(|e| panic!("encoder failed for {id}: {e}"));
         assert!(
@@ -184,7 +184,7 @@ fn encoder_round_trips_body_for_every_handler() {
         let _ = headers;
 
         let _path = h
-            .make_encoder()
+            .make_request_encoder()
             .egress_path(&internal.model, internal.stream.enabled);
     }
 }
@@ -199,10 +199,10 @@ fn parser_and_formatter_factories_construct() {
         GOOGLE_GENERATE_CONTENT_V1BETA,
     ] {
         let h = reg.get(&id).unwrap();
-        let _ = h.make_response_parser();
-        let _ = h.make_response_formatter();
-        let _ = h.make_stream_parser();
-        let _ = h.make_stream_formatter();
+        let _ = h.make_response_decoder();
+        let _ = h.make_response_encoder();
+        let _ = h.make_stream_response_decoder();
+        let _ = h.make_stream_response_encoder();
     }
 }
 
@@ -255,7 +255,7 @@ fn embeddings_decoder_round_trips_body() {
     let internal = reg
         .get(&OPENAI_EMBEDDINGS_V1)
         .unwrap()
-        .make_decoder()
+        .make_request_decoder()
         .decode_request(body.clone())
         .unwrap();
     assert_eq!(internal.model, "text-embedding-3-small");
@@ -264,7 +264,7 @@ fn embeddings_decoder_round_trips_body() {
     let (encoded, _headers) = reg
         .get(&OPENAI_EMBEDDINGS_V1)
         .unwrap()
-        .make_encoder()
+        .make_request_encoder()
         .encode_request(&internal)
         .unwrap();
     assert_eq!(encoded, body, "encoder must round-trip the original body");

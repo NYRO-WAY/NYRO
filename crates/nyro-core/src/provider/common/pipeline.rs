@@ -53,7 +53,7 @@ where
 
     // 4. codec encode
     let egress_handler = ctx.protocol.handler();
-    let encoder = egress_handler.make_encoder();
+    let encoder = egress_handler.make_request_encoder();
     let (mut body, mut extra_headers) = encoder
         .encode_request(req)
         .map_err(GatewayError::internal)?;
@@ -127,7 +127,7 @@ where
 
     // 2. codec parse
     let egress_handler = ctx.protocol.handler();
-    let parser = egress_handler.make_response_parser();
+    let parser = egress_handler.make_response_decoder();
     let mut ai_resp = parser
         .parse_response(body)
         .map_err(GatewayError::internal)?;
@@ -190,7 +190,7 @@ pub async fn passthrough_run(
     let egress_path = ctx
         .protocol
         .handler()
-        .make_encoder()
+        .make_request_encoder()
         .egress_path(ctx.actual_model, is_stream);
     let url = vendor.build_url(&vendor_ctx, ctx.egress_base_url, &egress_path);
 

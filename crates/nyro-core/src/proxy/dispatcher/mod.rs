@@ -676,7 +676,7 @@ pub async fn dispatch(
         .collect();
     let envelope = RawEnvelope::new(Some(body.clone()), flat_headers, method, path);
 
-    let decoder = ingress.handler().make_decoder();
+    let decoder = ingress.handler().make_request_decoder();
     let request = match decoder.decode_request(body) {
         Ok(r) => r,
         Err(e) => {
@@ -994,7 +994,7 @@ fn replay_cached_stream(
     stream_replay_tps: u32,
     expose_headers: bool,
 ) -> Response {
-    let mut formatter = ingress.handler().make_stream_formatter();
+    let mut formatter = ingress.handler().make_stream_response_encoder();
     let ai_deltas = ai_response_to_deltas(ai_resp);
     let ai_deltas = if stream_replay_tps > 0 {
         split_text_deltas(ai_deltas, 4)

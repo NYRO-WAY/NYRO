@@ -12,7 +12,7 @@
 //!    against a provider that only declares chat/v1 (codec layer
 //!    converts).
 //! 3. `ProtocolId::handler()` — `proxy/handler.rs` calls
-//!    `ingress.handler().make_decoder()` on every request, so we assert
+//!    `ingress.handler().make_request_decoder()` on every request, so we assert
 //!    it returns a registered handler for every canonical id we ship.
 
 use nyro_core::db::models::Provider;

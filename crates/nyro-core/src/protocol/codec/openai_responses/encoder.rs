@@ -13,7 +13,7 @@ use anyhow::Result;
 use reqwest::header::HeaderMap;
 use serde_json::Value;
 
-use crate::protocol::EgressEncoder;
+use crate::protocol::RequestEncoder;
 use crate::protocol::ir::AiRequest;
 use crate::protocol::ir::request::{Role, ToolChoice};
 
@@ -26,7 +26,7 @@ pub struct ResponsesEncoder;
 // Fields that must NOT be copied blindly from extra into the egress body.
 const SKIP_FROM_EXTRA: &[&str] = &["messages", "input", "instructions", "stream", "model"];
 
-impl EgressEncoder for ResponsesEncoder {
+impl RequestEncoder for ResponsesEncoder {
     fn encode_request(&self, req: &AiRequest) -> Result<(Value, HeaderMap)> {
         let ingress = &req.meta.vendor.ingress;
 

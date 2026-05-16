@@ -4,11 +4,11 @@ use serde_json::Value;
 use crate::protocol::ir::request::ToolCall;
 use crate::protocol::ir::usage::Usage;
 use crate::protocol::ir::{AiResponse, AiStreamDelta};
-use crate::protocol::{ResponseParser, StreamParser};
+use crate::protocol::{ResponseDecoder, StreamResponseDecoder};
 
 pub struct ResponsesResponseParser;
 
-impl ResponseParser for ResponsesResponseParser {
+impl ResponseDecoder for ResponsesResponseParser {
     fn parse_response(&self, resp: Value) -> Result<AiResponse> {
         let id = resp
             .get("id")
@@ -117,7 +117,7 @@ impl ResponsesStreamParser {
     }
 }
 
-impl StreamParser for ResponsesStreamParser {
+impl StreamResponseDecoder for ResponsesStreamParser {
     fn parse_chunk(&mut self, raw: &str) -> Result<Vec<AiStreamDelta>> {
         self.buffer.push_str(raw);
         let mut deltas = Vec::new();
@@ -278,7 +278,7 @@ impl ResponsesStreamParser {
 mod tests {
     use super::*;
     use crate::protocol::ir::AiStreamDelta;
-    use crate::protocol::{ResponseParser, StreamParser};
+    use crate::protocol::{ResponseDecoder, StreamResponseDecoder};
 
     fn sse_event(event: &str, data: &str) -> String {
         format!("event: {event}\ndata: {data}\n\n")

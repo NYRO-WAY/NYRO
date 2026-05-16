@@ -7,7 +7,7 @@
 use anyhow::Result;
 use serde_json::Value;
 
-use crate::protocol::IngressDecoder;
+use crate::protocol::RequestDecoder;
 use crate::protocol::ids::OPENAI_CHAT_COMPLETIONS_V1;
 use crate::protocol::ir::{
     AiRequest, ContentBlock, GenerationConfig, MediaSource, Message, MessageContent, OpenAIChatExt,
@@ -19,7 +19,7 @@ use super::types::*;
 
 pub struct OpenAIDecoder;
 
-impl IngressDecoder for OpenAIDecoder {
+impl RequestDecoder for OpenAIDecoder {
     fn decode_request(&self, body: Value) -> Result<AiRequest> {
         let req: OpenAIRequest = serde_json::from_value(body)?;
 
