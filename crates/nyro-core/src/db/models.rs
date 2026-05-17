@@ -228,6 +228,12 @@ pub struct RequestLog {
     pub duration_ms: Option<f64>,
     pub input_tokens: i32,
     pub output_tokens: i32,
+    /// Portion of `input_tokens` that hit upstream prompt cache. Filled from
+    /// DeepSeek `prompt_cache_hit_tokens` or OpenAI
+    /// `prompt_tokens_details.cached_tokens`. Allows downstream cost analysis
+    /// to apply the cache-hit price (typically ~2% of cache-miss).
+    #[serde(default)]
+    pub cache_read_input_tokens: i32,
     pub is_stream: bool,
     pub is_tool_call: bool,
     pub error_message: Option<String>,

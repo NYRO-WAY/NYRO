@@ -501,9 +501,30 @@ fn extract_usage(v: &Value) -> TokenUsage {
     )
     .unwrap_or(0);
 
+    // Cache-hit input tokens. Different providers expose this differently:
+    //   DeepSeek native:   usage.prompt_cache_hit_tokens
+    //   OpenAI newer fmt:  usage.prompt_tokens_details.cached_tokens
+    //   Some Gemini-compat: usage.cached_content_token_count
+    // Stash whichever is present into TokenUsage.cache_read_input_tokens so it
+    // flows through to the request_logs row and the downstream Responses API
+    // usage object (input_tokens_details.cached_tokens).
+    let cache_read = u
+        .get("prompt_cache_hit_tokens")
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            u.get("prompt_tokens_details")
+                .and_then(|d| d.get("cached_tokens"))
+                .and_then(Value::as_u64)
+        })
+        .or_else(|| {
+            u.get("cached_content_token_count")
+                .and_then(Value::as_u64)
+        });
+
     TokenUsage {
         input_tokens: input as u32,
         output_tokens: output as u32,
+        cache_read_input_tokens: cache_read.map(|v| v as u32),
         ..TokenUsage::default()
     }
 }

@@ -73,6 +73,11 @@ pub async fn migrate(pool: &SqlitePool, vector_dimensions: usize) -> anyhow::Res
     ensure_request_log_column(pool, "request_body", "TEXT").await?;
     ensure_request_log_column(pool, "response_headers", "TEXT").await?;
     ensure_request_log_column(pool, "response_body", "TEXT").await?;
+    // cache_read_input_tokens: portion of input that hit upstream prompt cache
+    // (DeepSeek prompt_cache_hit_tokens / OpenAI prompt_tokens_details.cached_tokens).
+    // Lets cost analysis compute the real DeepSeek bill (cache hits charge ~2% of
+    // miss price) instead of treating every prompt token as full price.
+    ensure_request_log_column(pool, "cache_read_input_tokens", "INTEGER DEFAULT 0").await?;
     ensure_api_key_tables(pool).await?;
     ensure_api_key_column(pool, "rpd", "INTEGER").await?;
     // Migrate: providers/routes is_active -> is_enabled
@@ -658,6 +663,7 @@ CREATE TABLE IF NOT EXISTS request_logs (
     duration_ms       REAL,
     input_tokens      INTEGER DEFAULT 0,
     output_tokens     INTEGER DEFAULT 0,
+    cache_read_input_tokens INTEGER DEFAULT 0,
     is_stream         INTEGER DEFAULT 0,
     is_tool_call      INTEGER DEFAULT 0,
     error_message     TEXT,
