@@ -106,6 +106,7 @@ pub async fn migrate(pool: &SqlitePool, vector_dimensions: usize) -> anyhow::Res
     ensure_request_log_column(pool, "provider_name", "TEXT").await?;
     ensure_request_log_column(pool, "route_id", "TEXT").await?;
     ensure_request_log_column(pool, "route_name", "TEXT").await?;
+    ensure_request_log_column(pool, "cache_read_tokens", "INTEGER DEFAULT 0").await?;
     Ok(())
 }
 
@@ -799,6 +800,7 @@ CREATE TABLE IF NOT EXISTS request_logs (
     latency_upstream_ms       INTEGER,
     input_tokens              INTEGER DEFAULT 0,
     output_tokens             INTEGER DEFAULT 0,
+    cache_read_tokens         INTEGER DEFAULT 0,
     is_stream                 INTEGER DEFAULT 0,
     stream_chunks_count       INTEGER DEFAULT 0,
     stream_first_chunk_ms     INTEGER

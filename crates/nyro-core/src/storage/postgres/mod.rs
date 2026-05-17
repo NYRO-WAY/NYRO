@@ -978,9 +978,9 @@ impl LogStore for PostgresLogStore {
                      upstream_response_headers, upstream_response_body,
                      upstream_status_code, client_status_code,
                      latency_total_ms, latency_upstream_ms,
-                     input_tokens, output_tokens,
+                     input_tokens, output_tokens, cache_read_tokens,
                      is_stream, stream_chunks_count, stream_first_chunk_ms)
-                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32)"#,
+                VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33)"#,
             )
             .bind(&id)
             .bind(entry.created_at)
@@ -1011,6 +1011,7 @@ impl LogStore for PostgresLogStore {
             .bind(entry.latency_upstream_ms)
             .bind(entry.input_tokens())
             .bind(entry.output_tokens())
+            .bind(entry.cache_read_tokens())
             .bind(entry.is_stream)
             .bind(entry.stream_chunks_count)
             .bind(entry.stream_first_chunk_ms)
@@ -1033,7 +1034,7 @@ impl LogStore for PostgresLogStore {
              NULL::text AS upstream_response_headers, NULL::text AS upstream_response_body, \
              upstream_status_code, client_status_code, \
              latency_total_ms, latency_upstream_ms, \
-             input_tokens, output_tokens, \
+             input_tokens, output_tokens, COALESCE(cache_read_tokens, 0) AS cache_read_tokens, \
              COALESCE(is_stream, FALSE) AS is_stream, stream_chunks_count, stream_first_chunk_ms \
              FROM request_logs WHERE 1=1",
         );
@@ -1097,7 +1098,7 @@ impl LogStore for PostgresLogStore {
              upstream_response_headers, upstream_response_body, \
              upstream_status_code, client_status_code, \
              latency_total_ms, latency_upstream_ms, \
-             input_tokens, output_tokens, \
+             input_tokens, output_tokens, COALESCE(cache_read_tokens, 0) AS cache_read_tokens, \
              COALESCE(is_stream, FALSE) AS is_stream, stream_chunks_count, stream_first_chunk_ms \
              FROM request_logs WHERE id = $1",
         )
@@ -1400,6 +1401,11 @@ END $$;"#,
         sqlx::query("ALTER TABLE routes DROP COLUMN IF EXISTS route_type")
             .execute(self.adapter.pool())
             .await?;
+        sqlx::query(
+            "ALTER TABLE request_logs ADD COLUMN IF NOT EXISTS cache_read_tokens INTEGER DEFAULT 0",
+        )
+        .execute(self.adapter.pool())
+        .await?;
         Ok(())
     }
 
@@ -1727,6 +1733,7 @@ CREATE TABLE IF NOT EXISTS request_logs (
     latency_upstream_ms       BIGINT,
     input_tokens              INTEGER DEFAULT 0,
     output_tokens             INTEGER DEFAULT 0,
+    cache_read_tokens         INTEGER DEFAULT 0,
     is_stream                 BOOLEAN DEFAULT FALSE,
     stream_chunks_count       INTEGER DEFAULT 0,
     stream_first_chunk_ms     BIGINT

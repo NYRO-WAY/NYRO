@@ -499,9 +499,28 @@ fn extract_usage(v: &Value) -> Usage {
     )
     .unwrap_or(0);
 
+    // Cache-hit tokens are reported by different providers under different
+    // keys. Whichever shape we see, surface it under `Usage.cache_read_tokens`
+    // so downstream cost analytics stop treating cached prompt tokens as
+    // full-price input.
+    //
+    // - DeepSeek native:  `usage.prompt_cache_hit_tokens`
+    // - OpenAI newer fmt: `usage.prompt_tokens_details.cached_tokens`
+    // - Gemini-compat:    `usage.cached_content_token_count`
+    let cache_read = u
+        .get("prompt_cache_hit_tokens")
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            u.get("prompt_tokens_details")
+                .and_then(|d| d.get("cached_tokens"))
+                .and_then(Value::as_u64)
+        })
+        .or_else(|| u.get("cached_content_token_count").and_then(Value::as_u64));
+
     Usage {
         prompt_tokens: input as u32,
         completion_tokens: output as u32,
+        cache_read_tokens: cache_read.map(|v| v as u32),
         ..Usage::default()
     }
 }
@@ -550,6 +569,64 @@ mod tests {
 
     fn data_sse(json: &str) -> String {
         format!("data: {json}\n\n")
+    }
+
+    // ── extract_usage cache-token variants ──
+
+    #[test]
+    fn extract_usage_deepseek_prompt_cache_hit_tokens() {
+        let resp = serde_json::json!({
+            "usage": {
+                "prompt_tokens": 1000,
+                "completion_tokens": 50,
+                "prompt_cache_hit_tokens": 800,
+                "prompt_cache_miss_tokens": 200
+            }
+        });
+        let u = extract_usage(&resp);
+        assert_eq!(u.prompt_tokens, 1000);
+        assert_eq!(u.completion_tokens, 50);
+        assert_eq!(u.cache_read_tokens, Some(800));
+    }
+
+    #[test]
+    fn extract_usage_openai_prompt_tokens_details_cached() {
+        let resp = serde_json::json!({
+            "usage": {
+                "prompt_tokens": 1500,
+                "completion_tokens": 100,
+                "prompt_tokens_details": { "cached_tokens": 1200 }
+            }
+        });
+        let u = extract_usage(&resp);
+        assert_eq!(u.prompt_tokens, 1500);
+        assert_eq!(u.cache_read_tokens, Some(1200));
+    }
+
+    #[test]
+    fn extract_usage_gemini_cached_content_token_count() {
+        let resp = serde_json::json!({
+            "usage": {
+                "prompt_tokens": 2000,
+                "completion_tokens": 200,
+                "cached_content_token_count": 1700
+            }
+        });
+        let u = extract_usage(&resp);
+        assert_eq!(u.cache_read_tokens, Some(1700));
+    }
+
+    #[test]
+    fn extract_usage_no_cache_field_yields_none() {
+        let resp = serde_json::json!({
+            "usage": {
+                "prompt_tokens": 500,
+                "completion_tokens": 50
+            }
+        });
+        let u = extract_usage(&resp);
+        assert_eq!(u.prompt_tokens, 500);
+        assert_eq!(u.cache_read_tokens, None);
     }
 
     // ── OpenAIResponseParser ──

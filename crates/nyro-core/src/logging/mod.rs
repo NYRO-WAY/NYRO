@@ -69,6 +69,10 @@ impl LogEntry {
     pub fn output_tokens(&self) -> i32 {
         self.usage.completion_tokens as i32
     }
+
+    pub fn cache_read_tokens(&self) -> i32 {
+        self.usage.cache_read_tokens.unwrap_or(0) as i32
+    }
 }
 
 pub async fn run_collector(mut rx: mpsc::Receiver<LogEntry>, storage: DynStorage) {

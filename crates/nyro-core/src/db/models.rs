@@ -270,6 +270,8 @@ pub struct RequestLog {
     pub latency_upstream_ms: Option<i64>,
     pub input_tokens: i32,
     pub output_tokens: i32,
+    #[serde(default)]
+    pub cache_read_tokens: i32,
 
     pub is_stream: bool,
     pub stream_chunks_count: i32,

@@ -1079,9 +1079,9 @@ impl LogStore for SqliteLogStore {
                      upstream_response_headers, upstream_response_body,
                      upstream_status_code, client_status_code,
                      latency_total_ms, latency_upstream_ms,
-                     input_tokens, output_tokens,
+                     input_tokens, output_tokens, cache_read_tokens,
                      is_stream, stream_chunks_count, stream_first_chunk_ms)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"#,
             )
             .bind(&id)
             .bind(entry.created_at)
@@ -1112,6 +1112,7 @@ impl LogStore for SqliteLogStore {
             .bind(entry.latency_upstream_ms)
             .bind(entry.input_tokens())
             .bind(entry.output_tokens())
+            .bind(entry.cache_read_tokens())
             .bind(entry.is_stream)
             .bind(entry.stream_chunks_count)
             .bind(entry.stream_first_chunk_ms)
@@ -1134,7 +1135,7 @@ impl LogStore for SqliteLogStore {
              NULL AS upstream_response_headers, NULL AS upstream_response_body, \
              upstream_status_code, client_status_code, \
              CAST(latency_total_ms AS INTEGER) AS latency_total_ms, latency_upstream_ms, \
-             input_tokens, output_tokens, \
+             input_tokens, output_tokens, COALESCE(cache_read_tokens, 0) AS cache_read_tokens, \
              COALESCE(is_stream, 0) AS is_stream, stream_chunks_count, stream_first_chunk_ms \
              FROM request_logs WHERE 1=1",
         );
@@ -1187,7 +1188,7 @@ impl LogStore for SqliteLogStore {
              upstream_response_headers, upstream_response_body, \
              upstream_status_code, client_status_code, \
              CAST(latency_total_ms AS INTEGER) AS latency_total_ms, latency_upstream_ms, \
-             input_tokens, output_tokens, \
+             input_tokens, output_tokens, COALESCE(cache_read_tokens, 0) AS cache_read_tokens, \
              COALESCE(is_stream, 0) AS is_stream, stream_chunks_count, stream_first_chunk_ms \
              FROM request_logs WHERE id = ?",
         )
