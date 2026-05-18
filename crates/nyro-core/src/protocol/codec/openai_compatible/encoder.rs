@@ -445,8 +445,22 @@ fn encode_message(msg: &Message) -> Result<Value> {
             map.insert("content".into(), Value::String(t.clone()));
         }
         MessageContent::Blocks(blocks) => {
+            // Strip Thinking blocks for assistant messages — they are surfaced
+            // via the top-level `reasoning_content` field carried in `meta`
+            // (see anthropic_messages decoder). Emitting them as plain text
+            // would duplicate reasoning into the visible content and break
+            // upstreams like Xiaomi Mimo that require strict thinking-mode
+            // round-tripping via `reasoning_content`.
+            let filter_thinking = msg.role == Role::Assistant;
             let parts: Vec<Value> = blocks
                 .iter()
+                .filter(|b| {
+                    !(filter_thinking
+                        && matches!(
+                            b,
+                            ContentBlock::Thinking { .. } | ContentBlock::RedactedThinking { .. }
+                        ))
+                })
                 .map(|b| encode_content_block_for_openai(b))
                 .collect();
             map.insert("content".into(), Value::Array(parts));

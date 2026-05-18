@@ -266,6 +266,7 @@ fn decode_message(msg: AnthropicMessage) -> Result<Vec<Message>> {
             let mut content_blocks: Vec<ContentBlock> = Vec::new();
             let mut tcs: Vec<ToolCall> = Vec::new();
             let mut tc_id: Option<String> = None;
+            let mut thinking_texts: Vec<String> = Vec::new();
 
             for block in blocks {
                 match block {
@@ -284,6 +285,9 @@ fn decode_message(msg: AnthropicMessage) -> Result<Vec<Message>> {
                         signature,
                         ..
                     } => {
+                        if role == Role::Assistant && !thinking.is_empty() {
+                            thinking_texts.push(thinking.clone());
+                        }
                         content_blocks.push(ContentBlock::Thinking {
                             thinking,
                             signature,
@@ -359,6 +363,8 @@ fn decode_message(msg: AnthropicMessage) -> Result<Vec<Message>> {
 
             let tool_calls_opt = if tcs.is_empty() { None } else { Some(tcs) };
 
+            let meta = build_reasoning_meta(&thinking_texts);
+
             if content_blocks.len() == 1
                 && let ContentBlock::Text { text, .. } = &content_blocks[0]
             {
@@ -367,15 +373,17 @@ fn decode_message(msg: AnthropicMessage) -> Result<Vec<Message>> {
                     content: MessageContent::Text(text.clone()),
                     tool_calls: tool_calls_opt,
                     tool_call_id: tc_id,
-                    meta: None,
+                    meta,
                 }]);
             }
 
-            (
-                MessageContent::Blocks(content_blocks),
-                tool_calls_opt,
-                tc_id,
-            )
+            return Ok(vec![Message {
+                role,
+                content: MessageContent::Blocks(content_blocks),
+                tool_calls: tool_calls_opt,
+                tool_call_id: tc_id,
+                meta,
+            }]);
         }
     };
 
@@ -386,6 +394,20 @@ fn decode_message(msg: AnthropicMessage) -> Result<Vec<Message>> {
         tool_call_id,
         meta: None,
     }])
+}
+
+/// Build `meta = {"reasoning_content": ...}` so the OpenAI-compat encoder can
+/// re-emit thinking text as a top-level `reasoning_content` field on assistant
+/// messages (required by providers like Xiaomi Mimo / DeepSeek thinking mode).
+fn build_reasoning_meta(thinking_texts: &[String]) -> Option<Value> {
+    if thinking_texts.is_empty() {
+        return None;
+    }
+    let joined = thinking_texts.join("\n\n");
+    if joined.is_empty() {
+        return None;
+    }
+    Some(serde_json::json!({ "reasoning_content": joined }))
 }
 
 fn decode_user_blocks(blocks: Vec<AnthropicContentBlock>) -> Result<Vec<Message>> {

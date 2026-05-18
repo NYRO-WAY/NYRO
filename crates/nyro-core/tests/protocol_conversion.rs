@@ -1240,6 +1240,122 @@ fn openai_encoder_preserves_reasoning_content_across_parallel_tool_calls() {
 }
 
 #[test]
+fn anthropic_to_openai_thinking_round_trip_carries_reasoning_content() {
+    // Regression for cross-protocol Anthropic Messages → OpenAI chat/completions:
+    // when the client (Claude Code) re-sends an assistant turn containing
+    // `thinking` + parallel `tool_use` blocks followed by `tool_result`s,
+    // upstreams in thinking mode (Xiaomi Mimo / DeepSeek / etc.) require the
+    // assistant message that carries `tool_calls` to also carry the original
+    // `reasoning_content`. Otherwise they return:
+    //   400 "The reasoning_content in the thinking mode must be passed back."
+    //
+    // The thinking text must be bridged through `meta.reasoning_content` so the
+    // OpenAI encoder emits it on every split assistant message produced by
+    // `normalize_messages_for_openai`.
+    let raw = serde_json::json!({
+        "model": "mimo-v2.5-pro",
+        "max_tokens": 1024,
+        "stream": true,
+        "messages": [
+            {"role": "user", "content": [{"type": "text", "text": "ls the project"}]},
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "thinking",
+                        "thinking": "The user wants me to list the project.",
+                        "signature": ""
+                    },
+                    {
+                        "type": "tool_use",
+                        "id": "call_a",
+                        "name": "Bash",
+                        "input": {"command": "ls -la"}
+                    },
+                    {
+                        "type": "tool_use",
+                        "id": "call_b",
+                        "name": "Bash",
+                        "input": {"command": "find . -maxdepth 2"}
+                    }
+                ]
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "tool_result", "tool_use_id": "call_a", "content": "out-a"},
+                    {"type": "tool_result", "tool_use_id": "call_b", "content": "out-b"}
+                ]
+            }
+        ]
+    });
+
+    let ir = AnthropicDecoder
+        .decode_request(raw)
+        .expect("decode anthropic request");
+
+    let asst_idx = ir
+        .messages
+        .iter()
+        .position(|m| m.role == IrRole::Assistant)
+        .expect("assistant message present");
+    let asst_meta = ir.messages[asst_idx]
+        .meta
+        .as_ref()
+        .and_then(|v| v.get("reasoning_content"))
+        .and_then(|v| v.as_str());
+    assert_eq!(
+        asst_meta,
+        Some("The user wants me to list the project."),
+        "anthropic decoder must surface thinking text as meta.reasoning_content; \
+         got meta={:?}",
+        ir.messages[asst_idx].meta,
+    );
+
+    let (body, _) = OpenAIEncoder
+        .encode_request(&ir)
+        .expect("encode openai body");
+    let msgs = body
+        .get("messages")
+        .and_then(|v| v.as_array())
+        .expect("messages array");
+
+    let assistant_msgs: Vec<&serde_json::Value> = msgs
+        .iter()
+        .filter(|m| m.get("role").and_then(|v| v.as_str()) == Some("assistant"))
+        .collect();
+    assert!(
+        !assistant_msgs.is_empty(),
+        "expected at least one assistant message in encoded body, got: {:?}",
+        msgs
+    );
+
+    for (i, m) in assistant_msgs.iter().enumerate() {
+        let rc = m.get("reasoning_content").and_then(|v| v.as_str());
+        assert_eq!(
+            rc,
+            Some("The user wants me to list the project."),
+            "assistant[{}] missing or wrong reasoning_content: {:?}",
+            i,
+            m
+        );
+
+        // Thinking block must NOT also leak into content as plain text — that
+        // would duplicate reasoning across two channels.
+        if let Some(arr) = m.get("content").and_then(|v| v.as_array()) {
+            for part in arr {
+                let text = part.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                assert!(
+                    !text.contains("The user wants me to list the project."),
+                    "thinking text leaked into content array: {:?}",
+                    m
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn openai_encoder_drops_orphan_assistant_tool_calls_without_results() {
     let messages = vec![
         Message {
