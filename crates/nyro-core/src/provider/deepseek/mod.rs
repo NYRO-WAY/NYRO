@@ -27,7 +27,7 @@ const METADATA: VendorMetadata = VendorMetadata {
         en: "DeepSeek",
     },
     icon: "deepseek",
-    default_protocol: "openai",
+    default_protocol: "openai-compat",
     channels: &[ChannelDef {
         id: "default",
         label: Label {
@@ -36,11 +36,11 @@ const METADATA: VendorMetadata = VendorMetadata {
         },
         base_urls: &[
             ProtocolBaseUrl {
-                protocol: "openai",
+                protocol: "openai-compat",
                 base_url: "https://api.deepseek.com/v1",
             },
             ProtocolBaseUrl {
-                protocol: "anthropic",
+                protocol: "anthropic-msgs",
                 base_url: "https://api.deepseek.com/anthropic",
             },
         ],

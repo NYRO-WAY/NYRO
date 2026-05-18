@@ -336,41 +336,30 @@ pub fn build_providers(yaml: &YamlConfig) -> Vec<Provider> {
         .map(|(i, yp)| {
             let id = format!("yaml-provider-{i}");
             let raw_protocol = yp.resolved_protocol().unwrap_or_default().to_string();
-            // Normalize the yaml-declared protocol to canonical ProtocolId
+            // Normalize the yaml-declared protocol to canonical protocol-suite
             // form so storage rows are consistent with admin / preset writes.
             let resolved_protocol = reg
-                .resolve_alias(&raw_protocol)
-                .map(|id| id.to_string())
+                .parse_protocol(&raw_protocol)
+                .map(|protocol| protocol.as_str().to_string())
                 .unwrap_or(raw_protocol);
             let default_ep = yp
                 .endpoints
                 .iter()
                 .find(|(proto, _)| {
-                    reg.resolve_alias(proto).map(|id| id.to_string()).as_deref()
+                    reg.parse_protocol(proto)
+                        .map(|protocol| protocol.as_str().to_string())
+                        .as_deref()
                         == Some(&resolved_protocol)
                 })
                 .map(|(_, ep)| ep);
             let base_url = default_ep.map(|e| e.base_url.clone()).unwrap_or_default();
-            let endpoints_json: HashMap<String, serde_json::Value> = yp
-                .endpoints
-                .iter()
-                .map(|(proto, ep)| {
-                    let canonical = reg
-                        .resolve_alias(proto)
-                        .map(|id| id.to_string())
-                        .unwrap_or_else(|| proto.clone());
-                    (canonical, serde_json::json!({ "base_url": ep.base_url }))
-                })
-                .collect();
             let now = chrono::Utc::now().to_rfc3339();
             Provider {
                 id,
                 name: yp.name.clone(),
                 vendor: yp.vendor.clone(),
-                protocol: resolved_protocol.clone(),
+                protocol: resolved_protocol,
                 base_url,
-                default_protocol: resolved_protocol,
-                protocol_endpoints: serde_json::to_string(&endpoints_json).unwrap_or_default(),
                 preset_key: None,
                 channel: None,
                 models_source: yp.models_source.clone(),
@@ -582,9 +571,9 @@ routes:
     }
 
     #[test]
-    fn build_providers_normalizes_legacy_protocol_keys_to_canonical_ids() {
+    fn build_providers_normalizes_legacy_protocol_keys_to_canonical_suite() {
         // Legacy YAML uses short aliases (`openai`, `anthropic`). The
-        // builder must canonicalize them into `family/dialect/version`
+        // builder must canonicalize the selected protocol into protocol-suite
         // form so storage rows match what admin / preset writes produce.
         let yaml = r#"
 providers:
@@ -602,24 +591,8 @@ providers:
         let providers = build_providers(&cfg);
         assert_eq!(providers.len(), 1);
         let p = &providers[0];
-        // Canonical IDs now use `<protocol-short>/<name>/<version>` form.
-        assert_eq!(p.protocol, "openai-compat/chat-completions/v1");
-        assert_eq!(p.default_protocol, "openai-compat/chat-completions/v1");
-        let endpoints: serde_json::Value =
-            serde_json::from_str(&p.protocol_endpoints).expect("valid json");
-        let obj = endpoints.as_object().expect("object");
-        // build_providers canonicalizes via resolve_alias → ProtocolEndpoint::to_string,
-        // so keys are full canonical endpoint IDs.
-        assert!(
-            obj.contains_key("openai-compat/chat-completions/v1"),
-            "expected openai-compat/chat-completions/v1 key"
-        );
-        assert!(
-            obj.contains_key("anthropic-msgs/messages/2023-06-01"),
-            "expected anthropic-msgs/messages/2023-06-01 key"
-        );
-        assert!(!obj.contains_key("openai"), "raw alias must not appear");
-        assert!(!obj.contains_key("anthropic"), "raw alias must not appear");
+        assert_eq!(p.protocol, "openai-compat");
+        assert_eq!(p.base_url, "https://a.example/v1");
     }
 
     #[test]

@@ -21,8 +21,6 @@ fn make_provider(vendor: Option<&str>, channel: Option<&str>) -> Provider {
         vendor: vendor.map(str::to_string),
         protocol: "openai".into(),
         base_url: "https://api.example.com/v1".into(),
-        default_protocol: "openai".into(),
-        protocol_endpoints: "{}".into(),
         preset_key: None,
         channel: channel.map(str::to_string),
         models_source: None,

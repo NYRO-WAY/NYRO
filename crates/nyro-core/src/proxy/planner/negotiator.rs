@@ -5,9 +5,8 @@
 //! capability matrix (PR-07), it returns a `ProtocolPlan` or a typed error.
 //!
 //! Determinism guarantee: for identical inputs the output is always identical.
-//! The previous `HashMap.iter().find` in `ProviderProtocols::resolve_egress`
-//! was non-deterministic; the new Vec-backed `ProviderProtocols.endpoints`
-//! (also from PR-04) eliminates that.
+//! Provider declarations now describe a single protocol suite and base URL,
+//! so resolution is deterministic by construction.
 
 use crate::db::models::RouteTarget;
 use crate::error::GatewayError;
@@ -96,13 +95,12 @@ pub fn get_routing_strategy(name: &str) -> Box<dyn RoutingStrategy> {
 ///
 /// Priority order:
 /// 1. Route-level `egress_protocol` preference (if set and supported).
-/// 2. Exact ingress-protocol match in provider declarations.
-/// 3. Same-family fallback (first in Vec order).
-/// 4. Provider default.
-/// 5. Reject.
+/// 2. Same protocol suite as the provider.
+/// 3. Provider default.
+/// 4. Reject.
 ///
 /// The `provider_decl` may be `None` when the provider hasn't declared any
-/// endpoints (old-style config), in which case we fall back to the ingress
+/// protocol (old-style config), in which case we fall back to the ingress
 /// protocol and assume `base_url = ""` (the provider adapter fills it in).
 pub fn negotiate(
     ingress: ProtocolId,
@@ -125,7 +123,7 @@ pub fn negotiate(
 
     // Tier 1: route-level preference.
     if let Some(pref) = route_pref {
-        if let Some(ep) = decl.get(pref) {
+        if decl.supports(pref) {
             let mode = if pref == ingress {
                 ProtocolMode::Native
             } else {
@@ -137,7 +135,7 @@ pub fn negotiate(
                 ingress,
                 egress: pref,
                 mode,
-                base_url: ep.base_url.clone(),
+                base_url: decl.base_url.clone(),
                 needs_conversion: pref != ingress,
             });
         }
@@ -199,30 +197,15 @@ pub fn negotiate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::models::ProtocolEndpointEntry;
     use crate::protocol::ids::{
-        ANTHROPIC_MESSAGES_2023_06_01, OPENAI_CHAT_COMPLETIONS_V1, OPENAI_RESPONSES_V1,
+        ANTHROPIC_MESSAGES_2023_06_01, OPENAI_CHAT_COMPLETIONS_V1, OPENAI_EMBEDDINGS_V1,
     };
     use std::time::Duration;
 
-    fn make_decl(pairs: &[(ProtocolId, &str)]) -> ProviderProtocols {
-        let endpoints = pairs
-            .iter()
-            .map(|(id, url)| {
-                (
-                    *id,
-                    ProtocolEndpointEntry {
-                        base_url: url.to_string(),
-                    },
-                )
-            })
-            .collect();
+    fn make_decl(default: ProtocolId, base_url: &str) -> ProviderProtocols {
         ProviderProtocols {
-            default: pairs
-                .first()
-                .map(|(id, _)| *id)
-                .unwrap_or(OPENAI_CHAT_COMPLETIONS_V1),
-            endpoints,
+            default,
+            base_url: base_url.to_string(),
         }
     }
 
@@ -232,7 +215,7 @@ mod tests {
 
     #[test]
     fn native_when_ingress_exact_match() {
-        let decl = make_decl(&[(OPENAI_CHAT_COMPLETIONS_V1, "https://api.openai.com")]);
+        let decl = make_decl(OPENAI_CHAT_COMPLETIONS_V1, "https://api.openai.com");
         let mut c = ctx();
         let plan = negotiate(OPENAI_CHAT_COMPLETIONS_V1, None, Some(&decl), &mut c).unwrap();
         assert_eq!(plan.mode, ProtocolMode::Native);
@@ -241,31 +224,27 @@ mod tests {
     }
 
     #[test]
-    fn transform_when_same_family_fallback() {
-        // Provider only declares chat; ingress is responses.
-        let decl = make_decl(&[(OPENAI_CHAT_COMPLETIONS_V1, "https://api.openai.com")]);
+    fn native_when_same_protocol_family() {
+        let decl = make_decl(OPENAI_CHAT_COMPLETIONS_V1, "https://api.openai.com");
         let mut c = ctx();
-        let plan = negotiate(OPENAI_RESPONSES_V1, None, Some(&decl), &mut c).unwrap();
-        assert_eq!(plan.mode, ProtocolMode::Transform);
-        assert_eq!(plan.egress, OPENAI_CHAT_COMPLETIONS_V1);
-        assert!(plan.needs_conversion);
+        let plan = negotiate(OPENAI_EMBEDDINGS_V1, None, Some(&decl), &mut c).unwrap();
+        assert_eq!(plan.mode, ProtocolMode::Native);
+        assert_eq!(plan.egress, OPENAI_EMBEDDINGS_V1);
+        assert!(!plan.needs_conversion);
     }
 
     #[test]
-    fn route_pref_wins_over_ingress_match() {
-        let decl = make_decl(&[
-            (OPENAI_CHAT_COMPLETIONS_V1, "https://api.openai.com"),
-            (ANTHROPIC_MESSAGES_2023_06_01, "https://api.anthropic.com"),
-        ]);
+    fn route_pref_in_same_protocol_wins_over_ingress_match() {
+        let decl = make_decl(OPENAI_CHAT_COMPLETIONS_V1, "https://api.openai.com");
         let mut c = ctx();
         let plan = negotiate(
             OPENAI_CHAT_COMPLETIONS_V1,
-            Some(ANTHROPIC_MESSAGES_2023_06_01),
+            Some(OPENAI_EMBEDDINGS_V1),
             Some(&decl),
             &mut c,
         )
         .unwrap();
-        assert_eq!(plan.egress, ANTHROPIC_MESSAGES_2023_06_01);
+        assert_eq!(plan.egress, OPENAI_EMBEDDINGS_V1);
     }
 
     #[test]
@@ -277,18 +256,12 @@ mod tests {
     }
 
     #[test]
-    fn vec_order_is_deterministic() {
-        // The first same-protocol entry in Vec order is always chosen.
-        let decl = make_decl(&[
-            (OPENAI_RESPONSES_V1, "https://responses.openai.com"),
-            (OPENAI_CHAT_COMPLETIONS_V1, "https://chat.openai.com"),
-        ]);
+    fn different_protocol_falls_back_to_default() {
+        let decl = make_decl(OPENAI_CHAT_COMPLETIONS_V1, "https://api.openai.com");
         let mut c = ctx();
-        // Ingress is embeddings (OpenAICompatible — no exact match).
-        use crate::protocol::ids::OPENAI_EMBEDDINGS_V1;
-        let plan = negotiate(OPENAI_EMBEDDINGS_V1, None, Some(&decl), &mut c).unwrap();
-        // OPENAI_RESPONSES_V1 is OpenAIResponses (different protocol) — Tier 2 skips it.
-        // OPENAI_CHAT_COMPLETIONS_V1 is OpenAICompatible (same protocol as embeddings) — first match wins.
+        let plan = negotiate(ANTHROPIC_MESSAGES_2023_06_01, None, Some(&decl), &mut c).unwrap();
         assert_eq!(plan.egress, OPENAI_CHAT_COMPLETIONS_V1);
+        assert_eq!(plan.mode, ProtocolMode::Transform);
+        assert!(plan.needs_conversion);
     }
 }

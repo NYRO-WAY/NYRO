@@ -314,7 +314,7 @@ struct SqliteProviderStore {
 impl ProviderStore for SqliteProviderStore {
     async fn list(&self) -> anyhow::Result<Vec<Provider>> {
         Ok(sqlx::query_as::<_, Provider>(
-            "SELECT id, name, vendor, protocol, base_url, COALESCE(default_protocol, protocol) AS default_protocol, COALESCE(protocol_endpoints, '{}') AS protocol_endpoints, preset_key, channel, models_source, static_models, api_key, COALESCE(auth_mode, 'apikey') AS auth_mode, COALESCE(use_proxy, 0) AS use_proxy, last_test_success, last_test_at, COALESCE(is_enabled, 1) AS is_enabled, created_at, updated_at FROM providers ORDER BY created_at DESC",
+            "SELECT id, name, vendor, protocol, base_url, preset_key, channel, models_source, static_models, api_key, COALESCE(auth_mode, 'apikey') AS auth_mode, COALESCE(use_proxy, 0) AS use_proxy, last_test_success, last_test_at, COALESCE(is_enabled, 1) AS is_enabled, created_at, updated_at FROM providers ORDER BY created_at DESC",
         )
         .fetch_all(&self.pool)
         .await?)
@@ -322,7 +322,7 @@ impl ProviderStore for SqliteProviderStore {
 
     async fn get(&self, id: &str) -> anyhow::Result<Option<Provider>> {
         Ok(sqlx::query_as::<_, Provider>(
-            "SELECT id, name, vendor, protocol, base_url, COALESCE(default_protocol, protocol) AS default_protocol, COALESCE(protocol_endpoints, '{}') AS protocol_endpoints, preset_key, channel, models_source, static_models, api_key, COALESCE(auth_mode, 'apikey') AS auth_mode, COALESCE(use_proxy, 0) AS use_proxy, last_test_success, last_test_at, COALESCE(is_enabled, 1) AS is_enabled, created_at, updated_at FROM providers WHERE id = ?",
+            "SELECT id, name, vendor, protocol, base_url, preset_key, channel, models_source, static_models, api_key, COALESCE(auth_mode, 'apikey') AS auth_mode, COALESCE(use_proxy, 0) AS use_proxy, last_test_success, last_test_at, COALESCE(is_enabled, 1) AS is_enabled, created_at, updated_at FROM providers WHERE id = ?",
         )
         .bind(id)
         .fetch_optional(&self.pool)
@@ -333,24 +333,17 @@ impl ProviderStore for SqliteProviderStore {
         let id = uuid::Uuid::new_v4().to_string();
         let vendor = normalize_provider_vendor(input.vendor.as_deref());
         let models_source = input.effective_models_source().map(ToString::to_string);
-        let default_protocol = input
-            .default_protocol
-            .as_deref()
-            .unwrap_or(input.protocol.as_str());
-        let protocol_endpoints = input.protocol_endpoints.as_deref().unwrap_or("{}");
         if !is_valid_provider_auth_mode(&input.auth_mode) {
             anyhow::bail!("unsupported provider auth_mode: {}", input.auth_mode);
         }
         sqlx::query(
-            "INSERT INTO providers (id, name, vendor, protocol, base_url, default_protocol, protocol_endpoints, preset_key, channel, models_source, static_models, api_key, auth_mode, use_proxy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO providers (id, name, vendor, protocol, base_url, preset_key, channel, models_source, static_models, api_key, auth_mode, use_proxy) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&input.name)
         .bind(&vendor)
         .bind(&input.protocol)
         .bind(&input.base_url)
-        .bind(default_protocol)
-        .bind(protocol_endpoints)
         .bind(&input.preset_key)
         .bind(&input.channel)
         .bind(&models_source)
@@ -370,7 +363,7 @@ impl ProviderStore for SqliteProviderStore {
             .get(id)
             .await?
             .context("provider not found for update")?;
-        let models_source_input = input.effective_models_source().map(ToString::to_string);
+        let models_source_input = input.models_source.map(|value| value.trim().to_string());
         let name = input.name.unwrap_or(current.name);
         let vendor = if input.vendor.is_some() {
             normalize_provider_vendor(input.vendor.as_deref())
@@ -380,10 +373,6 @@ impl ProviderStore for SqliteProviderStore {
         let models_source = models_source_input.or_else(|| current.models_source.clone());
         let protocol = input.protocol.unwrap_or(current.protocol.clone());
         let base_url = input.base_url.unwrap_or(current.base_url);
-        let default_protocol = input.default_protocol.unwrap_or(current.default_protocol);
-        let protocol_endpoints = input
-            .protocol_endpoints
-            .unwrap_or(current.protocol_endpoints);
         let preset_key = input.preset_key.or(current.preset_key);
         let channel = input.channel.or(current.channel);
         let static_models = input.static_models.or(current.static_models);
@@ -396,14 +385,12 @@ impl ProviderStore for SqliteProviderStore {
         let is_enabled = input.is_enabled.unwrap_or(current.is_enabled);
 
         sqlx::query(
-            "UPDATE providers SET name=?, vendor=?, protocol=?, base_url=?, default_protocol=?, protocol_endpoints=?, preset_key=?, channel=?, models_source=?, static_models=?, api_key=?, auth_mode=?, use_proxy=?, is_enabled=?, updated_at=datetime('now') WHERE id=?",
+            "UPDATE providers SET name=?, vendor=?, protocol=?, base_url=?, preset_key=?, channel=?, models_source=?, static_models=?, api_key=?, auth_mode=?, use_proxy=?, is_enabled=?, updated_at=datetime('now') WHERE id=?",
         )
         .bind(name)
         .bind(vendor)
         .bind(&protocol)
         .bind(base_url)
-        .bind(default_protocol)
-        .bind(protocol_endpoints)
         .bind(preset_key)
         .bind(channel)
         .bind(&models_source)

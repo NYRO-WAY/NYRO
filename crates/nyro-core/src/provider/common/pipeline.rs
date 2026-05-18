@@ -330,8 +330,6 @@ mod tests {
             vendor: Some("fake-test".into()),
             protocol: "openai".into(),
             base_url: "https://upstream.local".into(),
-            default_protocol: "openai".into(),
-            protocol_endpoints: String::new(),
             preset_key: Some("fake-test".into()),
             channel: Some("default".into()),
             models_source: None,

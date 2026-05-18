@@ -21,7 +21,6 @@ use std::path::PathBuf;
 use async_trait::async_trait;
 use nyro_core::Gateway;
 use nyro_core::config::GatewayConfig;
-use nyro_core::db::models::ProtocolEndpointEntry;
 use nyro_core::db::models::Provider;
 use nyro_core::error::GatewayError;
 use nyro_core::protocol::ProviderProtocols;
@@ -50,51 +49,10 @@ async fn build_test_gateway() -> Gateway {
     gw
 }
 
-// ── Helper: four-protocol provider declaration ────────────────────────────────
-
-fn all_four_decl() -> ProviderProtocols {
-    let endpoints = vec![
-        (
-            OPENAI_CHAT_COMPLETIONS_V1,
-            ProtocolEndpointEntry {
-                base_url: "https://chat.example.com".into(),
-            },
-        ),
-        (
-            OPENAI_RESPONSES_V1,
-            ProtocolEndpointEntry {
-                base_url: "https://responses.example.com".into(),
-            },
-        ),
-        (
-            ANTHROPIC_MESSAGES_2023_06_01,
-            ProtocolEndpointEntry {
-                base_url: "https://messages.example.com".into(),
-            },
-        ),
-        (
-            GOOGLE_GENERATE_CONTENT_V1BETA,
-            ProtocolEndpointEntry {
-                base_url: "https://generate.example.com".into(),
-            },
-        ),
-    ];
-    ProviderProtocols {
-        default: OPENAI_CHAT_COMPLETIONS_V1,
-        endpoints,
-    }
-}
-
 fn single_decl(proto: ProtocolId, url: &str) -> ProviderProtocols {
-    let endpoints = vec![(
-        proto,
-        ProtocolEndpointEntry {
-            base_url: url.to_string(),
-        },
-    )];
     ProviderProtocols {
         default: proto,
-        endpoints,
+        base_url: url.to_string(),
     }
 }
 
@@ -159,8 +117,6 @@ fn fake_provider(api_key: &str) -> Provider {
         vendor: Some("test".into()),
         protocol: "openai".into(),
         base_url: "https://upstream.local".into(),
-        default_protocol: "openai".into(),
-        protocol_endpoints: String::new(),
         preset_key: None,
         channel: Some("default".into()),
         models_source: None,
@@ -490,24 +446,23 @@ fn vendor_declared_mutations_defaults_are_conservative() {
     );
 }
 
-// ── negotiate() with all-four provider: each ingress selects exact match ──────
+// ── negotiate() with one provider per protocol ────────────────────────────────
 
 #[test]
-fn all_four_provider_each_ingress_selects_own_native() {
-    let decl = all_four_decl();
-
+fn each_protocol_provider_selects_own_native() {
     for proto in [
         OPENAI_CHAT_COMPLETIONS_V1,
         OPENAI_RESPONSES_V1,
         ANTHROPIC_MESSAGES_2023_06_01,
         GOOGLE_GENERATE_CONTENT_V1BETA,
     ] {
+        let decl = single_decl(proto, "https://upstream.example.com");
         let mut ctx = req_ctx(proto);
         let plan = negotiate(proto, None, Some(&decl), &mut ctx).unwrap();
         assert_eq!(
             plan.mode,
             ProtocolMode::Native,
-            "provider supporting all 4: ingress {} must get Native",
+            "provider for {} must get Native",
             proto
         );
         assert_eq!(plan.egress, proto);

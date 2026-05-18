@@ -4,8 +4,6 @@ export interface Provider {
   vendor?: string | null;
   protocol: string;
   base_url: string;
-  default_protocol: string;
-  protocol_endpoints: string;
   api_key?: string;
   use_proxy: boolean;
   auth_mode?: "apikey" | "oauth";
@@ -206,8 +204,6 @@ export interface CreateProvider {
   vendor?: string;
   protocol: string;
   base_url: string;
-  default_protocol?: string;
-  protocol_endpoints?: string;
   use_proxy?: boolean;
   auth_mode?: "apikey" | "oauth";
   preset_key?: string;
@@ -222,8 +218,6 @@ export interface UpdateProvider {
   vendor?: string;
   protocol?: string;
   base_url?: string;
-  default_protocol?: string;
-  protocol_endpoints?: string;
   use_proxy?: boolean;
   auth_mode?: "apikey" | "oauth";
   preset_key?: string;
@@ -347,8 +341,6 @@ export interface ExportProvider {
   vendor?: string | null;
   protocol: string;
   base_url: string;
-  default_protocol?: string;
-  protocol_endpoints?: string;
   use_proxy: boolean;
   preset_key?: string | null;
   channel?: string | null;

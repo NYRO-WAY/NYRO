@@ -38,7 +38,7 @@ pub mod traits;
 
 use reqwest::header::HeaderMap;
 
-use crate::db::models::{ProtocolEndpointEntry, Provider};
+use crate::db::models::Provider;
 use crate::protocol::ids::{OPENAI_CHAT_COMPLETIONS_V1, ProtocolEndpoint};
 
 // ── Client → Gateway ──
@@ -109,19 +109,13 @@ impl SseEvent {
     }
 }
 
-// ── Provider multi-protocol negotiation ──
+// ── Provider protocol negotiation ──
 
 /// Declared protocol capabilities of a single provider, built from the DB row.
-///
-/// **`endpoints` is a `Vec` (ordered, not `HashMap`) so that fallback
-/// resolution is deterministic.**  The order matches the JSON key order of the
-/// stored `protocol_endpoints` column after normalization; later entries have
-/// lower priority.
 #[derive(Debug, Clone)]
 pub struct ProviderProtocols {
     pub default: ProtocolEndpoint,
-    /// Ordered list of supported endpoints.  First match wins in fallback logic.
-    pub endpoints: Vec<(ProtocolEndpoint, ProtocolEndpointEntry)>,
+    pub base_url: String,
 }
 
 #[derive(Debug, Clone)]
@@ -134,119 +128,48 @@ pub struct ResolvedEgress {
 impl ProviderProtocols {
     /// Best-effort string → [`ProtocolEndpoint`] resolver.
     pub fn parse_protocol_key(s: &str) -> Option<ProtocolEndpoint> {
-        registry::ProtocolRegistry::global().resolve_alias(s)
+        let reg = registry::ProtocolRegistry::global();
+        reg.resolve_alias(s).or_else(|| {
+            let protocol = reg.parse_protocol(s)?;
+            reg.list_by_protocol(protocol)
+                .first()
+                .map(|handler| handler.id())
+        })
     }
 
     /// Build from a provider DB row.
-    ///
-    /// Handles both old endpoint-keyed format and new protocol-keyed format:
-    /// - **Old** `{"openai-compat/chat-completions/v1": {"base_url": "..."}}` —
-    ///   each key resolves directly to a `ProtocolEndpoint`.
-    /// - **New** `{"openai-compat": {"base_url": "..."}}` —
-    ///   key resolves to a `Protocol`; expands to all its endpoints.
-    ///
-    /// The `endpoints` Vec preserves the iteration order of the JSON map
-    /// (serde_json preserves insertion order).
     pub fn from_provider(provider: &Provider) -> Self {
-        let reg = registry::ProtocolRegistry::global();
-        let raw_map = provider.parsed_protocol_endpoints();
-        let mut seen = std::collections::HashSet::new();
-        let mut endpoints: Vec<(ProtocolEndpoint, ProtocolEndpointEntry)> = Vec::new();
-
-        for (key, entry) in &raw_map {
-            // First try protocol-keyed format (new)
-            if let Some(protocol) = reg.parse_protocol(key) {
-                for handler in reg.list_by_protocol(protocol) {
-                    let id = handler.id();
-                    if seen.insert(id) {
-                        endpoints.push((
-                            id,
-                            ProtocolEndpointEntry {
-                                base_url: entry.base_url.clone(),
-                            },
-                        ));
-                    }
-                }
-                continue;
-            }
-
-            // Fall back to endpoint-keyed format (old / normalized)
-            if let Some(id) = Self::parse_protocol_key(key)
-                && seen.insert(id)
-            {
-                endpoints.push((
-                    id,
-                    ProtocolEndpointEntry {
-                        base_url: entry.base_url.clone(),
-                    },
-                ));
-            }
-        }
-
-        let declared_default = Self::parse_protocol_key(provider.effective_default_protocol());
-        let default = declared_default
-            .filter(|id| endpoints.iter().any(|(eid, _)| eid == id))
-            .or_else(|| endpoints.first().map(|(id, _)| *id))
-            .or(declared_default)
+        let default = Self::parse_protocol_key(provider.protocol.trim())
             .unwrap_or(OPENAI_CHAT_COMPLETIONS_V1);
 
-        Self { default, endpoints }
+        Self {
+            default,
+            base_url: provider.base_url.trim().to_string(),
+        }
     }
 
     /// Returns `true` if the provider declares support for `protocol`.
     pub fn supports(&self, protocol: ProtocolEndpoint) -> bool {
-        self.endpoints.iter().any(|(id, _)| *id == protocol)
+        self.default.protocol == protocol.protocol
     }
 
-    /// Look up the endpoint entry for a specific protocol endpoint.
-    pub fn get(&self, protocol: ProtocolEndpoint) -> Option<&ProtocolEndpointEntry> {
-        self.endpoints
-            .iter()
-            .find_map(|(id, ep)| if *id == protocol { Some(ep) } else { None })
-    }
-
-    /// Deterministic three-tier egress resolution:
+    /// Deterministic two-tier egress resolution:
     ///
-    /// 1. **Exact match** — ingress endpoint declared by the provider.
-    /// 2. **Same-protocol, first declared** — iterates `endpoints` in Vec order,
-    ///    which is JSON insertion order after normalization.  Deterministic.
-    /// 3. **Provider default** — last resort.
+    /// 1. **Same protocol suite** — use the ingress endpoint and provider base URL.
+    /// 2. **Provider default** — last resort with conversion.
     pub fn resolve_egress(&self, ingress: ProtocolEndpoint) -> ResolvedEgress {
-        // Tier 1: exact match.
-        if let Some(ep) = self.get(ingress) {
+        if self.supports(ingress) {
             return ResolvedEgress {
                 protocol: ingress,
-                base_url: ep.base_url.clone(),
+                base_url: self.base_url.clone(),
                 needs_conversion: false,
             };
         }
 
-        // Tier 2: same protocol suite, first in declared order.
-        if let Some((id, ep)) = self
-            .endpoints
-            .iter()
-            .find(|(id, _)| id.protocol == ingress.protocol)
-        {
-            return ResolvedEgress {
-                protocol: *id,
-                base_url: ep.base_url.clone(),
-                needs_conversion: true,
-            };
-        }
-
-        // Tier 3: provider default.
-        if let Some(ep) = self.get(self.default) {
-            ResolvedEgress {
-                protocol: self.default,
-                base_url: ep.base_url.clone(),
-                needs_conversion: true,
-            }
-        } else {
-            ResolvedEgress {
-                protocol: self.default,
-                base_url: String::new(),
-                needs_conversion: true,
-            }
+        ResolvedEgress {
+            protocol: self.default,
+            base_url: self.base_url.clone(),
+            needs_conversion: true,
         }
     }
 }

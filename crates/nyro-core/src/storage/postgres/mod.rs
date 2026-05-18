@@ -388,24 +388,17 @@ impl ProviderStore for PostgresProviderStore {
         let id = uuid::Uuid::new_v4().to_string();
         let vendor = normalize_provider_vendor(input.vendor.as_deref());
         let models_source = input.effective_models_source().map(ToString::to_string);
-        let default_protocol = input
-            .default_protocol
-            .as_deref()
-            .unwrap_or(input.protocol.as_str());
-        let protocol_endpoints = input.protocol_endpoints.as_deref().unwrap_or("{}");
         if !is_valid_provider_auth_mode(&input.auth_mode) {
             anyhow::bail!("unsupported provider auth_mode: {}", input.auth_mode);
         }
         sqlx::query(
-            "INSERT INTO providers (id, name, vendor, protocol, base_url, default_protocol, protocol_endpoints, preset_key, channel, models_source, static_models, api_key, auth_mode, use_proxy) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)",
+            "INSERT INTO providers (id, name, vendor, protocol, base_url, preset_key, channel, models_source, static_models, api_key, auth_mode, use_proxy) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
         )
         .bind(&id)
         .bind(input.name.trim())
         .bind(vendor)
         .bind(input.protocol.trim())
         .bind(input.base_url.trim())
-        .bind(default_protocol)
-        .bind(protocol_endpoints)
         .bind(input.preset_key)
         .bind(input.channel)
         .bind(models_source)
@@ -425,7 +418,7 @@ impl ProviderStore for PostgresProviderStore {
             .get(id)
             .await?
             .context("provider not found for update")?;
-        let models_source_input = input.effective_models_source().map(ToString::to_string);
+        let models_source_input = input.models_source.map(|value| value.trim().to_string());
         let name = input.name.unwrap_or(current.name);
         let vendor = if input.vendor.is_some() {
             normalize_provider_vendor(input.vendor.as_deref())
@@ -435,10 +428,6 @@ impl ProviderStore for PostgresProviderStore {
         let models_source = models_source_input.or_else(|| current.models_source.clone());
         let protocol = input.protocol.unwrap_or(current.protocol.clone());
         let base_url = input.base_url.unwrap_or(current.base_url);
-        let default_protocol = input.default_protocol.unwrap_or(current.default_protocol);
-        let protocol_endpoints = input
-            .protocol_endpoints
-            .unwrap_or(current.protocol_endpoints);
         let preset_key = input.preset_key.or(current.preset_key);
         let channel = input.channel.or(current.channel);
         let static_models = input.static_models.or(current.static_models);
@@ -451,14 +440,12 @@ impl ProviderStore for PostgresProviderStore {
         let is_enabled = input.is_enabled.unwrap_or(current.is_enabled);
 
         sqlx::query(
-            "UPDATE providers SET name=$1, vendor=$2, protocol=$3, base_url=$4, default_protocol=$5, protocol_endpoints=$6, preset_key=$7, channel=$8, models_source=$9, static_models=$10, api_key=$11, auth_mode=$12, use_proxy=$13, is_enabled=$14, updated_at=CURRENT_TIMESTAMP WHERE id=$15",
+            "UPDATE providers SET name=$1, vendor=$2, protocol=$3, base_url=$4, preset_key=$5, channel=$6, models_source=$7, static_models=$8, api_key=$9, auth_mode=$10, use_proxy=$11, is_enabled=$12, updated_at=CURRENT_TIMESTAMP WHERE id=$13",
         )
         .bind(name.trim())
         .bind(vendor)
         .bind(protocol.trim())
         .bind(base_url.trim())
-        .bind(default_protocol)
-        .bind(protocol_endpoints)
         .bind(preset_key)
         .bind(channel)
         .bind(models_source)
@@ -1301,22 +1288,7 @@ END $$;"#,
         )
         .execute(self.adapter.pool())
         .await?;
-        sqlx::query("ALTER TABLE providers ADD COLUMN IF NOT EXISTS default_protocol TEXT NOT NULL DEFAULT ''")
-            .execute(self.adapter.pool())
-            .await?;
-        sqlx::query("ALTER TABLE providers ADD COLUMN IF NOT EXISTS protocol_endpoints TEXT NOT NULL DEFAULT '{}'")
-            .execute(self.adapter.pool())
-            .await?;
-        sqlx::query(
-            "UPDATE providers SET default_protocol = protocol WHERE (default_protocol IS NULL OR btrim(default_protocol) = '') AND protocol IS NOT NULL AND btrim(protocol) != ''",
-        )
-        .execute(self.adapter.pool())
-        .await?;
-        sqlx::query(
-            "UPDATE providers SET protocol_endpoints = json_build_object(btrim(protocol), json_build_object('base_url', btrim(base_url)))::text WHERE (protocol_endpoints IS NULL OR btrim(protocol_endpoints) = '' OR btrim(protocol_endpoints) = '{}') AND protocol IS NOT NULL AND btrim(protocol) != '' AND base_url IS NOT NULL AND btrim(base_url) != ''",
-        )
-        .execute(self.adapter.pool())
-        .await?;
+        migrate_collapse_provider_protocol_columns_pg(self.adapter.pool()).await?;
         sqlx::query(
             r#"
             INSERT INTO route_targets (id, route_id, provider_id, model, weight, priority)
@@ -1420,51 +1392,167 @@ END $$;"#,
     }
 }
 
+/// Collapse removed provider protocol columns into `protocol` / `base_url`,
+/// then drop `default_protocol` and `protocol_endpoints`.
+async fn migrate_collapse_provider_protocol_columns_pg(
+    pool: &Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let has_default_protocol = pg_column_exists(pool, "providers", "default_protocol").await?;
+    let has_protocol_endpoints = pg_column_exists(pool, "providers", "protocol_endpoints").await?;
+    if !has_default_protocol && !has_protocol_endpoints {
+        return Ok(());
+    }
+
+    if has_default_protocol {
+        sqlx::query(
+            "UPDATE providers \
+             SET protocol = btrim(default_protocol) \
+             WHERE default_protocol IS NOT NULL AND btrim(default_protocol) != ''",
+        )
+        .execute(pool)
+        .await?;
+    }
+
+    if has_protocol_endpoints {
+        let rows: Vec<(String, String, String, Option<String>)> =
+            sqlx::query_as("SELECT id, protocol, base_url, protocol_endpoints FROM providers")
+                .fetch_all(pool)
+                .await?;
+        for (id, protocol, base_url, raw_endpoints) in rows {
+            if !base_url.trim().is_empty() {
+                continue;
+            }
+            if let Some(next_base_url) =
+                base_url_from_protocol_endpoints(raw_endpoints.as_deref().unwrap_or(""), &protocol)
+            {
+                sqlx::query("UPDATE providers SET base_url = $1 WHERE id = $2")
+                    .bind(next_base_url)
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+            }
+        }
+    }
+
+    sqlx::query(
+        "ALTER TABLE providers \
+         DROP COLUMN IF EXISTS protocol_endpoints, \
+         DROP COLUMN IF EXISTS default_protocol",
+    )
+    .execute(pool)
+    .await?;
+
+    Ok(())
+}
+
+async fn pg_column_exists(
+    pool: &Pool<Postgres>,
+    table_name: &str,
+    column_name: &str,
+) -> anyhow::Result<bool> {
+    Ok(sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS (
+            SELECT 1
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = $1
+              AND column_name = $2
+        )",
+    )
+    .bind(table_name)
+    .bind(column_name)
+    .fetch_one(pool)
+    .await?)
+}
+
+fn base_url_from_protocol_endpoints(raw: &str, protocol: &str) -> Option<String> {
+    let reg = crate::protocol::registry::ProtocolRegistry::global();
+    let target = reg.parse_protocol(protocol)?;
+    let value = serde_json::from_str::<serde_json::Value>(raw.trim()).ok()?;
+    let obj = value.as_object()?;
+    let mut skipped = 0usize;
+    let mut matched = None;
+    for (key, entry) in obj {
+        let Some(entry_protocol) = reg.parse_protocol(key) else {
+            skipped += 1;
+            continue;
+        };
+        if entry_protocol == target {
+            matched = entry
+                .as_object()
+                .and_then(|object| object.get("base_url"))
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string);
+            if matched.is_some() {
+                break;
+            }
+        } else {
+            skipped += 1;
+        }
+    }
+    if skipped > 0 {
+        tracing::warn!(
+            protocol = protocol,
+            skipped_entries = skipped,
+            "dropping non-selected protocol_endpoints entries during provider protocol collapse (postgres)"
+        );
+    }
+    matched
+}
+
 /// Postgres counterpart of `crate::db::normalize_provider_protocols` —
-/// rewrites legacy / alias protocol identifiers in `providers` rows to
-/// canonical [`ProtocolId`](crate::protocol::ids::ProtocolId) strings.
-///
-/// Touches `providers.default_protocol` (single value) and
-/// `providers.protocol_endpoints` (JSON object keys). Idempotent: a row
-/// with already-canonical values is skipped without an UPDATE.
+/// rewrites legacy / alias protocol identifiers in `providers.protocol` to
+/// canonical protocol-suite strings.
 async fn normalize_provider_protocols_pg(pool: &Pool<Postgres>) -> anyhow::Result<()> {
     use crate::protocol::registry::ProtocolRegistry;
 
     let reg = ProtocolRegistry::global();
-    let rows: Vec<(String, Option<String>, Option<String>)> =
-        sqlx::query_as("SELECT id, default_protocol, protocol_endpoints FROM providers")
-            .fetch_all(pool)
-            .await?;
+    let rows: Vec<(String, String)> = sqlx::query_as("SELECT id, protocol FROM providers")
+        .fetch_all(pool)
+        .await?;
 
-    for (id, raw_default, raw_endpoints) in rows {
-        let raw_default = raw_default.unwrap_or_default();
-        let raw_endpoints = raw_endpoints.unwrap_or_default();
-        let new_default = reg.normalize_string(&raw_default);
-        let new_endpoints = reg.normalize_endpoints_json(&raw_endpoints);
-
-        let default_changed = new_default != raw_default;
-        let endpoints_changed = new_endpoints != raw_endpoints;
-        if !default_changed && !endpoints_changed {
+    for (id, raw_protocol) in rows {
+        let new_protocol = normalize_provider_protocol_value(reg, &raw_protocol);
+        if new_protocol == raw_protocol {
             continue;
         }
 
         tracing::info!(
             provider_id = %id,
-            default_changed,
-            endpoints_changed,
-            "normalizing provider protocol identifiers to canonical ProtocolId form (postgres)"
+            old_protocol = %raw_protocol,
+            new_protocol = %new_protocol,
+            "normalizing provider protocol identifier (postgres)"
         );
 
-        sqlx::query(
-            "UPDATE providers SET default_protocol = $1, protocol_endpoints = $2 WHERE id = $3",
-        )
-        .bind(&new_default)
-        .bind(&new_endpoints)
-        .bind(&id)
-        .execute(pool)
-        .await?;
+        sqlx::query("UPDATE providers SET protocol = $1 WHERE id = $2")
+            .bind(&new_protocol)
+            .bind(&id)
+            .execute(pool)
+            .await?;
     }
     Ok(())
+}
+
+fn normalize_provider_protocol_value(
+    reg: &crate::protocol::registry::ProtocolRegistry,
+    raw: &str,
+) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    match reg.parse_protocol(trimmed) {
+        Some(protocol) => protocol.as_str().to_string(),
+        None => {
+            tracing::warn!(
+                value = trimmed,
+                "leaving unrecognized provider protocol identifier unchanged (postgres)"
+            );
+            trimmed.to_string()
+        }
+    }
 }
 
 async fn ensure_semantic_cache_vectors_table(
@@ -1547,7 +1635,7 @@ fn is_pg_permission_error(error: &anyhow::Error) -> bool {
 
 fn provider_select(suffix: Option<&str>) -> String {
     let mut sql = String::from(
-        "SELECT id, name, vendor, protocol, base_url, COALESCE(default_protocol, protocol) AS default_protocol, COALESCE(protocol_endpoints, '{}') AS protocol_endpoints, preset_key, channel, models_source, static_models, api_key, COALESCE(auth_mode, 'apikey') AS auth_mode, COALESCE(use_proxy, FALSE) AS use_proxy, last_test_success, to_char(last_test_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS last_test_at, COALESCE(is_enabled, TRUE) AS is_enabled, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS updated_at FROM providers",
+        "SELECT id, name, vendor, protocol, base_url, preset_key, channel, models_source, static_models, api_key, COALESCE(auth_mode, 'apikey') AS auth_mode, COALESCE(use_proxy, FALSE) AS use_proxy, last_test_success, to_char(last_test_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS last_test_at, COALESCE(is_enabled, TRUE) AS is_enabled, to_char(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS created_at, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS') AS updated_at FROM providers",
     );
     if let Some(suffix) = suffix {
         sql.push(' ');

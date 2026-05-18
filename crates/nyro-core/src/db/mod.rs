@@ -57,9 +57,7 @@ pub async fn migrate(pool: &SqlitePool, vector_dimensions: usize) -> anyhow::Res
     ensure_provider_column(pool, "last_test_success", "INTEGER").await?;
     ensure_provider_column(pool, "last_test_at", "TEXT").await?;
     ensure_provider_column(pool, "use_proxy", "INTEGER DEFAULT 0").await?;
-    ensure_provider_column(pool, "default_protocol", "TEXT NOT NULL DEFAULT ''").await?;
-    ensure_provider_column(pool, "protocol_endpoints", "TEXT NOT NULL DEFAULT '{}'").await?;
-    backfill_provider_protocol_endpoints(pool).await?;
+    migrate_collapse_provider_protocol_columns(pool).await?;
     ensure_route_column(pool, "virtual_model", "TEXT").await?;
     ensure_route_column(pool, "strategy", "TEXT DEFAULT 'weighted'").await?;
     ensure_route_column(pool, "access_control", "INTEGER DEFAULT 0").await?;
@@ -110,58 +108,54 @@ pub async fn migrate(pool: &SqlitePool, vector_dimensions: usize) -> anyhow::Res
     Ok(())
 }
 
-/// Rewrites legacy / alias protocol identifiers in `providers` rows into
-/// canonical [`ProtocolId`](crate::protocol::ids::ProtocolId) strings.
-///
-/// Two columns are touched:
-///
-/// - `providers.default_protocol` — single value, e.g. `"openai"` →
-///   `"openai/chat/v1"`.
-/// - `providers.protocol_endpoints` — JSON object, e.g.
-///   `{ "openai": {...}, "openai_responses": {...} }` →
-///   `{ "openai/chat/v1": {...}, "openai/responses/v1": {...} }`.
-///
-/// Idempotent: re-running on already-normalized rows is a no-op (the
-/// row signature is unchanged so no UPDATE is issued). Unknown keys are
-/// preserved verbatim with a `tracing::warn` so a foreign yaml import
-/// can still be inspected manually.
+/// Rewrites legacy / alias protocol identifiers in `providers.protocol` into
+/// canonical protocol-suite strings (for example, `openai` -> `openai-compat`).
 async fn normalize_provider_protocols(pool: &SqlitePool) -> anyhow::Result<()> {
     let reg = ProtocolRegistry::global();
-    let rows = sqlx::query("SELECT id, default_protocol, protocol_endpoints FROM providers")
+    let rows = sqlx::query("SELECT id, protocol FROM providers")
         .fetch_all(pool)
         .await?;
 
     for row in rows {
         let id: String = row.try_get("id")?;
-        let raw_default: String = row.try_get("default_protocol").unwrap_or_default();
-        let raw_endpoints: String = row.try_get("protocol_endpoints").unwrap_or_default();
+        let raw_protocol: String = row.try_get("protocol").unwrap_or_default();
+        let new_protocol = normalize_provider_protocol_value(reg, &raw_protocol);
 
-        let new_default = reg.normalize_string(&raw_default);
-        let new_endpoints = reg.normalize_endpoints_json(&raw_endpoints);
-
-        let default_changed = new_default != raw_default;
-        let endpoints_changed = new_endpoints != raw_endpoints;
-        if !default_changed && !endpoints_changed {
+        if new_protocol == raw_protocol {
             continue;
         }
 
         tracing::info!(
             provider_id = %id,
-            default_changed,
-            endpoints_changed,
-            "normalizing provider protocol identifiers to canonical ProtocolId form"
+            old_protocol = %raw_protocol,
+            new_protocol = %new_protocol,
+            "normalizing provider protocol identifier"
         );
 
-        sqlx::query(
-            "UPDATE providers SET default_protocol = ?1, protocol_endpoints = ?2 WHERE id = ?3",
-        )
-        .bind(&new_default)
-        .bind(&new_endpoints)
-        .bind(&id)
-        .execute(pool)
-        .await?;
+        sqlx::query("UPDATE providers SET protocol = ?1 WHERE id = ?2")
+            .bind(&new_protocol)
+            .bind(&id)
+            .execute(pool)
+            .await?;
     }
     Ok(())
+}
+
+fn normalize_provider_protocol_value(reg: &ProtocolRegistry, raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    match reg.parse_protocol(trimmed) {
+        Some(protocol) => protocol.as_str().to_string(),
+        None => {
+            tracing::warn!(
+                value = trimmed,
+                "leaving unrecognized provider protocol identifier unchanged"
+            );
+            trimmed.to_string()
+        }
+    }
 }
 
 async fn backfill_provider_vendor(pool: &SqlitePool) -> anyhow::Result<()> {
@@ -215,31 +209,91 @@ async fn migrate_vendor_renames(pool: &SqlitePool) -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn backfill_provider_protocol_endpoints(pool: &SqlitePool) -> anyhow::Result<()> {
-    if column_exists(pool, "providers", "default_protocol").await?
-        && column_exists(pool, "providers", "protocol_endpoints").await?
-        && column_exists(pool, "providers", "protocol").await?
-    {
-        sqlx::query(
-            "UPDATE providers \
-             SET default_protocol = protocol \
-             WHERE (default_protocol IS NULL OR trim(default_protocol) = '') \
-               AND protocol IS NOT NULL AND trim(protocol) != ''",
-        )
-        .execute(pool)
-        .await?;
+async fn migrate_collapse_provider_protocol_columns(pool: &SqlitePool) -> anyhow::Result<()> {
+    let has_default_protocol = column_exists(pool, "providers", "default_protocol").await?;
+    let has_protocol_endpoints = column_exists(pool, "providers", "protocol_endpoints").await?;
+    if !has_default_protocol && !has_protocol_endpoints {
+        return Ok(());
+    }
 
+    if has_default_protocol {
         sqlx::query(
             "UPDATE providers \
-             SET protocol_endpoints = json_object(trim(protocol), json_object('base_url', trim(base_url))) \
-             WHERE (protocol_endpoints IS NULL OR trim(protocol_endpoints) = '' OR trim(protocol_endpoints) = '{}') \
-               AND protocol IS NOT NULL AND trim(protocol) != '' \
-               AND base_url IS NOT NULL AND trim(base_url) != ''",
+             SET protocol = trim(default_protocol) \
+             WHERE default_protocol IS NOT NULL AND trim(default_protocol) != ''",
         )
         .execute(pool)
         .await?;
     }
+
+    if has_protocol_endpoints {
+        let rows = sqlx::query("SELECT id, protocol, base_url, protocol_endpoints FROM providers")
+            .fetch_all(pool)
+            .await?;
+        for row in rows {
+            let id: String = row.try_get("id")?;
+            let protocol: String = row.try_get("protocol").unwrap_or_default();
+            let base_url: String = row.try_get("base_url").unwrap_or_default();
+            if !base_url.trim().is_empty() {
+                continue;
+            }
+            let raw_endpoints: String = row.try_get("protocol_endpoints").unwrap_or_default();
+            if let Some(next_base_url) = base_url_from_protocol_endpoints(&raw_endpoints, &protocol)
+            {
+                sqlx::query("UPDATE providers SET base_url = ?1 WHERE id = ?2")
+                    .bind(next_base_url)
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+            }
+        }
+    }
+
+    if has_protocol_endpoints {
+        drop_provider_column_if_exists(pool, "protocol_endpoints").await?;
+    }
+    if has_default_protocol {
+        drop_provider_column_if_exists(pool, "default_protocol").await?;
+    }
+
     Ok(())
+}
+
+fn base_url_from_protocol_endpoints(raw: &str, protocol: &str) -> Option<String> {
+    let reg = ProtocolRegistry::global();
+    let target = reg.parse_protocol(protocol)?;
+    let value = serde_json::from_str::<serde_json::Value>(raw.trim()).ok()?;
+    let obj = value.as_object()?;
+    let mut skipped = 0usize;
+    let mut matched = None;
+    for (key, entry) in obj {
+        let Some(entry_protocol) = reg.parse_protocol(key) else {
+            skipped += 1;
+            continue;
+        };
+        if entry_protocol == target {
+            matched = entry
+                .as_object()
+                .and_then(|object| object.get("base_url"))
+                .and_then(|value| value.as_str())
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string);
+            if matched.is_some() {
+                break;
+            }
+        } else {
+            skipped += 1;
+        }
+    }
+    if skipped > 0 {
+        tracing::warn!(
+            protocol = protocol,
+            skipped_entries = skipped,
+            "dropping non-selected protocol_endpoints entries during provider protocol collapse"
+        );
+    }
+    matched
 }
 
 async fn ensure_provider_column(

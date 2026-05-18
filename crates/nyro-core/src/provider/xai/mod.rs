@@ -27,7 +27,7 @@ const METADATA: VendorMetadata = VendorMetadata {
         en: "xAI",
     },
     icon: "xai",
-    default_protocol: "openai",
+    default_protocol: "openai-compat",
     channels: &[ChannelDef {
         id: "default",
         label: Label {
@@ -35,7 +35,7 @@ const METADATA: VendorMetadata = VendorMetadata {
             en: "Default",
         },
         base_urls: &[ProtocolBaseUrl {
-            protocol: "openai",
+            protocol: "openai-compat",
             base_url: "https://api.x.ai/v1",
         }],
         api_key: None,

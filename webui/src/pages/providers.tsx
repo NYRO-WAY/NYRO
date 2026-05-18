@@ -87,114 +87,22 @@ const protocolOptions = [
   { label: "Google Generative AI", value: "google-genai" },
 ] as const satisfies ReadonlyArray<{ label: string; value: ProviderProtocol }>;
 
-type ProtocolEndpointRow = {
-  protocol: ProviderProtocol;
-  base_url: string;
-};
-
-function parseProtocolEndpoints(
-  raw: string | undefined | null,
-): Partial<Record<ProviderProtocol, string>> {
-  if (!raw?.trim()) return {};
-  try {
-    const parsed = JSON.parse(raw) as Record<string, { base_url?: string }>;
-    const result: Partial<Record<ProviderProtocol, string>> = {};
-    for (const [key, entry] of Object.entries(parsed)) {
-      const baseUrl = entry?.base_url?.trim();
-      if (!baseUrl) continue;
-      const protocol = resolveProtocol(key) as ProviderProtocol | null;
-      if (protocol && !result[protocol]) result[protocol] = baseUrl;
-    }
-    return result;
-  } catch {
-    return {};
-  }
-}
-
-function endpointRowsFromMap(
-  map: Partial<Record<ProviderProtocol, string>>,
-  fallbackProtocol: ProviderProtocol,
-  fallbackBaseUrl: string,
-): ProtocolEndpointRow[] {
-  const rows = protocolOptions
-    .map((option) => ({
-      protocol: option.value,
-      base_url: map[option.value]?.trim() ?? "",
-    }))
-    .filter((row) => row.base_url);
-  if (rows.length) return rows;
-  return [{ protocol: fallbackProtocol, base_url: fallbackBaseUrl.trim() }];
-}
-
-function endpointRowsFromProvider(provider: Provider): ProtocolEndpointRow[] {
-  const fallbackProtocol = (resolveProtocol(provider.default_protocol || provider.protocol || "openai") ?? "openai-compat") as ProviderProtocol;
-  const fallbackBaseUrl = provider.base_url || protocolUrl(fallbackProtocol);
-  const map = parseProtocolEndpoints(provider.protocol_endpoints);
-  return endpointRowsFromMap(map, fallbackProtocol, fallbackBaseUrl);
-}
-
-function endpointRowsFromPreset(
-  preset: ProviderPreset,
-  channelId: string,
-  fallbackProtocol: ProviderProtocol,
-): ProtocolEndpointRow[] {
-  const channel = presetChannels(preset).find((item) => item.id === channelId) ?? presetChannels(preset)[0];
-  const map: Partial<Record<ProviderProtocol, string>> = {};
-  for (const [key, raw] of Object.entries(channel?.baseUrls ?? {})) {
-    const protocol = resolveProtocol(key) as ProviderProtocol | null;
-    if (protocol && raw) map[protocol] = toGatewayBaseUrl(raw);
-  }
-  return endpointRowsFromMap(map, fallbackProtocol, protocolUrl(fallbackProtocol));
-}
-
-function buildProtocolEndpointsFromRows(
-  rows: ProtocolEndpointRow[],
-): Record<string, { base_url: string }> {
-  const endpoints: Record<string, { base_url: string }> = {};
-  for (const row of rows) {
-    const baseUrl = toGatewayBaseUrl(row.base_url);
-    if (!baseUrl) continue;
-    endpoints[row.protocol] = { base_url: baseUrl };
-  }
-  return endpoints;
-}
-
-function resolveDefaultBaseUrl(
-  rows: ProtocolEndpointRow[],
-  defaultProtocol: ProviderProtocol,
-  fallbackBaseUrl: string,
-) {
-  const row = rows.find((item) => item.protocol === defaultProtocol);
-  return row?.base_url?.trim() || fallbackBaseUrl;
-}
-
-function validateEndpointRows(
-  rows: ProtocolEndpointRow[],
-  defaultProtocol: ProviderProtocol,
+function validateProviderEndpoint(
+  protocol: string | undefined,
+  baseUrl: string | undefined,
   isZh: boolean,
 ): string | null {
-  if (!rows.length) {
-    return isZh ? "至少需要配置一个协议端点" : "At least one protocol endpoint is required";
+  if (!protocol?.trim()) {
+    return isZh ? "协议不能为空" : "Protocol is required";
   }
-  const seen = new Set<string>();
-  for (const row of rows) {
-    if (!row.base_url.trim()) {
-      return isZh ? "协议端点 Base URL 不能为空" : "Protocol endpoint base URL is required";
-    }
-    try {
-      new URL(row.base_url.trim());
-    } catch {
-      return isZh ? `无效的 Base URL: ${row.base_url}` : `Invalid base URL: ${row.base_url}`;
-    }
-    if (seen.has(row.protocol)) {
-      return isZh ? `协议重复: ${row.protocol}` : `Duplicated protocol: ${row.protocol}`;
-    }
-    seen.add(row.protocol);
+  const trimmed = baseUrl?.trim() ?? "";
+  if (!trimmed) {
+    return isZh ? "Base URL 不能为空" : "Base URL is required";
   }
-  if (!seen.has(defaultProtocol)) {
-    return isZh
-      ? `默认协议 ${defaultProtocol} 必须存在于协议端点列表中`
-      : `Default protocol ${defaultProtocol} must exist in protocol endpoint list`;
+  try {
+    new URL(trimmed);
+  } catch {
+    return isZh ? `无效的 Base URL: ${baseUrl}` : `Invalid base URL: ${baseUrl}`;
   }
   return null;
 }
@@ -351,7 +259,9 @@ function resolvePresetConfig(
 ) {
   const channel = presetChannels(preset).find((item) => item.id === channelId) ?? presetChannels(preset)[0];
   const sourceBaseUrls = channel?.baseUrls ?? {};
-  const rawBaseUrl = sourceBaseUrls[protocol];
+  const rawBaseUrl = Object.entries(sourceBaseUrls).find(
+    ([key]) => resolveProtocol(key) === protocol,
+  )?.[1];
   const baseUrl = rawBaseUrl ? toGatewayBaseUrl(rawBaseUrl) : "";
   const modelsSource = channel?.modelsSource ?? channel?.modelsEndpoint ?? "";
   const apiKey = channel?.apiKey ?? "";
@@ -504,9 +414,6 @@ export default function ProvidersPage() {
     return ["1", "true", "yes", "on"].includes(normalized);
   }, [proxyEnabledSetting]);
   const [form, setForm] = useState<CreateProvider>(emptyCreate);
-  const [createEndpointRows, setCreateEndpointRows] = useState<ProtocolEndpointRow[]>([
-    { protocol: "openai-compat", base_url: "https://api.openai.com/v1" },
-  ]);
   const selectedPreset = useMemo(
     () => providerPresets.find((preset) => preset.id === selectedPresetId) ?? null,
     [providerPresets, selectedPresetId],
@@ -530,9 +437,6 @@ export default function ProvidersPage() {
     api_key: "",
     auth_mode: "apikey",
   });
-  const [editEndpointRows, setEditEndpointRows] = useState<ProtocolEndpointRow[]>([
-    { protocol: "openai-compat", base_url: "https://api.openai.com/v1" },
-  ]);
   const isEditingOAuthProvider = Boolean(
     editingProvider
       && (
@@ -1054,22 +958,12 @@ export default function ProvidersPage() {
     };
 
     try {
-      const endpointMap = parseProtocolEndpoints(provider.protocol_endpoints);
-      const endpointTargets = protocolOptions
-        .map((option) => ({ protocol: option.value, baseUrl: endpointMap[option.value]?.trim() ?? "" }))
-        .filter((item) => Boolean(item.baseUrl));
-      if (endpointTargets.length === 0 && provider.base_url?.trim()) {
-        endpointTargets.push({
-          protocol: (resolveProtocol(provider.default_protocol || provider.protocol || "openai") ?? "openai-compat") as ProviderProtocol,
-          baseUrl: provider.base_url.trim(),
-        });
-      }
+      const protocol = (resolveProtocol(provider.protocol || "openai") ?? "openai-compat") as ProviderProtocol;
+      const baseUrl = provider.base_url?.trim() ?? "";
 
       appendTestLog("info", isZh ? `开始测试 ${provider.name}...` : `Start testing ${provider.name}...`);
       appendTestLog("info", isZh ? "▶ 连通性检测" : "▶ Connectivity check");
-      endpointTargets.forEach((target) => {
-        appendTestLog("info", `→ [${target.protocol}] ${target.baseUrl}`);
-      });
+      appendTestLog("info", `→ [${protocol}] ${baseUrl}`);
 
       const connectivity = await backend<TestResult>("test_provider", { id: provider.id });
       if (isCanceled()) return;
@@ -1155,12 +1049,11 @@ export default function ProvidersPage() {
     setEditingId(p.id);
     setEditError(null);
     setShowEditApiKey(false);
-    const endpointRows = endpointRowsFromProvider(p);
     const presetForEdit = providerPresets.find(
       (item) => item.id === (p.preset_key || DEFAULT_PRESET_ID),
     );
     const channel = p.channel || "default";
-    const savedProtocol = (resolveProtocol(p.default_protocol || p.protocol) ?? "openai-compat") as ProviderProtocol;
+    const savedProtocol = (resolveProtocol(p.protocol) ?? "openai-compat") as ProviderProtocol;
     const safeProtocol = presetForEdit
       ? resolvePresetProtocol(presetForEdit, channel, savedProtocol)
       : savedProtocol;
@@ -1178,7 +1071,6 @@ export default function ProvidersPage() {
       api_key: p.api_key ?? "",
       auth_mode: normalizeAuthMode(p.auth_mode),
     });
-    setEditEndpointRows(endpointRows);
   }
 
   function handlePresetChange(nextPresetId: string) {
@@ -1191,8 +1083,7 @@ export default function ProvidersPage() {
     const nextChannelId = preset.channels?.[0]?.id ?? "";
     const nextProtocol = resolvePresetProtocol(preset, nextChannelId, (resolveProtocol(preset.defaultProtocol) ?? "openai-compat") as ProviderProtocol);
     const config = resolvePresetConfig(preset, nextProtocol, nextChannelId);
-    const endpointRows = endpointRowsFromPreset(preset, nextChannelId, nextProtocol);
-    const nextBaseUrl = resolveDefaultBaseUrl(endpointRows, nextProtocol, config.baseUrl);
+    const nextBaseUrl = config.baseUrl || protocolUrl(nextProtocol);
 
     setForm({
       ...emptyCreate,
@@ -1208,7 +1099,6 @@ export default function ProvidersPage() {
       api_key: config.apiKey || "",
       name: "",
     });
-    setCreateEndpointRows(endpointRows);
   }
 
   function handlePresetChannelChange(nextChannelId: string) {
@@ -1219,8 +1109,7 @@ export default function ProvidersPage() {
       form.protocol as ProviderProtocol,
     );
     const config = resolvePresetConfig(selectedPreset, nextProtocol, nextChannelId);
-    const endpointRows = endpointRowsFromPreset(selectedPreset, nextChannelId, nextProtocol);
-    const nextBaseUrl = resolveDefaultBaseUrl(endpointRows, nextProtocol, config.baseUrl);
+    const nextBaseUrl = config.baseUrl || protocolUrl(nextProtocol);
     setForm((prev) => ({
       ...prev,
       channel: nextChannelId,
@@ -1231,7 +1120,6 @@ export default function ProvidersPage() {
       static_models: config.staticModels,
       api_key: config.apiKey || prev.api_key,
     }));
-    setCreateEndpointRows(endpointRows);
   }
 
   function handleEditPresetChange(nextPresetId: string) {
@@ -1260,9 +1148,7 @@ export default function ProvidersPage() {
               (prev.protocol as ProviderProtocol) || (resolveProtocol(preset.defaultProtocol) ?? "openai-compat") as ProviderProtocol,
             );
             const config = resolvePresetConfig(preset, nextProtocol, nextChannelId);
-            const endpointRows = endpointRowsFromPreset(preset, nextChannelId, nextProtocol);
-            const nextBaseUrl = resolveDefaultBaseUrl(endpointRows, nextProtocol, config.baseUrl);
-            setEditEndpointRows(endpointRows);
+            const nextBaseUrl = config.baseUrl || protocolUrl(nextProtocol);
             return {
               ...prev,
               vendor: preset.id === DEFAULT_PRESET_ID ? undefined : preset.id,
@@ -1285,7 +1171,6 @@ export default function ProvidersPage() {
     setShowCreateApiKey(true);
     setSelectedPresetId(DEFAULT_PRESET_ID);
     setForm(emptyCreate);
-    setCreateEndpointRows([{ protocol: "openai-compat", base_url: "https://api.openai.com/v1" }]);
   }
 
   const totalPages = Math.max(1, Math.ceil(providers.length / PAGE_SIZE));
@@ -1667,125 +1552,6 @@ export default function ProvidersPage() {
                 />
               </div>
               {createResolvedAuthMode !== "oauth" && (
-              <div className="space-y-2">
-                <FieldLabel>{isZh ? "默认协议" : "Default Protocol"}</FieldLabel>
-                <Select
-                  value={form.protocol}
-                  onValueChange={(value) => {
-                    const nextProtocol = value as ProviderProtocol;
-                    const config = selectedPreset
-                      ? resolvePresetConfig(selectedPreset, nextProtocol, form.channel)
-                      : {
-                          baseUrl: protocolUrl(nextProtocol),
-                          modelsSource: defaultModelsEndpoint(protocolUrl(nextProtocol), nextProtocol),
-                          staticModels: form.static_models ?? "",
-                        };
-                    const nextBaseUrl =
-                      selectedPreset && selectedPreset.id !== DEFAULT_PRESET_ID
-                        ? (config.baseUrl || form.base_url)
-                        : config.baseUrl;
-                    setForm({
-                      ...form,
-                      protocol: nextProtocol,
-                      base_url: nextBaseUrl,
-                      models_source: form.models_source,
-                      static_models: config.staticModels,
-                    });
-                    setCreateEndpointRows((prev) => {
-                      if (prev.some((item) => item.protocol === nextProtocol)) return prev;
-                      return [...prev, { protocol: nextProtocol, base_url: nextBaseUrl || protocolUrl(nextProtocol) }];
-                    });
-                  }}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder={isZh ? "选择默认协议" : "Select default protocol"} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {createProtocolOptions.map((option) => (
-                      <SelectItem key={option.value} value={option.value}>
-                        {option.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              )}
-              {createResolvedAuthMode !== "oauth" && (
-              <div className="col-span-2 space-y-2">
-                <FieldLabel>{isZh ? "协议端点映射" : "Protocol Endpoints"}</FieldLabel>
-                <div className="space-y-2 rounded-xl border border-slate-200 bg-white p-3">
-                  {createEndpointRows.map((row, index) => (
-                    <div key={`create-endpoint-${index}`} className="grid grid-cols-[180px_minmax(0,1fr)_32px] gap-2">
-                      <Select
-                        value={row.protocol}
-                        onValueChange={(value) => {
-                          const nextProtocol = value as ProviderProtocol;
-                          setCreateEndpointRows((prev) =>
-                            prev.map((item, i) => (i === index ? { ...item, protocol: nextProtocol } : item)),
-                          );
-                        }}
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {protocolOptions.map((option) => (
-                            <SelectItem key={option.value} value={option.value}>
-                              {option.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <Input
-                        placeholder={isZh ? "输入上游基础地址" : "Enter upstream base URL"}
-                        value={row.base_url}
-                        onChange={(e) =>
-                          setCreateEndpointRows((prev) =>
-                            prev.map((item, i) => (i === index ? { ...item, base_url: e.target.value } : item)),
-                          )
-                        }
-                      />
-                      <button
-                        type="button"
-                        disabled={createEndpointRows.length <= 1}
-                        onClick={() =>
-                          setCreateEndpointRows((prev) => (prev.length <= 1 ? prev : prev.filter((_, i) => i !== index)))
-                        }
-                        className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500 disabled:opacity-40"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </div>
-                  ))}
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    className="w-full"
-                    onClick={() =>
-                      setCreateEndpointRows((prev) => [...prev, { protocol: "openai-compat" as ProviderProtocol, base_url: "" }])
-                    }
-                  >
-                    <Plus className="mr-2 h-4 w-4" />
-                    {isZh ? "添加协议端点" : "Add Protocol Endpoint"}
-                  </Button>
-                </div>
-              </div>
-              )}
-              {isGlobalProxyEnabled && (
-                <div className="space-y-2">
-                  <FieldLabel>{isZh ? "使用本地代理" : "Use Local Proxy"}</FieldLabel>
-                  <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2.5">
-                    <span className="text-xs text-slate-600">
-                      {isZh ? "开启后走设置页中的本地代理地址" : "Route requests via local proxy from settings"}
-                    </span>
-                    <Switch
-                      checked={Boolean(form.use_proxy)}
-                      onCheckedChange={(checked) => setForm({ ...form, use_proxy: checked })}
-                    />
-                  </div>
-                </div>
-              )}
-              {createResolvedAuthMode !== "oauth" && (
                 <div className="space-y-2">
                   <FieldLabel>API Key</FieldLabel>
                   <div className="relative">
@@ -1808,7 +1574,56 @@ export default function ProvidersPage() {
                 </div>
               )}
               {createResolvedAuthMode !== "oauth" && (
-              <>
+              <div className="space-y-2">
+                <FieldLabel>{isZh ? "协议" : "Protocol"}</FieldLabel>
+                <Select
+                  value={form.protocol}
+                  onValueChange={(value) => {
+                    const nextProtocol = value as ProviderProtocol;
+                    const config = selectedPreset
+                      ? resolvePresetConfig(selectedPreset, nextProtocol, form.channel)
+                      : {
+                          baseUrl: protocolUrl(nextProtocol),
+                          modelsSource: defaultModelsEndpoint(protocolUrl(nextProtocol), nextProtocol),
+                          staticModels: form.static_models ?? "",
+                        };
+                    const nextBaseUrl =
+                      selectedPreset && selectedPreset.id !== DEFAULT_PRESET_ID
+                        ? (config.baseUrl || form.base_url)
+                        : config.baseUrl;
+                    setForm({
+                      ...form,
+                      protocol: nextProtocol,
+                      base_url: nextBaseUrl,
+                      models_source: form.models_source,
+                      static_models: config.staticModels,
+                    });
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder={isZh ? "选择协议" : "Select protocol"} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {createProtocolOptions.map((option) => (
+                      <SelectItem key={option.value} value={option.value}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              )}
+              {createResolvedAuthMode !== "oauth" && (
+              <div className="space-y-2">
+                <FieldLabel>Base URL</FieldLabel>
+                <Input
+                  placeholder={isZh ? "输入上游基础地址" : "Enter upstream base URL"}
+                  value={form.base_url}
+                  onChange={(e) => setForm({ ...form, base_url: e.target.value })}
+                />
+              </div>
+              )}
+              {createResolvedAuthMode !== "oauth" && (
               <div className="space-y-2">
                 <FieldLabel
                   info={
@@ -1825,14 +1640,28 @@ export default function ProvidersPage() {
                   onChange={(e) => setForm({ ...form, models_source: e.target.value })}
                 />
               </div>
-              </>
+              )}
+              {isGlobalProxyEnabled && createResolvedAuthMode !== "oauth" && (
+                <div className="space-y-2">
+                  <FieldLabel>{isZh ? "使用本地代理" : "Use Local Proxy"}</FieldLabel>
+                  <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2.5">
+                    <span className="text-xs text-slate-600">
+                      {isZh ? "开启后走设置页中的本地代理地址" : "Route requests via local proxy from settings"}
+                    </span>
+                    <Switch
+                      checked={Boolean(form.use_proxy)}
+                      onCheckedChange={(checked) => setForm({ ...form, use_proxy: checked })}
+                    />
+                  </div>
+                </div>
               )}
             </div>
               <div className="flex gap-3">
                 <Button
                   onClick={() => {
                     const protocol = form.protocol || "openai-compat";
-                    const validation = validateEndpointRows(createEndpointRows, protocol as ProviderProtocol, isZh);
+                    const baseUrl = toGatewayBaseUrl(form.base_url ?? "");
+                    const validation = validateProviderEndpoint(protocol, baseUrl, isZh);
                     if (validation) {
                       setErrorDialog({
                         title: isZh ? "创建提供商失败" : "Failed to create provider",
@@ -1840,14 +1669,10 @@ export default function ProvidersPage() {
                       });
                       return;
                     }
-                    const endpoints = buildProtocolEndpointsFromRows(createEndpointRows);
-                    const baseUrl = endpoints[protocol]?.base_url ?? form.base_url ?? "";
                     const input: CreateProvider = {
                       ...form,
                       protocol,
                       base_url: baseUrl,
-                      default_protocol: protocol,
-                      protocol_endpoints: JSON.stringify(endpoints),
                     };
                     if (createResolvedAuthMode === "oauth") {
                       const sessionId = createOAuthSession?.session_id;
@@ -1898,14 +1723,7 @@ export default function ProvidersPage() {
             const editingPresetId = editForm.preset_key || DEFAULT_PRESET_ID;
             const editingPreset =
               providerPresets.find((preset) => preset.id === editingPresetId) ?? providerPresets[0] ?? null;
-            const endpointMap = parseProtocolEndpoints(p.protocol_endpoints);
-            const configuredProtocols = protocolOptions
-              .map((option) => option.value)
-              .filter((proto) => Boolean(endpointMap[proto]));
-            const protocolLabels =
-              configuredProtocols.length > 0
-                ? configuredProtocols
-                : [(resolveProtocol(p.default_protocol || p.protocol || "openai") ?? "openai-compat") as ProviderProtocol];
+            const protocolLabels = [(resolveProtocol(p.protocol || "openai") ?? "openai-compat") as ProviderProtocol];
             const selectedPreset = providerPresets.find((preset) => preset.id === (p.preset_key || p.vendor || ""));
             const selectedProviderName = selectedPreset
               ? presetLabel(selectedPreset, isZh)
@@ -2015,17 +1833,15 @@ export default function ProvidersPage() {
                             resolvedProtocol,
                             value,
                           );
-                          const endpointRows = endpointRowsFromPreset(editingPreset, value, resolvedProtocol);
                           setEditError(null);
                           setEditForm({
                             ...editForm,
                             channel: value,
                             protocol: resolvedProtocol,
-                            base_url: resolveDefaultBaseUrl(endpointRows, resolvedProtocol, config.baseUrl),
+                            base_url: config.baseUrl || protocolUrl(resolvedProtocol),
                             models_source: config.modelsSource,
                             static_models: config.staticModels,
                           });
-                          setEditEndpointRows(endpointRows);
                         }}
                         className="provider-channel-group"
                       >
@@ -2254,8 +2070,9 @@ export default function ProvidersPage() {
                         </div>
                       </div>
                     ) : null}
+                    {editingResolvedAuthMode !== "oauth" ? (
                     <div className="space-y-2">
-                      <FieldLabel>{isZh ? "默认协议" : "Default Protocol"}</FieldLabel>
+                      <FieldLabel>{isZh ? "协议" : "Protocol"}</FieldLabel>
                       <Select
                         value={editForm.protocol ?? ""}
                         onValueChange={(value) => {
@@ -2278,14 +2095,10 @@ export default function ProvidersPage() {
                             models_source: editForm.models_source,
                             static_models: config.staticModels,
                           });
-                          setEditEndpointRows((prev) => {
-                            if (prev.some((item) => item.protocol === nextProtocol)) return prev;
-                            return [...prev, { protocol: nextProtocol, base_url: nextBaseUrl || protocolUrl(nextProtocol) }];
-                          });
                         }}
                       >
                         <SelectTrigger>
-                          <SelectValue placeholder={isZh ? "选择默认协议" : "Select default protocol"} />
+                          <SelectValue placeholder={isZh ? "选择协议" : "Select protocol"} />
                         </SelectTrigger>
                         <SelectContent>
                           {editingProtocolOptions.map((option) => (
@@ -2296,79 +2109,18 @@ export default function ProvidersPage() {
                         </SelectContent>
                       </Select>
                     </div>
-                    <div className="col-span-2 space-y-2">
-                      <FieldLabel>{isZh ? "协议端点映射" : "Protocol Endpoints"}</FieldLabel>
-                      <div className="space-y-2 rounded-xl border border-slate-200 bg-white p-3">
-                        {editEndpointRows.map((row, index) => (
-                          <div key={`edit-endpoint-${index}`} className="grid grid-cols-[180px_minmax(0,1fr)_32px] gap-2">
-                            <Select
-                              value={row.protocol}
-                              onValueChange={(value) => {
-                                const nextProtocol = value as ProviderProtocol;
-                                setEditEndpointRows((prev) =>
-                                  prev.map((item, i) => (i === index ? { ...item, protocol: nextProtocol } : item)),
-                                );
-                              }}
-                            >
-                              <SelectTrigger>
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {protocolOptions.map((option) => (
-                                  <SelectItem key={option.value} value={option.value}>
-                                    {option.label}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
-                            <Input
-                              placeholder={isZh ? "输入上游基础地址" : "Enter upstream base URL"}
-                              value={row.base_url}
-                              onChange={(e) =>
-                                setEditEndpointRows((prev) =>
-                                  prev.map((item, i) => (i === index ? { ...item, base_url: e.target.value } : item)),
-                                )
-                              }
-                            />
-                            <button
-                              type="button"
-                              disabled={editEndpointRows.length <= 1}
-                              onClick={() =>
-                                setEditEndpointRows((prev) => (prev.length <= 1 ? prev : prev.filter((_, i) => i !== index)))
-                              }
-                              className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-red-50 hover:text-red-500 disabled:opacity-40"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
-                          </div>
-                        ))}
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          className="w-full"
-                          onClick={() =>
-                            setEditEndpointRows((prev) => [...prev, { protocol: "openai-compat", base_url: "" }])
-                          }
-                        >
-                          <Plus className="mr-2 h-4 w-4" />
-                          {isZh ? "添加协议端点" : "Add Protocol Endpoint"}
-                        </Button>
-                      </div>
+                    ) : null}
+                    {editingResolvedAuthMode !== "oauth" ? (
+                    <div className="space-y-2">
+                      <FieldLabel>Base URL</FieldLabel>
+                      <Input
+                        placeholder={isZh ? "输入上游基础地址" : "Enter upstream base URL"}
+                        value={editForm.base_url ?? ""}
+                        onChange={(e) => setEditForm({ ...editForm, base_url: e.target.value })}
+                      />
                     </div>
-                    {isGlobalProxyEnabled && (
-                      <div className="space-y-2">
-                        <FieldLabel>{isZh ? "使用本地代理" : "Use Local Proxy"}</FieldLabel>
-                        <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2.5">
-                          <span className="text-xs text-slate-600">
-                            {isZh ? "开启后走设置页中的本地代理地址" : "Route requests via local proxy from settings"}
-                          </span>
-                          <Switch
-                            checked={Boolean(editForm.use_proxy)}
-                            onCheckedChange={(checked) => setEditForm({ ...editForm, use_proxy: checked })}
-                          />
-                        </div>
-                      </div>
-                    )}
+                    ) : null}
+                    {editingResolvedAuthMode !== "oauth" ? (
                     <div className="space-y-2">
                       <FieldLabel
                         info={
@@ -2385,30 +2137,42 @@ export default function ProvidersPage() {
                         onChange={(e) => setEditForm({ ...editForm, models_source: e.target.value })}
                       />
                     </div>
+                    ) : null}
+                    {isGlobalProxyEnabled && editingResolvedAuthMode !== "oauth" && (
+                      <div className="space-y-2">
+                        <FieldLabel>{isZh ? "使用本地代理" : "Use Local Proxy"}</FieldLabel>
+                        <div className="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2.5">
+                          <span className="text-xs text-slate-600">
+                            {isZh ? "开启后走设置页中的本地代理地址" : "Route requests via local proxy from settings"}
+                          </span>
+                          <Switch
+                            checked={Boolean(editForm.use_proxy)}
+                            onCheckedChange={(checked) => setEditForm({ ...editForm, use_proxy: checked })}
+                          />
+                        </div>
+                      </div>
+                    )}
                   </div>
                   <div className="flex gap-3">
                     <Button
                       onClick={() => {
                         setEditError(null);
                         const protocol = editForm.protocol || "openai-compat";
-                        const validation = validateEndpointRows(editEndpointRows, protocol as ProviderProtocol, isZh);
+                        const baseUrl = toGatewayBaseUrl(editForm.base_url ?? "");
+                        const validation = validateProviderEndpoint(protocol, baseUrl, isZh);
                         if (validation) {
                           setEditError(validation);
                           return;
                         }
-                        const endpoints = buildProtocolEndpointsFromRows(editEndpointRows);
-                        const baseUrl = endpoints[protocol]?.base_url ?? editForm.base_url ?? "";
                         const input: UpdateProvider = {
                           name: editForm.name || undefined,
                           vendor: editForm.vendor || undefined,
                           protocol,
                           base_url: baseUrl,
-                          default_protocol: protocol,
-                          protocol_endpoints: JSON.stringify(endpoints),
                           use_proxy: Boolean(editForm.use_proxy),
                           preset_key: editForm.preset_key || undefined,
                           channel: editForm.channel || undefined,
-                          models_source: editForm.models_source || undefined,
+                          models_source: editForm.models_source ?? "",
                           static_models: editForm.static_models || undefined,
                           api_key: editForm.api_key || undefined,
                         };

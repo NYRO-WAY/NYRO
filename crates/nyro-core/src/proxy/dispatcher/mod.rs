@@ -1338,7 +1338,7 @@ async fn compute_embedding(gw: &Gateway, text: &str) -> anyhow::Result<Vec<f32>>
     }
 
     if missing_openai_endpoint {
-        anyhow::bail!("embedding route targets must expose protocol_endpoints.openai");
+        anyhow::bail!("embedding route targets must expose openai protocol");
     }
     anyhow::bail!("failed to compute embedding from route: {embedding_route}")
 }

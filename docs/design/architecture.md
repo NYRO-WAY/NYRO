@@ -531,10 +531,9 @@ CREATE TABLE providers (
     id           TEXT PRIMARY KEY,
     name         TEXT NOT NULL,
     vendor       TEXT,              -- canonical vendor_id（custom / openai / ...）
+    protocol     TEXT NOT NULL,     -- canonical protocol suite（openai-compat / ...）
     base_url     TEXT NOT NULL,
-    api_key      TEXT NOT NULL,     -- AES-256-GCM 加密存储
-    default_protocol TEXT,          -- canonical ProtocolId
-    protocol_endpoints TEXT         -- JSON: { "openai/chat/v1": { base_url: "..." } }
+    api_key      TEXT NOT NULL      -- AES-256-GCM 加密存储
 );
 
 -- 路由规则

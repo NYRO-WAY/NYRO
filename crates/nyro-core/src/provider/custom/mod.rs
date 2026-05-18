@@ -23,7 +23,7 @@ const METADATA: VendorMetadata = VendorMetadata {
         en: "Custom",
     },
     icon: "custom",
-    default_protocol: "openai",
+    default_protocol: "openai-compat",
     channels: &[ChannelDef {
         id: "default",
         label: Label {

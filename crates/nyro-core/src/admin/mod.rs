@@ -565,8 +565,6 @@ impl AdminService {
                 vendor,
                 protocol: input.protocol,
                 base_url: input.base_url,
-                default_protocol: normalize_default_protocol_field(input.default_protocol),
-                protocol_endpoints: normalize_protocol_endpoints_field(input.protocol_endpoints),
                 preset_key: input.preset_key,
                 channel: input.channel,
                 models_source: input.models_source,
@@ -585,7 +583,7 @@ impl AdminService {
     ) -> anyhow::Result<Provider> {
         let current = self.get_provider(id).await?;
         let current_base_url = current.base_url.clone();
-        let models_source_input = input.effective_models_source().map(ToString::to_string);
+        let models_source_input = input.models_source.map(|value| value.trim().to_string());
 
         let name = normalize_name(&input.name.unwrap_or(current.name), "provider name")?;
         self.ensure_provider_name_unique(Some(id), &name).await?;
@@ -625,10 +623,6 @@ impl AdminService {
                     vendor,
                     protocol: Some(protocol),
                     base_url: Some(base_url),
-                    default_protocol: normalize_default_protocol_field(input.default_protocol),
-                    protocol_endpoints: normalize_protocol_endpoints_field(
-                        input.protocol_endpoints,
-                    ),
                     preset_key,
                     channel,
                     models_source,
@@ -660,13 +654,10 @@ impl AdminService {
             .clear_ollama_capability_cache_for_provider(&provider.id)
             .await;
         let start = Instant::now();
-        let mut endpoints = provider
-            .parsed_protocol_endpoints()
-            .into_iter()
-            .collect::<Vec<_>>();
-        endpoints.sort_by(|a, b| a.0.cmp(&b.0));
+        let protocol = provider.protocol.trim();
+        let base_url = provider.base_url.trim();
 
-        let result = if endpoints.is_empty() {
+        let result = if base_url.is_empty() {
             TestResult {
                 success: false,
                 latency_ms: 0,
@@ -675,31 +666,17 @@ impl AdminService {
             }
         } else {
             let mut failures: Vec<String> = Vec::new();
-            for (protocol, endpoint) in endpoints {
-                let base_url = endpoint.base_url.trim();
-                if base_url.is_empty() {
-                    failures.push(format!("{protocol}: Base URL is empty"));
-                    continue;
-                }
-                if reqwest::Url::parse(base_url).is_err() {
-                    failures.push(format!("{protocol}: Base URL format is invalid"));
-                    continue;
-                }
-
-                match self
-                    .gw
-                    .http_client
-                    .get(base_url)
-                    .timeout(Duration::from_secs(10))
-                    .send()
-                    .await
-                {
-                    // Any HTTP response means the endpoint is reachable, including 4xx.
-                    Ok(_) => {}
-                    Err(e) => {
-                        failures.push(format!("{protocol}: {}", format_connectivity_error(&e)))
-                    }
-                }
+            if reqwest::Url::parse(base_url).is_err() {
+                failures.push(format!("{protocol}: Base URL format is invalid"));
+            } else if let Err(e) = self
+                .gw
+                .http_client
+                .get(base_url)
+                .timeout(Duration::from_secs(10))
+                .send()
+                .await
+            {
+                failures.push(format!("{protocol}: {}", format_connectivity_error(&e)));
             }
 
             if failures.is_empty() {
@@ -715,7 +692,7 @@ impl AdminService {
                     latency_ms: start.elapsed().as_millis() as u64,
                     model: None,
                     error: Some(format!(
-                        "Connectivity check failed for protocol endpoints: {}",
+                        "Connectivity check failed for provider endpoint: {}",
                         failures.join("; ")
                     )),
                 }
@@ -987,7 +964,7 @@ impl AdminService {
         }
 
         if missing_openai_endpoint {
-            anyhow::bail!("embedding route targets must expose protocol_endpoints.openai");
+            anyhow::bail!("embedding route targets must expose openai protocol");
         }
         anyhow::bail!("failed to detect embedding dimensions for route: {route_name}")
     }
@@ -1414,8 +1391,8 @@ impl AdminService {
                     vendor: p.vendor,
                     protocol: p.protocol,
                     base_url: p.base_url,
-                    default_protocol: p.default_protocol,
-                    protocol_endpoints: p.protocol_endpoints,
+                    default_protocol: String::new(),
+                    protocol_endpoints: String::new(),
                     preset_key: p.preset_key,
                     channel: p.channel,
                     models_source: p.models_source,
@@ -1459,20 +1436,8 @@ impl AdminService {
                     .create_provider(CreateProvider {
                         name: p.name.clone(),
                         vendor: p.vendor.clone(),
-                        protocol: p.protocol.clone(),
-                        base_url: p.base_url.clone(),
-                        default_protocol: if p.default_protocol.is_empty() {
-                            None
-                        } else {
-                            Some(p.default_protocol.clone())
-                        },
-                        protocol_endpoints: if p.protocol_endpoints.is_empty()
-                            || p.protocol_endpoints == "{}"
-                        {
-                            None
-                        } else {
-                            Some(p.protocol_endpoints.clone())
-                        },
+                        protocol: import_provider_protocol(p),
+                        base_url: import_provider_base_url(p),
                         preset_key: p.preset_key.clone(),
                         channel: p.channel.clone(),
                         models_source: p.models_source.clone(),
@@ -1919,7 +1884,6 @@ impl AdminService {
             .clone()
             .filter(|value| !value.trim().is_empty())
             .or_else(|| provider.models_source.clone());
-        let protocol_endpoints = Some(sync_runtime_protocol_endpoints(provider, &base_url)?);
 
         self.gw
             .storage
@@ -1928,7 +1892,6 @@ impl AdminService {
                 &provider.id,
                 UpdateProvider {
                     base_url: Some(base_url),
-                    protocol_endpoints,
                     models_source,
                     api_key: Some(String::new()),
                     auth_mode: Some("oauth".to_string()),
@@ -2439,28 +2402,44 @@ fn normalize_vendor(vendor: Option<&str>) -> Option<String> {
         .map(|v| v.to_lowercase())
 }
 
-/// Rewrite a `default_protocol` field into canonical
-/// [`ProtocolId`](crate::protocol::ids::ProtocolId) form before
-/// persistence. `None` and empty strings pass through unchanged so we
-/// don't surprise callers that explicitly want to clear the field.
-fn normalize_default_protocol_field(value: Option<String>) -> Option<String> {
-    let s = value?;
-    if s.trim().is_empty() {
-        return Some(s);
-    }
-    Some(crate::protocol::registry::ProtocolRegistry::global().normalize_string(&s))
+fn import_provider_protocol(provider: &ExportProvider) -> String {
+    provider
+        .default_protocol
+        .trim()
+        .is_empty()
+        .then(|| provider.protocol.clone())
+        .unwrap_or_else(|| provider.default_protocol.clone())
 }
 
-/// Rewrite a `protocol_endpoints` JSON blob (with possibly legacy /
-/// alias keys) into canonical [`ProtocolId`](crate::protocol::ids::ProtocolId)
-/// keys before persistence. `None` and empty / `{}` strings pass through.
-fn normalize_protocol_endpoints_field(value: Option<String>) -> Option<String> {
-    let s = value?;
-    let trimmed = s.trim();
-    if trimmed.is_empty() || trimmed == "{}" {
-        return Some(s);
+fn import_provider_base_url(provider: &ExportProvider) -> String {
+    if !provider.base_url.trim().is_empty() {
+        return provider.base_url.clone();
     }
-    Some(crate::protocol::registry::ProtocolRegistry::global().normalize_endpoints_json(&s))
+    base_url_from_protocol_endpoints(
+        &provider.protocol_endpoints,
+        &import_provider_protocol(provider),
+    )
+    .unwrap_or_default()
+}
+
+fn base_url_from_protocol_endpoints(raw: &str, protocol: &str) -> Option<String> {
+    let reg = crate::protocol::registry::ProtocolRegistry::global();
+    let target = reg.parse_protocol(protocol)?;
+    let value = serde_json::from_str::<serde_json::Value>(raw.trim()).ok()?;
+    let obj = value.as_object()?;
+    obj.iter().find_map(|(key, entry)| {
+        let entry_protocol = reg.parse_protocol(key)?;
+        if entry_protocol != target {
+            return None;
+        }
+        entry
+            .as_object()
+            .and_then(|object| object.get("base_url"))
+            .and_then(|value| value.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToString::to_string)
+    })
 }
 
 fn resolve_models_endpoint(provider: &Provider) -> Option<String> {
@@ -2473,7 +2452,7 @@ fn resolve_models_endpoint(provider: &Provider) -> Option<String> {
 
     let base = provider.base_url.trim_end_matches('/');
     match provider.protocol.as_str() {
-        "openai" | "anthropic" => {
+        "openai" | "openai-compat" | "openai-resps" | "anthropic" | "anthropic-msgs" => {
             let has_base_path = reqwest::Url::parse(base)
                 .ok()
                 .map(|url| {
@@ -2487,7 +2466,7 @@ fn resolve_models_endpoint(provider: &Provider) -> Option<String> {
                 Some(format!("{base}/v1/models"))
             }
         }
-        "gemini" => Some(format!("{base}/v1beta/models")),
+        "gemini" | "google-genai" => Some(format!("{base}/v1beta/models")),
         _ => None,
     }
 }
@@ -2503,59 +2482,6 @@ fn resolve_openai_base_url(provider: &Provider) -> Option<String> {
         return None;
     }
     Some(trimmed.to_string())
-}
-
-fn sync_runtime_protocol_endpoints(provider: &Provider, base_url: &str) -> anyhow::Result<String> {
-    use crate::protocol::registry::ProtocolRegistry;
-    let reg = ProtocolRegistry::global();
-
-    // Re-key the existing endpoints map to canonical ProtocolId form so any
-    // legacy / alias keys round-trip into a normalized shape on every sync.
-    let raw = provider.parsed_protocol_endpoints();
-    let mut endpoints: std::collections::HashMap<String, ProtocolEndpointEntry> =
-        std::collections::HashMap::with_capacity(raw.len());
-    for (key, val) in raw {
-        let canonical = reg
-            .resolve_alias(&key)
-            .map(|id| id.to_string())
-            .unwrap_or(key);
-        endpoints.entry(canonical).or_insert(val);
-    }
-
-    let runtime_base_url = base_url.trim();
-    if runtime_base_url.is_empty() {
-        return Ok(serde_json::to_string(&endpoints)?);
-    }
-
-    let default_protocol = reg
-        .resolve_alias(provider.effective_default_protocol().trim())
-        .map(|id| id.to_string())
-        .unwrap_or_else(|| provider.effective_default_protocol().trim().to_string());
-    let legacy_protocol = reg
-        .resolve_alias(provider.protocol.trim())
-        .map(|id| id.to_string())
-        .unwrap_or_else(|| provider.protocol.trim().to_string());
-
-    // If default_protocol differs from the legacy protocol field, the provider
-    // has been upgraded (e.g. chat → responses via OAuth bind). Remove the
-    // stale legacy entry so only the current protocol remains.
-    if !default_protocol.is_empty()
-        && !legacy_protocol.is_empty()
-        && default_protocol != legacy_protocol
-    {
-        endpoints.remove(&legacy_protocol);
-    }
-
-    if !default_protocol.is_empty() {
-        endpoints
-            .entry(default_protocol)
-            .and_modify(|entry| entry.base_url = runtime_base_url.to_string())
-            .or_insert_with(|| ProtocolEndpointEntry {
-                base_url: runtime_base_url.to_string(),
-            });
-    }
-
-    Ok(serde_json::to_string(&endpoints)?)
 }
 
 fn runtime_binding_headers(binding: &RuntimeBinding) -> anyhow::Result<HeaderMap> {
@@ -3417,8 +3343,6 @@ mod tests {
             vendor: None,
             protocol: "openai".to_string(),
             base_url: "https://placeholder.invalid".to_string(),
-            default_protocol: Some("openai".to_string()),
-            protocol_endpoints: None,
             preset_key: Some("openai".to_string()),
             channel: Some("codex".to_string()),
             models_source: None,
