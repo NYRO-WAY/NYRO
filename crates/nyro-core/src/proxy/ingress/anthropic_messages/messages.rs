@@ -10,7 +10,7 @@ use crate::Gateway;
 use crate::protocol::ids::ANTHROPIC_MESSAGES_2023_06_01;
 use crate::protocol::ir::RawEnvelope;
 use crate::proxy::context::RequestContext;
-use crate::proxy::dispatcher::{dispatch_pipeline, error_response};
+use crate::proxy::dispatcher::{dispatch_pipeline, log_decode_error};
 
 pub async fn handler(
     State(gw): State<Gateway>,
@@ -33,7 +33,7 @@ pub async fn handler(
         .make_request_decoder();
     let request = match decoder.decode_request(body) {
         Ok(r) => r,
-        Err(e) => return error_response(400, &format!("invalid request: {e}")),
+        Err(e) => return log_decode_error(&gw, &envelope, ANTHROPIC_MESSAGES_2023_06_01, e),
     };
     dispatch_pipeline(
         gw,

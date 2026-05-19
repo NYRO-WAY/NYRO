@@ -11,7 +11,7 @@ use crate::protocol::codec::google_generative::decoder::GoogleDecoder;
 use crate::protocol::ids::GOOGLE_GENERATE_CONTENT_V1BETA;
 use crate::protocol::ir::RawEnvelope;
 use crate::proxy::context::RequestContext;
-use crate::proxy::dispatcher::{dispatch_pipeline, error_response};
+use crate::proxy::dispatcher::{dispatch_pipeline, log_decode_error};
 
 pub async fn handler(
     State(gw): State<Gateway>,
@@ -38,7 +38,14 @@ pub async fn handler(
     let envelope = RawEnvelope::new(Some(body.clone()), flat_headers, "POST", &path);
     let request = match GoogleDecoder.decode_with_model(body, &model, is_stream) {
         Ok(r) => r,
-        Err(e) => return error_response(400, &format!("invalid Gemini request: {e}")),
+        Err(e) => {
+            return log_decode_error(
+                &gw,
+                &envelope,
+                GOOGLE_GENERATE_CONTENT_V1BETA,
+                format!("Gemini decode error: {e}"),
+            );
+        }
     };
     dispatch_pipeline(
         gw,

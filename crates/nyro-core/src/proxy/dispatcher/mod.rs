@@ -57,7 +57,7 @@ use crate::provider::vendor::ProviderCtx;
 use crate::provider::{VendorCtx, VendorRegistry};
 use crate::proxy::client::ProxyClient;
 use crate::proxy::context::RequestContext;
-use crate::proxy::observability::{LogExtras, headers_to_json, send_log};
+use crate::proxy::observability::{LogExtras, send_log};
 use crate::proxy::planner::{ProtocolMode, negotiate};
 use crate::router::TargetSelector;
 
@@ -662,9 +662,6 @@ pub async fn dispatch(
     path: &'static str,
     _ctx: &mut RequestContext,
 ) -> Response {
-    let request_headers_str = headers_to_json(&headers);
-    let request_body_str = serde_json::to_string(&body).ok();
-
     let flat_headers: std::collections::HashMap<String, String> = headers
         .iter()
         .filter_map(|(k, v)| {
@@ -678,25 +675,7 @@ pub async fn dispatch(
     let decoder = ingress.handler().make_request_decoder();
     let request = match decoder.decode_request(body) {
         Ok(r) => r,
-        Err(e) => {
-            let ingress_str = ingress.to_string();
-            let msg = format!("invalid request: {e}");
-            // dispatch() has no start Instant; use a zero-duration sentinel.
-            let decode_start = Instant::now();
-            LogBuilder::from_dispatch(&gw, &ingress_str, "", None, decode_start)
-                .status(400)
-                .with_req_extras(&RequestExtras {
-                    method: method.to_string(),
-                    path: path.to_string(),
-                    headers: request_headers_str.clone(),
-                    body: request_body_str.clone(),
-                })
-                .resp_body(Some(
-                    serde_json::json!({ "error": { "message": msg.clone() } }).to_string(),
-                ))
-                .emit();
-            return error_response(400, &msg);
-        }
+        Err(e) => return log_decode_error(&gw, &envelope, ingress, e),
     };
 
     dispatch_pipeline(gw, headers, envelope, request, ingress).await
@@ -1213,6 +1192,38 @@ async fn finalize_singleflight(
     };
     let _ = tx.send(payload);
     gw.cache_in_flight.remove(key);
+}
+
+/// Emit a `LogEntry` for a request that failed to decode at the ingress
+/// boundary (before `dispatch_pipeline` runs) and return the corresponding
+/// 400 `Response`. Ensures decode failures show up in the in-app log module
+/// rather than only in stdout tracing.
+pub(crate) fn log_decode_error(
+    gw: &Gateway,
+    envelope: &RawEnvelope,
+    ingress: ProtocolId,
+    err: impl std::fmt::Display,
+) -> Response {
+    let msg = format!("invalid request: {err}");
+    let request_body_str = envelope
+        .body
+        .as_ref()
+        .and_then(|b| serde_json::to_string(b).ok());
+    let request_headers_str = serde_json::to_string(&envelope.headers).ok();
+    let ingress_str = ingress.to_string();
+    LogBuilder::from_dispatch(gw, &ingress_str, "", None, Instant::now())
+        .status(400)
+        .with_req_extras(&RequestExtras {
+            method: envelope.method.clone(),
+            path: envelope.path.clone(),
+            headers: request_headers_str,
+            body: request_body_str,
+        })
+        .resp_body(Some(
+            serde_json::json!({ "error": { "message": msg.clone() } }).to_string(),
+        ))
+        .emit();
+    error_response(400, &msg)
 }
 
 pub(crate) fn error_response(status: u16, message: &str) -> Response {

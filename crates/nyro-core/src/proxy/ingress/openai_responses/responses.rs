@@ -10,7 +10,7 @@ use crate::Gateway;
 use crate::protocol::ids::OPENAI_RESPONSES_V1;
 use crate::protocol::ir::RawEnvelope;
 use crate::proxy::context::RequestContext;
-use crate::proxy::dispatcher::{dispatch_pipeline, error_response};
+use crate::proxy::dispatcher::{dispatch_pipeline, log_decode_error};
 
 pub async fn handler(
     State(gw): State<Gateway>,
@@ -31,7 +31,7 @@ pub async fn handler(
     let decoder = OPENAI_RESPONSES_V1.handler().make_request_decoder();
     let request = match decoder.decode_request(body) {
         Ok(r) => r,
-        Err(e) => return error_response(400, &format!("invalid request: {e}")),
+        Err(e) => return log_decode_error(&gw, &envelope, OPENAI_RESPONSES_V1, e),
     };
     dispatch_pipeline(gw, headers, envelope, request, OPENAI_RESPONSES_V1).await
 }
