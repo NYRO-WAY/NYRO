@@ -188,7 +188,7 @@ def build_harness(work_dir: Path) -> None:
                 models_source: None,
                 static_models: None,
                 api_key: "dummy".to_string(),
-                auth_mode: "bearer".to_string(),
+                auth_mode: "apikey".to_string(),
                 use_proxy: false,
             }).await?;
 
