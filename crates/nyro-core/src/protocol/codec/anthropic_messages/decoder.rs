@@ -192,10 +192,8 @@ impl RequestDecoder for AnthropicDecoder {
         {
             ingress.insert("__anthropic_thinking".into(), v);
         }
-        if let Some(ref cm) = req.context_management
-            && let Ok(v) = serde_json::to_value(cm)
-        {
-            ingress.insert("__anthropic_context_management".into(), v);
+        if let Some(ref cm) = req.context_management {
+            ingress.insert("__anthropic_context_management".into(), cm.clone());
         }
         if let Some(ref c) = req.container {
             ingress.insert("__anthropic_container".into(), Value::String(c.clone()));

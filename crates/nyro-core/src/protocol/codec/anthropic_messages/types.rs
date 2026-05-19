@@ -17,14 +17,6 @@ pub struct ThinkingConfig {
     pub budget_tokens: Option<u32>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct ContextManagement {
-    #[serde(rename = "type")]
-    pub kind: String, // "enabled"
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_tokens: Option<u32>,
-}
-
 // ── Top-level request ─────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -43,7 +35,7 @@ pub struct AnthropicRequest {
 
     // PR-10 additions ─────────────────────────────────────────────────────────
     pub thinking: Option<ThinkingConfig>,
-    pub context_management: Option<ContextManagement>,
+    pub context_management: Option<Value>,
     pub container: Option<String>,
     pub service_tier: Option<String>,
     pub metadata: Option<Value>,
