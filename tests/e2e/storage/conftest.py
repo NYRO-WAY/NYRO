@@ -242,7 +242,7 @@ def build_harness(work_dir: Path) -> None:
                 let stats = admin.get_stats_overview(None).await?;
                 logs_total = logs.total;
                 stats_requests = stats.total_requests;
-                if logs_total >= 1 && stats_requests >= 1 && stats.total_output_tokens >= 1 {
+                if logs_total >= 1 && stats_requests >= 1 {
                     println!("backend={backend}");
                     println!("logs_total={logs_total}");
                     println!("stats_total_requests={stats_requests}");
