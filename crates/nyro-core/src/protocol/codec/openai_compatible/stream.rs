@@ -142,6 +142,7 @@ impl ResponseEncoder for OpenAIResponseFormatter {
 pub struct OpenAIStreamParser {
     buffer: String,
     started: bool,
+    done: bool,
     think_buffer: String,
     in_think_block: bool,
 }
@@ -157,6 +158,7 @@ impl OpenAIStreamParser {
         Self {
             buffer: String::new(),
             started: false,
+            done: false,
             think_buffer: String::new(),
             in_think_block: false,
         }
@@ -176,9 +178,12 @@ impl StreamResponseDecoder for OpenAIStreamParser {
                 if let Some(data) = line.strip_prefix("data: ") {
                     let data = data.trim();
                     if data == "[DONE]" {
-                        deltas.push(AiStreamDelta::Done {
-                            stop_reason: "stop".to_string(),
-                        });
+                        if !self.done {
+                            self.done = true;
+                            deltas.push(AiStreamDelta::Done {
+                                stop_reason: "stop".to_string(),
+                            });
+                        }
                         continue;
                     }
                     if let Ok(chunk) = serde_json::from_str::<Value>(data) {
@@ -268,10 +273,15 @@ impl OpenAIStreamParser {
             }
         }
 
-        if let Some(reason) = choice.get("finish_reason").and_then(|v| v.as_str()) {
-            deltas.push(AiStreamDelta::Done {
-                stop_reason: reason.to_string(),
-            });
+        if !self.done {
+            if let Some(reason) = choice.get("finish_reason").and_then(|v| v.as_str()) {
+                if !reason.is_empty() {
+                    self.done = true;
+                    deltas.push(AiStreamDelta::Done {
+                        stop_reason: reason.to_string(),
+                    });
+                }
+            }
         }
 
         let u = extract_usage(chunk);
@@ -893,6 +903,64 @@ mod tests {
         assert!(
             text.contains("final answer"),
             "expected 'final answer' in TextDelta, got: {text:?}"
+        );
+    }
+
+    #[test]
+    fn test_stream_finish_reason_empty_string_ignored() {
+        let chunks = [
+            data_sse(r#"{"id":"chatcmpl-zh","model":"claude-opus-4p7","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":""}]}"#),
+            data_sse(r#"{"id":"chatcmpl-zh","model":"claude-opus-4p7","choices":[{"index":0,"delta":{"content":"Hello!"},"finish_reason":""}]}"#),
+            data_sse(r#"{"id":"chatcmpl-zh","model":"claude-opus-4p7","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#),
+            data_sse("[DONE]"),
+        ]
+        .concat();
+
+        let mut parser = OpenAIStreamParser::new();
+        let deltas = parser.parse_chunk(&chunks).unwrap();
+
+        let done_count = deltas
+            .iter()
+            .filter(|d| matches!(d, AiStreamDelta::Done { .. }))
+            .count();
+        assert_eq!(
+            done_count, 1,
+            "expected exactly 1 Done, got {done_count}: {deltas:?}"
+        );
+
+        let done = deltas
+            .iter()
+            .find_map(|d| {
+                if let AiStreamDelta::Done { stop_reason } = d {
+                    Some(stop_reason.clone())
+                } else {
+                    None
+                }
+            })
+            .unwrap();
+        assert_eq!(done, "stop", "Done stop_reason must be 'stop'");
+    }
+
+    #[test]
+    fn test_stream_duplicate_done_only_one_emitted() {
+        let chunks = [
+            data_sse(r#"{"id":"chatcmpl-mi","model":"mimo-v2.5","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}"#),
+            data_sse(r#"{"id":"chatcmpl-mi","model":"mimo-v2.5","choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":null}]}"#),
+            data_sse(r#"{"id":"chatcmpl-mi","model":"mimo-v2.5","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}"#),
+            data_sse("[DONE]"),
+        ]
+        .concat();
+
+        let mut parser = OpenAIStreamParser::new();
+        let deltas = parser.parse_chunk(&chunks).unwrap();
+
+        let done_count = deltas
+            .iter()
+            .filter(|d| matches!(d, AiStreamDelta::Done { .. }))
+            .count();
+        assert_eq!(
+            done_count, 1,
+            "expected exactly 1 Done (finish_reason + [DONE] deduped), got {done_count}: {deltas:?}"
         );
     }
 }
