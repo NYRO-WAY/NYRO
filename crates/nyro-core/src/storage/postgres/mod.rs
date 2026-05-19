@@ -1107,10 +1107,10 @@ impl LogStore for PostgresLogStore {
     async fn stats_overview(&self, hours: Option<i64>) -> anyhow::Result<StatsOverview> {
         let sql = if let Some(hours) = hours {
             format!(
-                "SELECT COUNT(*) AS total_requests, COALESCE(SUM(input_tokens), 0) AS total_input_tokens, COALESCE(SUM(output_tokens), 0) AS total_output_tokens, COALESCE(AVG(latency_total_ms), 0) AS avg_duration_ms, COALESCE(SUM(CASE WHEN client_status_code >= 400 THEN 1 ELSE 0 END), 0) AS error_count FROM request_logs WHERE created_at >= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP - INTERVAL '{hours} hours') * 1000"
+                "SELECT COUNT(*) AS total_requests, COALESCE(SUM(input_tokens), 0) AS total_input_tokens, COALESCE(SUM(output_tokens), 0) AS total_output_tokens, COALESCE(AVG(latency_total_ms)::FLOAT8, 0) AS avg_duration_ms, COALESCE(SUM(CASE WHEN client_status_code >= 400 THEN 1 ELSE 0 END), 0) AS error_count FROM request_logs WHERE created_at >= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP - INTERVAL '{hours} hours') * 1000"
             )
         } else {
-            "SELECT COUNT(*) AS total_requests, COALESCE(SUM(input_tokens), 0) AS total_input_tokens, COALESCE(SUM(output_tokens), 0) AS total_output_tokens, COALESCE(AVG(latency_total_ms), 0) AS avg_duration_ms, COALESCE(SUM(CASE WHEN client_status_code >= 400 THEN 1 ELSE 0 END), 0) AS error_count FROM request_logs".to_string()
+            "SELECT COUNT(*) AS total_requests, COALESCE(SUM(input_tokens), 0) AS total_input_tokens, COALESCE(SUM(output_tokens), 0) AS total_output_tokens, COALESCE(AVG(latency_total_ms)::FLOAT8, 0) AS avg_duration_ms, COALESCE(SUM(CASE WHEN client_status_code >= 400 THEN 1 ELSE 0 END), 0) AS error_count FROM request_logs".to_string()
         };
         Ok(sqlx::query_as::<_, StatsOverview>(&sql)
             .fetch_one(&self.pool)
@@ -1119,7 +1119,7 @@ impl LogStore for PostgresLogStore {
 
     async fn stats_hourly(&self, hours: i64) -> anyhow::Result<Vec<StatsHourly>> {
         let sql = format!(
-            "SELECT to_char(date_trunc('hour', to_timestamp(created_at/1000) AT TIME ZONE 'UTC'), 'YYYY-MM-DD HH24:00:00') AS hour, COUNT(*) AS request_count, COALESCE(SUM(CASE WHEN client_status_code >= 400 THEN 1 ELSE 0 END), 0) AS error_count, COALESCE(SUM(input_tokens), 0) AS total_input_tokens, COALESCE(SUM(output_tokens), 0) AS total_output_tokens, COALESCE(AVG(latency_total_ms), 0) AS avg_duration_ms FROM request_logs WHERE created_at >= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP - INTERVAL '{hours} hours') * 1000 GROUP BY 1 ORDER BY 1 ASC"
+            "SELECT to_char(date_trunc('hour', to_timestamp(created_at/1000) AT TIME ZONE 'UTC'), 'YYYY-MM-DD HH24:00:00') AS hour, COUNT(*) AS request_count, COALESCE(SUM(CASE WHEN client_status_code >= 400 THEN 1 ELSE 0 END), 0) AS error_count, COALESCE(SUM(input_tokens), 0) AS total_input_tokens, COALESCE(SUM(output_tokens), 0) AS total_output_tokens, COALESCE(AVG(latency_total_ms)::FLOAT8, 0) AS avg_duration_ms FROM request_logs WHERE created_at >= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP - INTERVAL '{hours} hours') * 1000 GROUP BY 1 ORDER BY 1 ASC"
         );
         Ok(sqlx::query_as::<_, StatsHourly>(&sql)
             .fetch_all(&self.pool)
@@ -1129,10 +1129,10 @@ impl LogStore for PostgresLogStore {
     async fn stats_by_model(&self, hours: Option<i64>) -> anyhow::Result<Vec<ModelStats>> {
         let sql = if let Some(hours) = hours {
             format!(
-                "SELECT upstream_model AS model, COUNT(*) AS request_count, COALESCE(SUM(input_tokens), 0) AS total_input_tokens, COALESCE(SUM(output_tokens), 0) AS total_output_tokens, COALESCE(AVG(latency_total_ms), 0) AS avg_duration_ms FROM request_logs WHERE created_at >= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP - INTERVAL '{hours} hours') * 1000 GROUP BY upstream_model ORDER BY request_count DESC"
+                "SELECT upstream_model AS model, COUNT(*) AS request_count, COALESCE(SUM(input_tokens), 0) AS total_input_tokens, COALESCE(SUM(output_tokens), 0) AS total_output_tokens, COALESCE(AVG(latency_total_ms)::FLOAT8, 0) AS avg_duration_ms FROM request_logs WHERE created_at >= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP - INTERVAL '{hours} hours') * 1000 GROUP BY upstream_model ORDER BY request_count DESC"
             )
         } else {
-            "SELECT upstream_model AS model, COUNT(*) AS request_count, COALESCE(SUM(input_tokens), 0) AS total_input_tokens, COALESCE(SUM(output_tokens), 0) AS total_output_tokens, COALESCE(AVG(latency_total_ms), 0) AS avg_duration_ms FROM request_logs GROUP BY upstream_model ORDER BY request_count DESC".to_string()
+            "SELECT upstream_model AS model, COUNT(*) AS request_count, COALESCE(SUM(input_tokens), 0) AS total_input_tokens, COALESCE(SUM(output_tokens), 0) AS total_output_tokens, COALESCE(AVG(latency_total_ms)::FLOAT8, 0) AS avg_duration_ms FROM request_logs GROUP BY upstream_model ORDER BY request_count DESC".to_string()
         };
         Ok(sqlx::query_as::<_, ModelStats>(&sql)
             .fetch_all(&self.pool)
@@ -1142,10 +1142,10 @@ impl LogStore for PostgresLogStore {
     async fn stats_by_provider(&self, hours: Option<i64>) -> anyhow::Result<Vec<ProviderStats>> {
         let sql = if let Some(hours) = hours {
             format!(
-                "SELECT COALESCE(provider_name, provider_id, '') AS provider, COUNT(*) AS request_count, COALESCE(SUM(CASE WHEN client_status_code >= 400 THEN 1 ELSE 0 END), 0) AS error_count, COALESCE(AVG(latency_total_ms), 0) AS avg_duration_ms FROM request_logs WHERE created_at >= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP - INTERVAL '{hours} hours') * 1000 GROUP BY COALESCE(provider_name, provider_id, '') ORDER BY request_count DESC"
+                "SELECT COALESCE(provider_name, provider_id, '') AS provider, COUNT(*) AS request_count, COALESCE(SUM(CASE WHEN client_status_code >= 400 THEN 1 ELSE 0 END), 0) AS error_count, COALESCE(AVG(latency_total_ms)::FLOAT8, 0) AS avg_duration_ms FROM request_logs WHERE created_at >= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP - INTERVAL '{hours} hours') * 1000 GROUP BY COALESCE(provider_name, provider_id, '') ORDER BY request_count DESC"
             )
         } else {
-            "SELECT COALESCE(provider_name, provider_id, '') AS provider, COUNT(*) AS request_count, COALESCE(SUM(CASE WHEN client_status_code >= 400 THEN 1 ELSE 0 END), 0) AS error_count, COALESCE(AVG(latency_total_ms), 0) AS avg_duration_ms FROM request_logs GROUP BY COALESCE(provider_name, provider_id, '') ORDER BY request_count DESC".to_string()
+            "SELECT COALESCE(provider_name, provider_id, '') AS provider, COUNT(*) AS request_count, COALESCE(SUM(CASE WHEN client_status_code >= 400 THEN 1 ELSE 0 END), 0) AS error_count, COALESCE(AVG(latency_total_ms)::FLOAT8, 0) AS avg_duration_ms FROM request_logs GROUP BY COALESCE(provider_name, provider_id, '') ORDER BY request_count DESC".to_string()
         };
         Ok(sqlx::query_as::<_, ProviderStats>(&sql)
             .fetch_all(&self.pool)
