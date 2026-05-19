@@ -186,17 +186,24 @@ def build_harness(work_dir: Path) -> None:
                 preset_key: None,
                 channel: None,
                 models_source: None,
-                capabilities_source: None,
                 static_models: None,
                 api_key: "dummy".to_string(),
+                auth_mode: "bearer".to_string(),
+                use_proxy: false,
             }).await?;
 
             let route = admin.create_route(CreateRoute {
                 name: format!("{backend}-e2e-route"),
                 virtual_model: format!("{backend}-model"),
+                strategy: None,
                 target_provider: provider.id.clone(),
                 target_model: "gpt-4o-mini".to_string(),
+                targets: vec![],
                 access_control: Some(true),
+                cache: None,
+                cache_exact_ttl: None,
+                cache_semantic_ttl: None,
+                cache_semantic_threshold: None,
             }).await?;
 
             let api_key = admin.create_api_key(CreateApiKey {
@@ -228,7 +235,7 @@ def build_harness(work_dir: Path) -> None:
             let body: serde_json::Value = ok.json().await?;
             ensure!(body["choices"][0]["message"]["content"].as_str() == Some("ok"), "content mismatch");
 
-            let mut logs_total = 0u64;
+            let mut logs_total = 0i64;
             let mut stats_requests = 0i64;
             for _ in 0..20 {
                 let logs = admin.query_logs(LogQuery { limit: Some(10), offset: Some(0), ..Default::default() }).await?;
