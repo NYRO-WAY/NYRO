@@ -777,7 +777,7 @@ impl ApiKeyStore for PostgresApiKeyStore {
         let id = uuid::Uuid::new_v4().to_string();
         let key = format!("sk-{}", uuid::Uuid::new_v4().simple());
         sqlx::query(
-            "INSERT INTO api_keys (id, key, name, rpm, rpd, tpm, tpd, status, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, 'active', NULLIF($8, '')::timestamptz)",
+            "INSERT INTO api_keys (id, key, name, rpm, rpd, tpm, tpd, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, '')::timestamptz)",
         )
         .bind(&id)
         .bind(&key)
