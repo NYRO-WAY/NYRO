@@ -2951,7 +2951,7 @@ dependencies = [
 
 [[package]]
 name = "nyro-core"
-version = "1.7.3"
+version = "1.7.4"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -2990,7 +2990,7 @@ dependencies = [
 
 [[package]]
 name = "nyro-desktop"
-version = "1.7.3"
+version = "1.7.4"
 dependencies = [
  "nyro-core",
  "serde",
@@ -3008,7 +3008,7 @@ dependencies = [
 
 [[package]]
 name = "nyro-server"
-version = "1.7.3"
+version = "1.7.4"
 dependencies = [
  "anyhow",
  "axum",
@@ -3029,7 +3029,7 @@ dependencies = [
 
 [[package]]
 name = "nyro-tools"
-version = "1.7.3"
+version = "1.7.4"
 dependencies = [
  "anyhow",
  "async-trait",

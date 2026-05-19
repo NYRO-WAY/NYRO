@@ -4,6 +4,20 @@ All notable changes to Nyro will be documented in this file.
 
 ---
 
+## v1.7.4
+
+> Released on 2026-05-19
+
+#### Improvements / Refactoring
+
+- **Provider configuration simplification** (#160): collapse provider storage and UI from protocol endpoint mappings to a single `protocol` / `base_url` pair, with migration support for legacy rows and aligned standalone config docs/tests
+
+#### Fixes
+
+- **OpenAI-compatible streaming completion** (#162): deduplicate terminal `Done` events when both `finish_reason` and `[DONE]` are observed, preventing duplicate end-of-stream notifications
+
+---
+
 ## v1.7.3
 
 > Released on 2026-05-18
